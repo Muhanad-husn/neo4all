@@ -42,6 +42,9 @@ htmlcov/
 # Streamlit
 .streamlit/secrets.toml
 
+# Claude Code local settings
+.claude/
+
 # IDE
 .vscode/
 .idea/
