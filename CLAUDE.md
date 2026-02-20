@@ -26,7 +26,13 @@ A **session-based, AI-assisted web application** that transforms documents into 
 │   ├── schema/          # Domain schema definitions
 │   ├── proposals/       # Proposal Packet models
 │   ├── diff/            # Deterministic diff builder (non-LLM)
-│   └── audit/           # Immutable audit log writers
+│   ├── audit/           # Immutable audit log writers
+│   ├── cache/           # Redis-backed cache abstraction layer
+│   └── observability/   # Centralized logging, metrics, correlation IDs
+├── docs/                # Governance artifacts (specs, skills, ADRs)
+│   ├── specs/           # Increment specification documents (SPEC-01 through SPEC-08)
+│   ├── skills/          # Cross-cutting skill definitions (SKILL-A, B, C, D)
+│   └── adr/             # Architecture Decision Records
 ├── prompts/             # Versioned prompt templates by job_id
 ├── fixtures/            # Test fixtures for deterministic components
 ├── tests/unit/          # Deterministic tests (no network)
@@ -51,6 +57,8 @@ A **session-based, AI-assisted web application** that transforms documents into 
 | Object Storage | boto3 → RustFS (local) / S3 (prod) |
 | LLM Gateway | OpenRouter API |
 | Package Manager | uv + pyproject.toml |
+| Caching | Redis (shared with ARQ) |
+| Observability | structlog + in-memory metrics |
 
 ---
 
@@ -182,6 +190,10 @@ S3_ENDPOINT_URL          # http://localhost:9000 for RustFS
 S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY / S3_BUCKET_NAME
 REDIS_URL                # redis://localhost:6379
 QDRANT_URL               # Optional: for remote instance
+
+# Observability
+LOG_FORMAT                 # json (production) or console (development)
+LOG_LEVEL                  # DEBUG, INFO, WARNING, ERROR — default INFO
 ```
 
 ---
@@ -242,14 +254,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 
 ---
 
-## 15. Skills
-
-<!-- PLACEHOLDER: Task-specific skill definitions to be added. -->
-<!-- Check this section before implementing governed pipeline components. -->
-
----
-
-## 16. Claude Directives
+## 15. Claude Directives
 
 ### Always Do
 - Read this file before writing code
@@ -259,6 +264,11 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Reference versioned prompt templates
 - Fail closed on invalid inputs
 - Test fallback behavior, not model quality
+- Before implementing any increment, read the relevant spec in `docs/specs/` and all skills in `docs/skills/`
+- After completing any increment, run the SKILL-B governance checklist and update README.md and CLAUDE.md
+- Use the centralized logger from `api/observability/logger.py` — never create ad-hoc loggers
+- Check the cache before expensive reads — use `api/cache/client.py` with deterministic keys
+- Log structured events with correlation IDs — never free-text log messages
 
 ### Never Do
 - Write Cypher in LLM agents
@@ -269,3 +279,48 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Bypass approval gate
 - Auto-apply infra changes
 - Write artifacts to disk or Neo4j/Qdrant
+- Create ad-hoc loggers or use Python's `logging.basicConfig()` directly
+- Construct cache keys by string concatenation — use `CacheKey` builders
+- Log credentials, API keys, or raw document content
+- Perform expensive reads without checking the cache first
+- Add business logic to the monitoring UI page
+
+---
+
+## 17. Specifications & Skills
+
+### 17.1 How to Use
+
+Before beginning implementation work on any increment:
+1. Read this file (CLAUDE.md) in full
+2. Identify the current increment from the spec list below
+3. Read the relevant `docs/specs/SPEC-*.md` file
+4. Read ALL skill files in `docs/skills/`
+5. Follow the spec's file generation sequence and acceptance criteria
+6. Run the SKILL-B governance checklist after completion
+
+### 17.2 Increment Specifications
+
+Increments are strictly ordered — do not start N+1 until N passes.
+
+| Spec | Inc | Description |
+|------|-----|-------------|
+| [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 1 | Scaffolding, session lifecycle, logging, caching, monitoring |
+| [SPEC-02](docs/specs/SPEC-02-schema.md) | 2 | Domain schema definition (Phase 1) |
+| [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 3 | Document ingestion & chunking (Phase 2) |
+| [SPEC-04](docs/specs/SPEC-04-extraction.md) | 4 | AI-assisted extraction, worker monitoring (Phase 3) |
+| [SPEC-05](docs/specs/SPEC-05-candidates.md) | 5 | Deterministic candidate generation (Curation Layer 1) |
+| [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 6 | Manual curation, evidence retrieval, proposal pipeline (Layer 2) |
+| [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 7 | AI curation agent pipeline, agent telemetry (Layer 3) |
+| [SPEC-08](docs/specs/SPEC-08-hardening.md) | 8 | Monitoring polish, logging hardening, CI, documentation |
+
+### 17.3 Cross-Cutting Skills
+
+Read and follow ALL skills during every implementation task.
+
+| Skill | Scope | Description |
+|-------|-------|-------------|
+| [SKILL-A](docs/skills/SKILL-A-api-contracts.md) | Every endpoint | Pydantic request/response models, validation |
+| [SKILL-B](docs/skills/SKILL-B-governance.md) | Every change | Folder structure, layers, docs, semver, refactoring |
+| [SKILL-C](docs/skills/SKILL-C-packaging.md) | All increments | Entry points, imports, init files, dependencies |
+| [SKILL-D](docs/skills/SKILL-D-observability.md) | Every module | Logging, caching, monitoring |
