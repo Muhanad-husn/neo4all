@@ -71,3 +71,4 @@ qdrant_storage/
 *.tmp
 *.bak
 scratch/
+implementation/
