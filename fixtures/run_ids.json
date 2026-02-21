@@ -1,0 +1,32 @@
+[
+  {
+    "description": "standard user namespace with ISO timestamp and UTC offset",
+    "user_namespace": "alice",
+    "timestamp_seed": "2026-02-21T00:00:00+00:00"
+  },
+  {
+    "description": "uppercase user namespace — case-sensitive input",
+    "user_namespace": "BOB",
+    "timestamp_seed": "2026-02-21T00:00:00+00:00"
+  },
+  {
+    "description": "compound user namespace with slash and hyphen",
+    "user_namespace": "acme-corp/project-x",
+    "timestamp_seed": "2026-01-15T12:30:45+00:00"
+  },
+  {
+    "description": "same user, different timestamp_seed — must produce different run_id",
+    "user_namespace": "alice",
+    "timestamp_seed": "2026-02-21T00:00:01+00:00"
+  },
+  {
+    "description": "boundary-collision pair A: split 'ab'+'c'",
+    "user_namespace": "ab",
+    "timestamp_seed": "c"
+  },
+  {
+    "description": "boundary-collision pair B: split 'a'+'bc' — must differ from pair A",
+    "user_namespace": "a",
+    "timestamp_seed": "bc"
+  }
+]

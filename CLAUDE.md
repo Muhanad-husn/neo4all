@@ -264,8 +264,8 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Reference versioned prompt templates
 - Fail closed on invalid inputs
 - Test fallback behavior, not model quality
-- Before implementing any increment, read the relevant spec in `docs/specs/` and all skills in `docs/skills/`
-- After completing any increment, run the SKILL-B governance checklist and update README.md and CLAUDE.md
+- Before implementing any increment, read the relevant spec in [`docs/specs/`](docs/specs/) and all skills in [`docs/skills/`](docs/skills/) — see [§17 Specifications & Skills](#17-specifications--skills) for the full table
+- After completing any increment, run the [SKILL-B](docs/skills/SKILL-B-governance.md) governance checklist and update README.md and CLAUDE.md
 - Use the centralized logger from `api/observability/logger.py` — never create ad-hoc loggers
 - Check the cache before expensive reads — use `api/cache/client.py` with deterministic keys
 - Log structured events with correlation IDs — never free-text log messages
@@ -284,6 +284,23 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Log credentials, API keys, or raw document content
 - Perform expensive reads without checking the cache first
 - Add business logic to the monitoring UI page
+
+---
+
+## 16. Increment Status
+
+| Increment | Version | Status |
+|-----------|---------|--------|
+| [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 0.1.0 | ✅ Complete |
+| [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | Pending |
+| [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | Pending |
+| [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | Pending |
+| [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | Pending |
+| [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | Pending |
+| [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | Pending |
+| [SPEC-08](docs/specs/SPEC-08-hardening.md) | 0.8.0 | Pending |
+
+Do not begin increment N+1 until increment N passes all acceptance criteria and the SKILL-B governance checklist.
 
 ---
 

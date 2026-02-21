@@ -1,0 +1,55 @@
+{
+  "_comment": "Known-good cache key vectors. Expected values are derived from the patterns documented in api/cache/keys.py docstrings.",
+  "schema": [
+    {
+      "run_id": "abc123",
+      "expected": "schema:abc123"
+    },
+    {
+      "run_id": "0000000000000000000000000000000000000000000000000000000000000001",
+      "expected": "schema:0000000000000000000000000000000000000000000000000000000000000001"
+    }
+  ],
+  "manifest": [
+    {
+      "run_id": "abc123",
+      "doc_id": "doc456",
+      "expected": "manifest:abc123:doc456"
+    },
+    {
+      "run_id": "run-a",
+      "doc_id": "doc-b",
+      "expected": "manifest:run-a:doc-b"
+    }
+  ],
+  "graph_query": [
+    {
+      "run_id": "abc123",
+      "query_hash": "qhash789",
+      "expected": "gq:abc123:qhash789"
+    }
+  ],
+  "chunk": [
+    {
+      "chunk_id": "chunk001",
+      "expected": "chunk:chunk001"
+    },
+    {
+      "chunk_id": "aaaa",
+      "expected": "chunk:aaaa"
+    }
+  ],
+  "candidates": [
+    {
+      "run_id": "abc123",
+      "detection_hash": "dhash456",
+      "expected": "candidates:abc123:dhash456"
+    }
+  ],
+  "run_prefix": [
+    {
+      "run_id": "abc123",
+      "expected": "run:abc123:"
+    }
+  ]
+}

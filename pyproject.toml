@@ -9,31 +9,38 @@ description = "AI-Powered Graph Extraction & Curation Platform"
 requires-python = ">=3.12"
 dependencies = [
     # FastAPI backend
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
     # Streamlit frontend
-    "streamlit>=1.40.0",
+    "streamlit>=1.40.0,<2.0.0",
     # Worker
-    "arq>=0.26.0",
-    "redis>=5.0.0",
+    "arq>=0.26.0,<1.0.0",
+    "redis[asyncio]>=5.0.0,<6.0.0",
     # Graph DB
-    "neo4j>=5.0.0",
+    "neo4j>=5.0.0,<6.0.0",
     # Vector store
-    "qdrant-client>=1.12.0",
+    "qdrant-client>=1.12.0,<2.0.0",
     # Object storage
-    "boto3>=1.35.0",
-    # Validation
-    "pydantic>=2.9.0",
-    # LLM gateway
-    "httpx>=0.27.0",
+    "boto3>=1.35.0,<2.0.0",
+    # Validation & configuration
+    "pydantic>=2.9.0,<3.0.0",
+    "pydantic-settings>=2.6.0,<3.0.0",
+    # HTTP client (LLM gateway)
+    "httpx>=0.27.0,<1.0.0",
+    # Observability
+    "structlog>=24.4.0,<26.0.0",
 ]
+
+[project.scripts]
+api-server = "api.main:run"
+arq-worker = "api.worker.entry:run"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
-    "ruff>=0.7.0",
-    "mypy>=1.13.0",
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.24.0,<1.0.0",
+    "ruff>=0.7.0,<1.0.0",
+    "mypy>=1.13.0,<2.0.0",
 ]
 
 [tool.ruff]

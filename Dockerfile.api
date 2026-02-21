@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv package manager
+RUN pip install --no-cache-dir uv==0.5.21
+
+# Copy project definition first (layer cache: deps change less than source)
+COPY pyproject.toml README.md ./
+
+# Copy API source
+COPY api/ api/
+
+# Install the package and all dependencies
+RUN uv pip install --system --no-cache .
+
+EXPOSE 8000
+
+# Uses [project.scripts] entry point: api.main:run
+CMD ["api-server"]
