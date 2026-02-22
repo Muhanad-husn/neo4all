@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neo4all"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI-Powered Graph Extraction & Curation Platform"
 requires-python = ">=3.12"
 dependencies = [
@@ -29,6 +29,10 @@ dependencies = [
     "httpx>=0.27.0,<1.0.0",
     # Observability
     "structlog>=24.4.0,<26.0.0",
+    # Prompt template parsing (schema_propose/v1.yaml)
+    "pyyaml>=6.0,<7.0",
+    # UI data tables (ui/pages/schema.py)
+    "pandas>=2.0.0,<3.0.0",
 ]
 
 [project.scripts]

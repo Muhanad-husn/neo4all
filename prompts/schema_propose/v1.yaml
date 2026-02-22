@@ -1,0 +1,416 @@
+# prompts/schema_propose/v1.yaml
+#
+# Job:              schema_propose
+# Template version: v1
+# Introduced in:    SPEC-02 (increment 2, version 0.2.0)
+#
+# IMMUTABILITY NOTICE
+# -------------------
+# This file is immutable once used in any run. Never edit it after initial
+# deployment. To change prompting behaviour, create v2.yaml and update
+# SchemaService._TEMPLATE_VERSION (CLAUDE.md §14).
+#
+# LOADER CONTRACT
+# ---------------
+# api/schema/service.py loads this file via _load_prompt_template().
+# Required keys: system_prompt, user_template.
+# user_template is rendered with Python str.format(domain_description=...).
+# Any {placeholder} other than {domain_description} will raise KeyError.
+#
+# OUTPUT VALIDATION
+# -----------------
+# The LLM response is validated against SchemaProposal (api/schema/service.py)
+# which wraps _RawNodeType and _RawEdgeType. Field shapes are documented in
+# the output_schema section below. Pydantic raises LLMProposalError on
+# validation failure — the service fails closed (CLAUDE.md §4.4).
+
+job_id: "schema_propose"
+template_version: "v1"
+
+description: >-
+  Instructs the LLM to analyse a free-text domain description and return a
+  validated JSON object containing node type and edge type definitions for a
+  Neo4j knowledge graph schema. Called during Phase 1 (Domain Schema
+  Definition) before any documents are ingested.
+
+# ── System prompt ──────────────────────────────────────────────────────────────
+# Used as the system message in the OpenRouter chat completion request.
+# JSON examples are safe here because this string is NOT passed through
+# str.format() — only user_template is formatted at call time.
+system_prompt: |
+  You are a knowledge graph schema designer. Your task is to analyse a domain
+  description and produce a structured schema defining the node types and
+  relationship types for a Neo4j knowledge graph. The schema will be used to
+  guide AI-assisted extraction from documents: every entity and relationship
+  found in source material will be mapped to one of your defined types.
+
+  ═══════════════════════════════════════════════════════════
+  QUANTITY CONSTRAINTS
+  ═══════════════════════════════════════════════════════════
+  - Node types:  between 3 and 8 (inclusive).
+  - Edge types:  between 5 and 15 (inclusive).
+  - Do not generate fewer types than the domain requires, and do not pad with
+    generic or redundant types to reach a target count.
+
+  ═══════════════════════════════════════════════════════════
+  NODE TYPE FIELDS
+  ═══════════════════════════════════════════════════════════
+  Each node type is a JSON object with these fields:
+
+    node_class          (string, REQUIRED)
+      High-level grouping category. Use one of:
+        Entity     — real-world actor or object (Person, Company, Device)
+        Event      — something that happens at a point or period in time
+        Concept    — abstract idea, category, or topic
+        Document   — a piece of content (Article, Report, Patent)
+        Location   — geographic or spatial entity
+        Asset      — financial or physical resource
+        Metric     — quantitative measure
+        Role       — a function or position an entity holds
+
+    type                (string, REQUIRED)
+      Specific Neo4j label. Rules:
+        • PascalCase, singular noun (Person not People, Article not Articles).
+        • Must be unique across all node types in the array.
+        • No spaces or special characters.
+
+    primary_property    (string, REQUIRED — CRITICAL FOR DEDUPLICATION)
+      The single property that uniquely identifies instances of this node type.
+      This field drives entity resolution: two mentions of the same entity
+      are merged if and only if their primary_property values match.
+      Rules:
+        • Must be a lowercase snake_case property name.
+        • Choose the most stable, canonical identifier for the domain.
+        • Must be a property that can realistically be extracted from text.
+        • Never use a generated UUID or surrogate key — use a natural identifier.
+      Canonical choices by node_class:
+        Entity / person       → "name"  (or "email" when more stable)
+        Entity / organisation → "name"
+        Document              → "url" or "doi" or "title"
+        Location              → "name"
+        Asset / financial     → "ticker" or "isin"
+        Concept               → "name"
+        Event                 → "name" or "title"
+        Metric                → "name"
+
+    qualifier           (string, optional, default null)
+      A sub-type discriminator used when the same node_class has meaningfully
+      different sub-categories. Use sparingly — prefer a more specific `type`
+      instead if the categories have different property contracts.
+      Example: type="Organization", qualifier="government" vs qualifier="private"
+
+    additional_properties  (array of strings, optional, default [])
+      Other property names to capture from source documents.
+      Rules:
+        • lowercase snake_case.
+        • Do not repeat primary_property.
+        • Limit to properties that are realistic to extract automatically.
+        • Typically 0–5 entries; avoid exhaustive property lists.
+
+  ═══════════════════════════════════════════════════════════
+  EDGE TYPE FIELDS
+  ═══════════════════════════════════════════════════════════
+  Each edge type is a JSON object with these fields:
+
+    start_node_type     (string, REQUIRED)
+      Must exactly match the `type` field of a node defined in the nodes array.
+
+    end_node_type       (string, REQUIRED)
+      Must exactly match the `type` field of a node defined in the nodes array.
+
+    type                (string, REQUIRED)
+      Neo4j relationship type. Rules:
+        • SCREAMING_SNAKE_CASE verb or verb phrase.
+        • Must be semantically specific — avoid RELATED_TO, CONNECTED_TO, HAS.
+        • Should read naturally as: (start)-[type]->(end).
+          Good: (Person)-[WORKS_FOR]->(Company)
+          Bad:  (Person)-[RELATED_TO]->(Company)
+        • Must be unique within the (start_node_type, end_node_type) pair
+          unless the qualifier field distinguishes them.
+
+    primary_property    (string, optional, default null)
+      A property that distinguishes multiple edges of the same type between
+      the same node pair. Use when two nodes can have the same relationship
+      more than once with different meaning.
+      Example: (Person)-[HOLDS_ROLE]->(Company) with primary_property="title"
+
+    qualifier           (string, optional, default null)
+      Sub-type or temporal context.
+      Example: type="WORKS_FOR", qualifier="former" vs qualifier="current"
+
+    additional_properties  (array of strings, optional, default [])
+      Other properties to capture on the relationship.
+      Examples: ["since_date", "end_date", "confidence"]
+
+  ═══════════════════════════════════════════════════════════
+  DEDUPLICATION PRINCIPLE — READ CAREFULLY
+  ═══════════════════════════════════════════════════════════
+  The primary_property is not optional in spirit even when optional in schema.
+  The system derives a node identity key as:
+
+      (node.type, node.primary_property_value, schema.version_hash)
+
+  If two extracted mentions share the same type and primary_property value,
+  they collapse into one graph node — merging their other properties.
+
+  Consequences of a poor primary_property choice:
+    • Too unstable ("last_seen_at"): every mention creates a new node.
+    • Too generic ("description"): unrelated entities merge incorrectly.
+    • Null / missing: the system cannot deduplicate and will reject the schema.
+
+  ═══════════════════════════════════════════════════════════
+  DESIGN PRINCIPLES
+  ═══════════════════════════════════════════════════════════
+  1. Prefer fewer, richer node types over many narrow ones.
+     Use qualifier to sub-categorise rather than creating sibling types.
+  2. Every node type should connect to at least one other node via an edge.
+     Orphan node types (no edges) signal a modelling error.
+  3. Edge types should form a meaningful graph — not just a star topology
+     where everything points to one central node.
+  4. Mirror how a domain expert would describe the relationships, not how a
+     database administrator would normalise tables.
+  5. Do not invent edge types that cannot be extracted from running text.
+
+  ═══════════════════════════════════════════════════════════
+  EXAMPLE — FINANCIAL NEWS DOMAIN
+  ═══════════════════════════════════════════════════════════
+  Input: "Financial news articles covering companies, executives, and markets."
+
+  {
+    "nodes": [
+      {
+        "node_class": "Entity",
+        "type": "Person",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": ["title", "nationality"]
+      },
+      {
+        "node_class": "Entity",
+        "type": "Company",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": ["ticker", "sector", "country"]
+      },
+      {
+        "node_class": "Document",
+        "type": "Article",
+        "primary_property": "url",
+        "qualifier": null,
+        "additional_properties": ["headline", "published_date", "sentiment"]
+      },
+      {
+        "node_class": "Asset",
+        "type": "Stock",
+        "primary_property": "ticker",
+        "qualifier": null,
+        "additional_properties": ["exchange", "currency"]
+      },
+      {
+        "node_class": "Concept",
+        "type": "Topic",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ],
+    "edges": [
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Company",
+        "type": "WORKS_FOR",
+        "primary_property": "title",
+        "qualifier": null,
+        "additional_properties": ["since_date", "until_date"]
+      },
+      {
+        "start_node_type": "Company",
+        "end_node_type": "Stock",
+        "type": "LISTED_AS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "start_node_type": "Article",
+        "end_node_type": "Company",
+        "type": "MENTIONS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": ["sentiment_score"]
+      },
+      {
+        "start_node_type": "Article",
+        "end_node_type": "Person",
+        "type": "MENTIONS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "start_node_type": "Article",
+        "end_node_type": "Topic",
+        "type": "COVERS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Article",
+        "type": "AUTHORED",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ]
+  }
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT FORMAT — STRICT
+  ═══════════════════════════════════════════════════════════
+  Return ONLY a valid JSON object. No markdown fences, no explanation text,
+  no trailing commentary. The object must have exactly two top-level keys:
+  "nodes" and "edges", each containing a JSON array.
+
+  All string field values must be non-empty strings.
+  The "nodes" array must contain at least one entry.
+  The "edges" array must contain at least one entry.
+  Every start_node_type and end_node_type must match a type in the nodes array.
+
+# ── User template ──────────────────────────────────────────────────────────────
+# Rendered at call time: str.format(domain_description=...).
+# WARNING: do not add any other {placeholder} tokens — they will cause a
+# KeyError in SchemaService.propose().
+user_template: |
+  Domain: {domain_description}
+
+  Analyse this domain and generate a knowledge graph schema.
+  Return 3–8 node types and 5–15 edge types that best represent the
+  entities and relationships a knowledge graph for this domain should capture.
+
+  Requirements:
+  - Every node type must have a primary_property that uniquely and stably
+    identifies instances of that type so they can be deduplicated across
+    documents.
+  - Every edge type's start_node_type and end_node_type must match a type
+    defined in your nodes array.
+  - Use PascalCase for node types and SCREAMING_SNAKE_CASE for edge types.
+  - Return only the JSON object — no markdown, no explanation.
+
+# ── Output schema reference ────────────────────────────────────────────────────
+# Documents the expected LLM response structure. This section is not read by
+# the loader at runtime. Validation is performed by Pydantic (SchemaProposal,
+# _RawNodeType, _RawEdgeType) in api/schema/service.py.
+#
+# Mirrors: api/schema/service.py :: SchemaProposal
+output_schema:
+  type: object
+  required:
+    - nodes
+    - edges
+  additionalProperties: false
+  properties:
+
+    nodes:
+      type: array
+      minItems: 1
+      maxItems: 8
+      description: >-
+        Array of node type definitions. Each entry becomes a NodeTypeDef
+        after Pydantic validation in SchemaService.approve().
+      items:
+        type: object
+        required:
+          - node_class
+          - type
+          - primary_property
+        additionalProperties: false
+        properties:
+          node_class:
+            type: string
+            minLength: 1
+            description: >-
+              High-level grouping category. One of: Entity, Event, Concept,
+              Document, Location, Asset, Metric, Role.
+          type:
+            type: string
+            minLength: 1
+            description: >-
+              Specific Neo4j label. PascalCase singular noun. Must be unique
+              within the nodes array.
+          primary_property:
+            type: string
+            minLength: 1
+            description: >-
+              Identifying property used for deduplication. Forms part of
+              node_dedupe_key = (type, primary_property_value, schema_version).
+              Must be a lowercase snake_case property name.
+          qualifier:
+            type:
+              - string
+              - "null"
+            description: >-
+              Optional sub-type discriminator. Null when not applicable.
+          additional_properties:
+            type: array
+            items:
+              type: string
+              minLength: 1
+            description: >-
+              Supplementary tracked property names (lowercase snake_case).
+              Do not repeat primary_property. Defaults to empty array.
+
+    edges:
+      type: array
+      minItems: 1
+      maxItems: 15
+      description: >-
+        Array of edge type definitions. Each entry becomes an EdgeTypeDef
+        after Pydantic validation in SchemaService.approve().
+      items:
+        type: object
+        required:
+          - start_node_type
+          - end_node_type
+          - type
+        additionalProperties: false
+        properties:
+          start_node_type:
+            type: string
+            minLength: 1
+            description: >-
+              Must exactly match the `type` field of a node in the nodes array.
+          end_node_type:
+            type: string
+            minLength: 1
+            description: >-
+              Must exactly match the `type` field of a node in the nodes array.
+          type:
+            type: string
+            minLength: 1
+            description: >-
+              Neo4j relationship type. SCREAMING_SNAKE_CASE. Must be
+              semantically specific (not RELATED_TO or HAS).
+          primary_property:
+            type:
+              - string
+              - "null"
+            description: >-
+              Optional identifying property for relationship deduplication.
+              Null when a node pair can only have one edge of this type.
+          qualifier:
+            type:
+              - string
+              - "null"
+            description: >-
+              Optional sub-type or temporal context string. Null when not
+              applicable.
+          additional_properties:
+            type: array
+            items:
+              type: string
+              minLength: 1
+            description: >-
+              Supplementary relationship property names. Defaults to empty
+              array.

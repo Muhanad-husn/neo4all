@@ -236,7 +236,8 @@ def main() -> None:
     if phase == Phase.INIT:
         _render_phase_init(state)
     elif phase == Phase.SCHEMA:
-        _render_phase_placeholder(phase, "SPEC-02")
+        from ui.pages import schema as schema_page
+        schema_page.main()
     elif phase == Phase.INGESTION:
         _render_phase_placeholder(phase, "SPEC-03")
     elif phase == Phase.EXTRACTION:

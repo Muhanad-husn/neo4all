@@ -9,7 +9,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 | Increment | Version | Description | Status |
 |-----------|---------|-------------|--------|
 | SPEC-01   | 0.1.0   | Scaffolding, session lifecycle, logging, caching, monitoring | ✅ Complete  |
-| SPEC-02   | 0.2.0   | Domain schema definition | Pending |
+| SPEC-02   | 0.2.0   | Domain schema definition | ✅ Complete |
 | SPEC-03   | 0.3.0   | Document ingestion & chunking | Pending |
 | SPEC-04   | 0.4.0   | AI-assisted extraction | Pending |
 | SPEC-05   | 0.5.0   | Deterministic candidate generation | Pending |
@@ -106,7 +106,7 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increment 1)
+### Available Endpoints (Increments 1–2)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -114,15 +114,42 @@ FastAPI auto-generates interactive docs at:
 | GET | `/api/monitoring/health` | Per-service connectivity with latency |
 | GET | `/api/monitoring/logs/recent` | Recent log entries (filterable) |
 | GET | `/api/monitoring/run/{run_id}` | Run-level summary |
+| POST | `/api/schema/propose` | Generate candidate schema via LLM for human review |
+| POST | `/api/schema/approve` | Lock the domain schema for a run (immutable after this call) |
+| GET | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query) |
 
 ---
 
-## Known Limitations (Increment 1)
+## Phase 1: Domain Schema Definition
 
-- No document ingestion, extraction, or curation yet (SPEC-02 through SPEC-08)
-- No schema definition phase yet
+Before any documents can be ingested, a domain schema must be defined and locked for the run. The workflow is:
+
+1. **Describe the domain** — enter a plain-language description of the domain (e.g. "scientific papers on climate change").
+2. **AI proposes a schema** — `POST /api/schema/propose` sends the description to the LLM (via OpenRouter) and returns typed candidate node and edge types for review.
+3. **Review and edit** — the UI presents the proposal in editable node and edge type tables. Any type, primary property, or qualifier can be adjusted before approval.
+4. **Approve to lock** — `POST /api/schema/approve` freezes the schema for the run. A deterministic `version_hash` is computed from the canonical sorted representation. The locked schema is cached in Redis indefinitely (no TTL) and cannot be modified for the lifetime of the run.
+
+### Prompt Template System
+
+LLM prompts are stored as versioned YAML templates under `prompts/`, keyed by `job_id` and `template_version`:
+
+```
+prompts/
+└── schema_propose/
+    └── v1.yaml     # job_id=schema_propose, template_version=v1
+```
+
+No prompt strings are inlined in service code. Templates are immutable once used in a run. Each template carries a `system` prompt and a `user` template with named placeholders (e.g. `{domain_description}`).
+
+---
+
+## Known Limitations (Increment 2)
+
+- No document ingestion, extraction, or curation yet (SPEC-03 through SPEC-08)
+- Schema definition phase (Phase 1) is complete — ingestion (Phase 2) is next
 - Monitoring endpoints return stub data until downstream services are implemented
 - ARQ worker entry point defined but worker jobs not yet implemented
+- `ui/pages/schema.py` exceeds the ~400-line module limit (716 lines); scheduled for split into `schema.py` + `schema_helpers.py` before SPEC-03
 
 ---
 

@@ -36,7 +36,7 @@ from api.observability.middleware import CorrelationMiddleware
 
 logger = get_logger(__name__)
 
-_VERSION = "0.1.0"
+_VERSION = "0.2.0"
 
 
 @asynccontextmanager
@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     """
     from api.routers import health as health_router
     from api.routers import monitoring as monitoring_router
+    from api.routers import schema as schema_router
 
     app = FastAPI(
         title="neo4all API",
@@ -120,6 +121,8 @@ def create_app() -> FastAPI:
     app.include_router(health_router.router, prefix="/api")
     # /api/monitoring/health  /api/monitoring/logs/recent  /api/monitoring/run/{id}
     app.include_router(monitoring_router.router, prefix="/api/monitoring")
+    # /api/schema/propose  /api/schema/approve  /api/schema/{run_id}
+    app.include_router(schema_router.router, prefix="/api/schema")
 
     return app
 

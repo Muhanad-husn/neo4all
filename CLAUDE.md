@@ -292,7 +292,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 | Increment | Version | Status |
 |-----------|---------|--------|
 | [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 0.1.0 | ✅ Complete |
-| [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | Pending |
+| [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | ✅ Complete |
 | [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | Pending |
 | [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | Pending |
 | [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | Pending |

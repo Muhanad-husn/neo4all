@@ -58,6 +58,12 @@ _K_NEO4J_PASSWORD = "_sm_neo4j_password"
 _K_OPENROUTER_API_KEY = "_sm_openrouter_api_key"
 _K_PANEL_MODES = "_sm_panel_modes"
 _K_PHASE_START_TIMES = "_sm_phase_start_times"
+# Schema proposal — intermediate state between propose and approve (SPEC-02).
+# Cleared on session reset; stored in StateManager rather than directly in
+# st.session_state so that all access follows the CLAUDE.md §8 contract.
+_K_PROPOSED_NODES = "_sm_proposed_nodes"      # list[dict] | None
+_K_PROPOSED_EDGES = "_sm_proposed_edges"      # list[dict] | None
+_K_PROPOSAL_VERSION = "_sm_proposal_version"  # int; incremented on each propose
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -109,6 +115,9 @@ class StateManager:
             _K_OPENROUTER_API_KEY: None,
             _K_PANEL_MODES: {},
             _K_PHASE_START_TIMES: {Phase.INIT.value: init_time},
+            _K_PROPOSED_NODES: None,
+            _K_PROPOSED_EDGES: None,
+            _K_PROPOSAL_VERSION: 0,
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -162,6 +171,25 @@ class StateManager:
     def phase_start_times(self) -> dict[int, str]:
         """Map of Phase.value → ISO 8601 UTC start time for each entered phase."""
         return st.session_state[_K_PHASE_START_TIMES]
+
+    @property
+    def proposed_nodes(self) -> list[Any] | None:
+        """LLM-proposed node type dicts from the last propose call, or None."""
+        return st.session_state[_K_PROPOSED_NODES]  # type: ignore[return-value]
+
+    @property
+    def proposed_edges(self) -> list[Any] | None:
+        """LLM-proposed edge type dicts from the last propose call, or None."""
+        return st.session_state[_K_PROPOSED_EDGES]  # type: ignore[return-value]
+
+    @property
+    def proposal_version(self) -> int:
+        """Monotonically increasing counter; incremented on each propose call.
+
+        Used as a widget key suffix so that each new proposal gets a fresh
+        data_editor widget (prevents stale edits carrying over to a new proposal).
+        """
+        return st.session_state[_K_PROPOSAL_VERSION]  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Panel mode tracking
@@ -275,3 +303,29 @@ class StateManager:
             version: Schema version identifier (e.g. "v1.0").
         """
         st.session_state[_K_SCHEMA_VERSION] = version
+
+    def set_proposed_schema(self, nodes: list[Any], edges: list[Any]) -> None:
+        """Store a new schema proposal and increment the proposal version counter.
+
+        Called after a successful POST /api/schema/propose response. The
+        version counter increment forces data_editor widgets to re-initialise
+        with fresh keys, clearing any edits from a previous proposal.
+
+        Args:
+            nodes: List of node type dicts from the API response.
+            edges: List of edge type dicts from the API response.
+        """
+        st.session_state[_K_PROPOSED_NODES] = nodes
+        st.session_state[_K_PROPOSED_EDGES] = edges
+        st.session_state[_K_PROPOSAL_VERSION] = (
+            st.session_state[_K_PROPOSAL_VERSION] + 1
+        )
+
+    def clear_proposed_schema(self) -> None:
+        """Clear the current proposal so the domain input form is shown again.
+
+        Does NOT reset the proposal_version counter — the next call to
+        set_proposed_schema() will increment it again, giving fresh widget keys.
+        """
+        st.session_state[_K_PROPOSED_NODES] = None
+        st.session_state[_K_PROPOSED_EDGES] = None
