@@ -239,7 +239,8 @@ def main() -> None:
         from ui.pages import schema as schema_page
         schema_page.main()
     elif phase == Phase.INGESTION:
-        _render_phase_placeholder(phase, "SPEC-03")
+        from ui.pages import ingestion as ingestion_page
+        ingestion_page.main()
     elif phase == Phase.EXTRACTION:
         _render_phase_placeholder(phase, "SPEC-04")
     elif phase == Phase.CURATION:

@@ -194,6 +194,12 @@ QDRANT_URL               # Optional: for remote instance
 # Observability
 LOG_FORMAT                 # json (production) or console (development)
 LOG_LEVEL                  # DEBUG, INFO, WARNING, ERROR — default INFO
+
+# Ingestion parser toggles (SPEC-03)
+ENABLE_DOCLING             # true/false — enable Docling tier (default true)
+ENABLE_UNSTRUCTURED        # true/false — enable Unstructured tier (default true)
+ENABLE_RAW_FALLBACK        # true/false — enable raw-text fallback tier (default true)
+EMBEDDING_MODEL            # sentence-transformers model name (default all-MiniLM-L6-v2)
 ```
 
 ---
@@ -293,7 +299,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 |-----------|---------|--------|
 | [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 0.1.0 | ✅ Complete |
 | [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | ✅ Complete |
-| [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | Pending |
+| [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | ✅ Complete |
 | [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | Pending |
 | [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | Pending |
 | [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | Pending |

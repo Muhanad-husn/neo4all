@@ -10,7 +10,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 |-----------|---------|-------------|--------|
 | SPEC-01   | 0.1.0   | Scaffolding, session lifecycle, logging, caching, monitoring | ✅ Complete  |
 | SPEC-02   | 0.2.0   | Domain schema definition | ✅ Complete |
-| SPEC-03   | 0.3.0   | Document ingestion & chunking | Pending |
+| SPEC-03   | 0.3.0   | Document ingestion & chunking | ✅ Complete |
 | SPEC-04   | 0.4.0   | AI-assisted extraction | Pending |
 | SPEC-05   | 0.5.0   | Deterministic candidate generation | Pending |
 | SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | Pending |
@@ -106,7 +106,7 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increments 1–2)
+### Available Endpoints (Increments 1–3)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -117,6 +117,9 @@ FastAPI auto-generates interactive docs at:
 | POST | `/api/schema/propose` | Generate candidate schema via LLM for human review |
 | POST | `/api/schema/approve` | Lock the domain schema for a run (immutable after this call) |
 | GET | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query) |
+| POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded PDF or DOCX document |
+| GET | `/api/documents/{run_id}` | List all successfully ingested documents for a run |
+| GET | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
 
 ---
 
@@ -143,13 +146,36 @@ No prompt strings are inlined in service code. Templates are immutable once used
 
 ---
 
-## Known Limitations (Increment 2)
+## Phase 2: Document Ingestion & Chunking
 
-- No document ingestion, extraction, or curation yet (SPEC-03 through SPEC-08)
-- Schema definition phase (Phase 1) is complete — ingestion (Phase 2) is next
+Once a schema is locked, source documents can be uploaded and indexed. The workflow is:
+
+1. **Upload a document** — select a PDF or DOCX file in the Phase 2 UI. Multiple documents can be uploaded one at a time.
+2. **Three-tier parser fallback** — the backend attempts each enabled parser in order and uses the first that succeeds:
+   - **Docling** (primary) — full structural parsing: titles, paragraphs, tables, images, captions. Exports Markdown for high-fidelity chunking.
+   - **Unstructured** (secondary) — broad format support; activated automatically when Docling raises an exception or returns empty output.
+   - **Raw text** (tertiary) — PyPDF2 (PDF) or python-docx (DOCX) flat extraction. No structural metadata. All chunks from this tier carry the `raw_fallback` quality flag.
+   - If all enabled tiers fail → hard reject with a structured error response.
+3. **Semantic chunking** — extracted text is segmented respecting headings (chunk boundaries), table isolation (always standalone), and configurable character/token limits. `chunk_id = SHA-256(doc_id + start_page + chunk_index)` — fully deterministic.
+4. **Quality flags** — soft signals attached per chunk at ingestion time (processing continues):
+   - `raw_fallback` — tertiary raw-text parser was used; no structural metadata present
+   - `low_ocr_confidence` — OCR confidence score below threshold (0.7)
+   - `low_text_density` — fewer than 20 characters in the chunk
+5. **Qdrant indexing** — chunks are embedded via sentence-transformers and upserted to a run-scoped collection (`chunks_{run_id}`) for evidence retrieval in Phase 3. Qdrant is evidence-only and never authoritative.
+6. **Manifest persistence** — a `DocumentManifest` (doc_id, chunk_ids, content_hash, parser_config_hash) is stored in S3 and cached in Redis. On re-upload of an unchanged file with the same parser configuration, the parse step is skipped entirely (incremental reruns).
+
+Parser tiers are individually toggleable via `ENABLE_DOCLING`, `ENABLE_UNSTRUCTURED`, `ENABLE_RAW_FALLBACK` environment variables — useful in CI environments where parser libraries may not be installed.
+
+---
+
+## Known Limitations (Increment 3)
+
+- No AI-assisted extraction, candidate generation, or curation yet (SPEC-04 through SPEC-08)
 - Monitoring endpoints return stub data until downstream services are implemented
 - ARQ worker entry point defined but worker jobs not yet implemented
-- `ui/pages/schema.py` exceeds the ~400-line module limit (716 lines); scheduled for split into `schema.py` + `schema_helpers.py` before SPEC-03
+- Six modules exceed the ~400-line limit and are scheduled for refactoring before SPEC-04: `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/vector/indexer.py` (534), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
+- Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
+- Qdrant collection (`chunks_{run_id}`) is not cleaned up on run deletion — no lifecycle management until SPEC-08
 
 ---
 

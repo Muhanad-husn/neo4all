@@ -75,6 +75,23 @@ class Settings(BaseSettings):
     LOG_FORMAT: Literal["json", "console"] = "json"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    # -------------------------------------------------------------------------
+    # Ingestion parser toggles (SPEC-03 S-03.1)
+    # Set to False to disable a tier; useful for environments where a parser
+    # library is unavailable or for integration testing specific tiers.
+    # All three default to True (full fallback chain enabled).
+    # -------------------------------------------------------------------------
+    ENABLE_DOCLING: bool = True
+    ENABLE_UNSTRUCTURED: bool = True
+    ENABLE_RAW_FALLBACK: bool = True
+
+    # -------------------------------------------------------------------------
+    # Vector indexing — sentence-transformers embedding model (SPEC-03 S-03.5)
+    # Must match the model used at query time so vectors are comparable.
+    # Changing this after indexing requires re-ingestion of all documents.
+    # -------------------------------------------------------------------------
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
