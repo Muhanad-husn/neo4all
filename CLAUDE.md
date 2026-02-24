@@ -303,7 +303,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 | [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | ✅ Complete |
 | [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | ✅ Complete |
 | [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | ✅ Complete |
-| [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | Pending |
+| [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | ✅ Complete |
 | [SPEC-08](docs/specs/SPEC-08-hardening.md) | 0.8.0 | Pending |
 
 Do not begin increment N+1 until increment N passes all acceptance criteria and the SKILL-B governance checklist.

@@ -142,3 +142,67 @@ class JobStatusResponse(BaseResponse):
     completed: int = 0
     failed: int = 0
     pending: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Agent telemetry models — GET /api/monitoring/metrics  (SPEC-07 S-07.10)
+#                           GET /api/monitoring/agents/{run_id}
+# ---------------------------------------------------------------------------
+
+
+class AgentUsageSummary(BaseModel):
+    """Aggregated LLM usage for a single agent type.
+
+    Attributes:
+        agent_name:       Agent identifier (orchestrator, agent-a, agent-b, agent-p).
+        total_tokens_in:  Sum of prompt tokens across all invocations.
+        total_tokens_out: Sum of completion tokens across all invocations.
+        total_cost:       Sum of estimated USD cost across all invocations.
+        invocation_count: Number of times this agent was invoked.
+    """
+
+    agent_name: str
+    total_tokens_in: int
+    total_tokens_out: int
+    total_cost: float
+    invocation_count: int
+
+
+class AggregatedMetricsResponse(BaseResponse):
+    """Response model for GET /api/monitoring/metrics.
+
+    Returns aggregated LLM usage across all runs, broken down by agent type,
+    plus a global total of candidates processed.
+    """
+
+    agents: list[AgentUsageSummary]
+    total_candidates_processed: int
+
+
+class AgentTelemetryOut(BaseModel):
+    """Per-agent telemetry record returned in AgentTelemetryResponse.
+
+    Mirrors AgentTelemetryRecord from api/observability/metrics.py but
+    decoupled as a router-level output model (SKILL-A R-A1).
+    """
+
+    run_id: str
+    candidate_id: str
+    agent_name: str
+    tokens_in: int
+    tokens_out: int
+    cost_estimate: float
+    execution_time_ms: float
+    evidence_score: float | None = None
+    timestamp: str
+
+
+class AgentTelemetryResponse(BaseResponse):
+    """Response model for GET /api/monitoring/agents/{run_id}.
+
+    Returns per-candidate agent chain telemetry for all candidates
+    processed in the specified run.
+    """
+
+    records: list[AgentTelemetryOut]
+    total: int

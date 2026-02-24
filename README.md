@@ -14,7 +14,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 | SPEC-04   | 0.4.0   | AI-assisted extraction & ARQ worker | ✅ Complete |
 | SPEC-05   | 0.5.0   | Deterministic candidate generation | ✅ Complete |
 | SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | ✅ Complete |
-| SPEC-07   | 0.7.0   | AI curation agent pipeline | Pending |
+| SPEC-07   | 0.7.0   | AI curation agent pipeline | ✅ Complete |
 | SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation | Pending |
 
 ---
@@ -108,7 +108,7 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increments 1–6)
+### Available Endpoints (Increments 1–7)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -142,6 +142,8 @@ FastAPI auto-generates interactive docs at:
 | GET | `/api/graph/nodes/{run_id}` | Paginated node browser (max 50/page, filterable by node_type) |
 | GET | `/api/graph/edges/{run_id}/count` | Total edge count by type for a run |
 | GET | `/api/graph/edges/{run_id}` | Paginated edge browser (max 50/page, filterable by edge_type) |
+| GET | `/api/monitoring/metrics` | Aggregated LLM usage per agent type (tokens, cost, invocations) |
+| GET | `/api/monitoring/agents/{run_id}` | Per-candidate agent chain telemetry for a run |
 
 ---
 
@@ -243,11 +245,36 @@ Once candidates are generated, each can be actioned through the governed mutatio
 
 ---
 
-## Known Limitations (Increment 6)
+## Phase 4: Curation — Layer 3 (AI Agent Pipeline)
 
-- AI curation agent pipeline (Agent-A, Agent-B, Agent-P) not yet implemented (SPEC-07)
+Once candidates are generated and evidence is available, the AI curation agent pipeline can process candidates in batch through a governed multi-agent chain.
+
+1. **Orchestrator (non-LLM)** — assigns a risk class (low/medium/high) and tool budget (token limits, cost cap, retrieval rounds) to each candidate. Deterministic: same candidate + config always produces the same decision. Batch size capped at 50.
+2. **Agent-A: Evidence Assembly (LLM)** — retrieves graph context and Qdrant chunks for a candidate, classifies evidence (supporting/corroborating/conflicting) via LLM, computes a sufficiency score. Output: typed `EvidenceReport`. Does not decide actions.
+3. **Agent-B: Retrieval Augmentation (LLM)** — triggered only when Agent-A flags insufficient evidence. Performs loop-guarded retrieval rounds (max N per budget) to gather additional evidence. Terminates on: threshold met, max rounds, budget exhausted, or voluntary empty query.
+4. **Agent-P: Proposal Composer (LLM)** — receives candidate + evidence report, selects proposal class, cites rule IDs and evidence, writes rationale. Outputs governed `ProposalPacket` — never Cypher, never executable instructions. A regex safety guard rejects any output containing Cypher query syntax or executable code patterns.
+5. **Pipeline execution** — all three agent jobs run as chained ARQ worker tasks: `evidence_assembly_job → retrieval_augmentation_job (conditional) → proposal_composition_job`. AI proposals enter the same governed pipeline as manual curation (propose → diff → approval → execution).
+6. **Batch processing** — the curation UI supports selecting multiple candidates and dispatching them through the agent pipeline in parallel. Progress is tracked per-candidate in real time.
+7. **Agent telemetry** — per-agent metrics (tokens in/out, cost estimate, execution time, evidence score) are recorded per `(run_id, candidate_id, agent_name)` and surfaced via `GET /api/monitoring/metrics` (aggregated) and `GET /api/monitoring/agents/{run_id}` (per-candidate). The monitoring UI displays agent pipeline panels with budget consumption gauges.
+
+### Prompt Templates: Agent Pipeline
+
+```
+prompts/
+├── evidence_assembly/
+│   └── v1.yaml     # job_id=evidence_assembly, template_version=v1
+├── retrieval_augmentation/
+│   └── v1.yaml     # job_id=retrieval_augmentation, template_version=v1
+└── proposal_composer/
+    └── v1.yaml     # job_id=proposal_composer, template_version=v1
+```
+
+---
+
+## Known Limitations (Increment 7)
+
 - `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added in a later increment
-- Nine modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `ui/pages/curation.py` (917), `api/agents/execution.py` (713), `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/services/curation/candidates.py` (616), `api/vector/indexer.py` (534), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
+- Eleven modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `ui/pages/curation.py` (917), `api/worker/jobs.py` (855), `api/agents/execution.py` (713), `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/services/curation/candidates.py` (616), `api/vector/indexer.py` (534), `api/routers/monitoring.py` (526), `api/storage/artifacts.py` (470), `ui/pages/monitoring.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
 - ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation into `api/common/arq_pool.py` is a SKILL-B R-B7 item
 - `ui/pages/curation.py` should be split into `curation.py` (Layer 1) + `curation_pipeline.py` (Layer 2); deferred to SPEC-08 refactoring pass
 - `_render_candidates_section()` in `ui/pages/curation.py` is dead code (inlined in `main()`); scheduled for removal in the split refactor

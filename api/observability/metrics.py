@@ -37,9 +37,48 @@ histogram observe().
 
 import threading
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel
+
 _HISTOGRAM_MAXLEN: int = 10_000
+
+
+# ---------------------------------------------------------------------------
+# Agent Telemetry (SPEC-07 S-07.10)
+# ---------------------------------------------------------------------------
+
+
+class AgentTelemetryRecord(BaseModel):
+    """Immutable telemetry record for a single agent execution.
+
+    Keyed by (run_id, candidate_id, agent_name) in the telemetry store.
+    Recorded after each agent completes (success or failure).
+
+    Attributes:
+        run_id:            Governed run context.
+        candidate_id:      Candidate being processed by the agent chain.
+        agent_name:        Agent identifier (orchestrator, agent-a, agent-b, agent-p).
+        tokens_in:         Prompt tokens consumed by the LLM call.
+        tokens_out:        Completion tokens produced by the LLM call.
+        cost_estimate:     Estimated USD cost of the LLM call.
+        execution_time_ms: Wall-clock execution time in milliseconds.
+        evidence_score:    Evidence sufficiency score (Agent-A only; None for others).
+        timestamp:         ISO 8601 UTC timestamp of record creation.
+    """
+
+    run_id: str
+    candidate_id: str
+    agent_name: str
+    tokens_in: int
+    tokens_out: int
+    cost_estimate: float
+    execution_time_ms: float
+    evidence_score: float | None = None
+    timestamp: str
+
+    model_config = {"frozen": True}
 
 
 class _Histogram:
@@ -176,3 +215,142 @@ _COLLECTOR: MetricsCollector = MetricsCollector()
 def get_metrics() -> MetricsCollector:
     """Return the process-level MetricsCollector singleton."""
     return _COLLECTOR
+
+
+# ---------------------------------------------------------------------------
+# Agent Telemetry Store (SPEC-07 S-07.10)
+# ---------------------------------------------------------------------------
+# In-memory, thread-safe store for per-agent execution telemetry.
+# Keyed by (run_id, candidate_id, agent_name) — one record per agent
+# invocation.  Overwrites on re-execution of the same agent for the same
+# candidate (idempotent).
+# ---------------------------------------------------------------------------
+
+_telemetry_lock = threading.Lock()
+_telemetry: dict[tuple[str, str, str], AgentTelemetryRecord] = {}
+
+
+def record_agent_telemetry(
+    *,
+    run_id: str,
+    candidate_id: str,
+    agent_name: str,
+    tokens_in: int,
+    tokens_out: int,
+    cost_estimate: float,
+    execution_time_ms: float,
+    evidence_score: float | None = None,
+) -> AgentTelemetryRecord:
+    """Store a telemetry record for a single agent execution.
+
+    Args:
+        run_id:            Governed run context.
+        candidate_id:      Candidate being processed.
+        agent_name:        Agent identifier.
+        tokens_in:         Prompt tokens consumed.
+        tokens_out:        Completion tokens produced.
+        cost_estimate:     Estimated USD cost.
+        execution_time_ms: Wall-clock time in ms.
+        evidence_score:    Evidence sufficiency (Agent-A only).
+
+    Returns:
+        The persisted AgentTelemetryRecord.
+    """
+    record = AgentTelemetryRecord(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        agent_name=agent_name,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_estimate=cost_estimate,
+        execution_time_ms=execution_time_ms,
+        evidence_score=evidence_score,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+    key = (run_id, candidate_id, agent_name)
+    with _telemetry_lock:
+        _telemetry[key] = record
+    return record
+
+
+def get_agent_telemetry(run_id: str) -> list[AgentTelemetryRecord]:
+    """Return all telemetry records for a given run.
+
+    Records are returned sorted by (candidate_id, agent_name) for
+    deterministic ordering in API responses.
+
+    Args:
+        run_id: The governed run to query.
+
+    Returns:
+        List of AgentTelemetryRecord for all candidates in the run.
+        Empty list if no telemetry has been recorded for this run.
+    """
+    with _telemetry_lock:
+        records = [
+            rec for key, rec in _telemetry.items() if key[0] == run_id
+        ]
+    records.sort(key=lambda r: (r.candidate_id, r.agent_name))
+    return records
+
+
+class AggregatedAgentMetrics(BaseModel):
+    """Aggregated LLM usage across all runs, grouped by agent type.
+
+    Attributes:
+        agent_name:      Agent identifier.
+        total_tokens_in:  Sum of prompt tokens across all invocations.
+        total_tokens_out: Sum of completion tokens across all invocations.
+        total_cost:       Sum of cost_estimate across all invocations.
+        invocation_count: Number of invocations recorded.
+    """
+
+    agent_name: str
+    total_tokens_in: int
+    total_tokens_out: int
+    total_cost: float
+    invocation_count: int
+
+    model_config = {"frozen": True}
+
+
+def get_aggregated_metrics() -> list[AggregatedAgentMetrics]:
+    """Return aggregated LLM usage metrics grouped by agent type.
+
+    Iterates the full telemetry store and sums tokens, cost, and counts
+    per agent_name.  Returned sorted by agent_name for stable ordering.
+
+    Returns:
+        List of AggregatedAgentMetrics, one per distinct agent_name.
+        Empty list if no telemetry has been recorded.
+    """
+    with _telemetry_lock:
+        all_records = list(_telemetry.values())
+
+    accum: dict[str, dict[str, Any]] = {}
+    for rec in all_records:
+        bucket = accum.setdefault(
+            rec.agent_name,
+            {
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "total_cost": 0.0,
+                "invocation_count": 0,
+            },
+        )
+        bucket["total_tokens_in"] += rec.tokens_in
+        bucket["total_tokens_out"] += rec.tokens_out
+        bucket["total_cost"] += rec.cost_estimate
+        bucket["invocation_count"] += 1
+
+    results = [
+        AggregatedAgentMetrics(agent_name=name, **vals)
+        for name, vals in sorted(accum.items())
+    ]
+    return results
+
+
+def reset_agent_telemetry() -> None:
+    """Clear all agent telemetry records. Intended for use in tests only."""
+    with _telemetry_lock:
+        _telemetry.clear()

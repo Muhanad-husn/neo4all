@@ -1,0 +1,14 @@
+{
+  "candidate_id": "5c350d42374050dc60ceed1c5f49a421b13ad20f78d103ef8b8bd46427e2fc04",
+  "proposal_class": "merge",
+  "rule_ids": [
+    "node:Person",
+    "dedup:exact_name_match"
+  ],
+  "evidence_ids": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "rationale": "Two Person nodes share effectively identical names ('Jane Doe' vs 'Jane M Doe'). Supporting evidence from doc_fixture_001 confirms they refer to the same individual. Recommend merging into canonical form.",
+  "confidence_score": 0.88
+}

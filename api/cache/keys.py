@@ -154,6 +154,17 @@ class CacheKey:
         return f"confirm:{token}"
 
     @staticmethod
+    def agent_job(run_id: str, candidate_id: str) -> str:
+        """Key for per-candidate agent pipeline job status.
+
+        Pattern: agent_job:{run_id}:{candidate_id}
+        TTL: 86400 s (24 hours — mirrors extraction job status).
+        Written by api/worker/jobs.py (evidence/retrieval/proposal jobs);
+        read by api/routers/monitoring.py (GET /api/monitoring/agents/{run_id}).
+        """
+        return f"agent_job:{run_id}:{candidate_id}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 

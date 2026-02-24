@@ -27,7 +27,12 @@ from __future__ import annotations
 
 from api.graph.client import get_neo4j_client
 from api.observability.logger import configure_logging, get_logger
-from api.worker.jobs import extraction_job
+from api.worker.jobs import (
+    evidence_assembly_job,
+    extraction_job,
+    proposal_composition_job,
+    retrieval_augmentation_job,
+)
 
 logger = get_logger(__name__)
 
@@ -101,7 +106,12 @@ class WorkerSettings:
         queue_name:            Redis list key that holds enqueued jobs.
     """
 
-    functions = [extraction_job]
+    functions = [
+        extraction_job,
+        evidence_assembly_job,
+        retrieval_augmentation_job,
+        proposal_composition_job,
+    ]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = _MAX_JOBS

@@ -2,7 +2,7 @@
 api/routers/monitoring.py — GET /api/monitoring/*
 
 Extended health with per-service latency, recent log retrieval, run-level
-summary, ARQ worker status, and per-run job tracking.
+summary, ARQ worker status, per-run job tracking, and agent telemetry.
 All business logic is delegated to services and observability helpers
 (SKILL-B — no business logic in route handlers).
 
@@ -15,6 +15,10 @@ Endpoints added in SPEC-04 (SKILL-D R-D11):
     GET /api/monitoring/workers           — ARQ queue depth, worker count
     GET /api/monitoring/jobs/{run_id}     — per-chunk extraction job statuses
 
+Endpoints added in SPEC-07 (SKILL-D R-D11):
+    GET /api/monitoring/metrics           — aggregated LLM usage per agent type
+    GET /api/monitoring/agents/{run_id}   — per-candidate agent chain telemetry
+
 Architecture (SKILL-B: thin routers)
 --------------------------------------
 Worker and job data come directly from Redis via the ARQ pool. No S3 calls
@@ -22,6 +26,9 @@ are made here — job status keys are scanned by run-scoped Redis pattern.
 The ARQ pool is a module-level lazy singleton (mirrors api/routers/extraction.py).
 Duplication of _get_arq_pool() is a SKILL-B R-B7 item for governance
 consolidation into api/common/arq_pool.py in a future increment.
+
+Agent telemetry is sourced from the in-memory telemetry store in
+api/observability/metrics.py — no Redis or database queries required.
 
 Caching (SKILL-D)
 -----------------
@@ -41,7 +48,15 @@ from fastapi import APIRouter, Query
 from api.config import get_settings
 from api.models.responses import ErrorDetail
 from api.observability.logger import get_logger, get_recent_logs
+from api.observability.metrics import (
+    get_agent_telemetry,
+    get_aggregated_metrics,
+)
 from api.routers.models import (
+    AggregatedMetricsResponse,
+    AgentTelemetryOut,
+    AgentTelemetryResponse,
+    AgentUsageSummary,
     ExtendedHealthResponse,
     JobStatusResponse,
     LogsRecentResponse,
@@ -380,4 +395,132 @@ async def get_run_jobs(run_id: str) -> JobStatusResponse:
         completed=completed,
         failed=failed,
         pending=pending,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/monitoring/metrics  (SPEC-07 S-07.10)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/metrics",
+    response_model=AggregatedMetricsResponse,
+    summary="Return aggregated LLM usage per agent type",
+)
+async def get_aggregated_llm_metrics() -> AggregatedMetricsResponse:
+    """Return aggregated LLM usage across all runs, grouped by agent type.
+
+    Data is sourced from the in-memory telemetry store (no Redis or DB
+    queries). Always returns HTTP 200 — the store may be empty if no
+    agent pipeline has executed yet.
+
+    Response includes per-agent totals (tokens in/out, cost, invocation
+    count) and a global count of unique candidates processed.
+
+    Log events:
+        aggregated_metrics_requested  INFO
+        aggregated_metrics_returned   INFO — agent_count, total_candidates
+    """
+    logger.info("aggregated_metrics_requested")
+
+    aggregated = get_aggregated_metrics()
+
+    agents = [
+        AgentUsageSummary(
+            agent_name=a.agent_name,
+            total_tokens_in=a.total_tokens_in,
+            total_tokens_out=a.total_tokens_out,
+            total_cost=a.total_cost,
+            invocation_count=a.invocation_count,
+        )
+        for a in aggregated
+    ]
+
+    # Unique candidates = distinct candidate_ids across all telemetry records.
+    # Cannot derive from per-agent aggregation (double-counts candidates
+    # processed by multiple agents). Direct store query instead.
+    total_candidates = _count_unique_candidates()
+
+    logger.info(
+        "aggregated_metrics_returned",
+        agent_count=len(agents),
+        total_candidates=total_candidates,
+    )
+
+    return AggregatedMetricsResponse(
+        run_id="",
+        status="success",
+        agents=agents,
+        total_candidates_processed=total_candidates,
+    )
+
+
+def _count_unique_candidates() -> int:
+    """Count unique candidates across all runs in the telemetry store.
+
+    Imports the private telemetry lock/store to iterate candidate_ids
+    without copying the full record list.  Thread-safe.
+    """
+    from api.observability.metrics import _telemetry, _telemetry_lock
+
+    with _telemetry_lock:
+        unique = {key[1] for key in _telemetry}  # key = (run_id, candidate_id, agent_name)
+    return len(unique)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/monitoring/agents/{run_id}  (SPEC-07 S-07.10)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/agents/{run_id}",
+    response_model=AgentTelemetryResponse,
+    summary="Return per-candidate agent chain telemetry for a run",
+)
+async def get_agent_telemetry_for_run(run_id: str) -> AgentTelemetryResponse:
+    """Return per-candidate agent chain telemetry for the specified run.
+
+    Data is sourced from the in-memory telemetry store. Returns all
+    telemetry records for the given run_id, sorted by (candidate_id,
+    agent_name).
+
+    Returns HTTP 200 with an empty list if no telemetry exists for the
+    run (fail-open per SKILL-D R-D13).
+
+    Log events:
+        agent_telemetry_requested  INFO — run_id
+        agent_telemetry_returned   INFO — run_id, record_count
+    """
+    logger.info("agent_telemetry_requested", run_id=run_id)
+
+    records = get_agent_telemetry(run_id)
+
+    out = [
+        AgentTelemetryOut(
+            run_id=rec.run_id,
+            candidate_id=rec.candidate_id,
+            agent_name=rec.agent_name,
+            tokens_in=rec.tokens_in,
+            tokens_out=rec.tokens_out,
+            cost_estimate=rec.cost_estimate,
+            execution_time_ms=rec.execution_time_ms,
+            evidence_score=rec.evidence_score,
+            timestamp=rec.timestamp,
+        )
+        for rec in records
+    ]
+
+    logger.info(
+        "agent_telemetry_returned",
+        run_id=run_id,
+        record_count=len(out),
+    )
+
+    return AgentTelemetryResponse(
+        run_id=run_id,
+        status="success",
+        records=out,
+        total=len(out),
     )

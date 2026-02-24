@@ -1,0 +1,30 @@
+{
+  "candidate_id": "5c350d42374050dc60ceed1c5f49a421b13ad20f78d103ef8b8bd46427e2fc04",
+  "items": [
+    {
+      "chunk_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_doc": "doc_fixture_001",
+      "page_locator": "p1:c0",
+      "classification": "supporting",
+      "relevance_score": 0.92
+    },
+    {
+      "chunk_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source_doc": "doc_fixture_001",
+      "page_locator": "p2:c1",
+      "classification": "corroborating",
+      "relevance_score": 0.78
+    },
+    {
+      "chunk_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "source_doc": "doc_fixture_002",
+      "page_locator": "p5:c0",
+      "classification": "conflicting",
+      "relevance_score": 0.65
+    }
+  ],
+  "sufficiency_score": 0.75,
+  "sufficient": true,
+  "run_id": "test-run-agent-fallback-001",
+  "schema_version": "sv_agent_fixture_abc123"
+}

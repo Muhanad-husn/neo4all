@@ -13,7 +13,66 @@ Usage:
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# ---------------------------------------------------------------------------
+# Per-agent configuration (SPEC-07 S-07.8)
+# ---------------------------------------------------------------------------
+
+
+class AgentModelConfig(BaseModel):
+    """LLM model assignment and token budgets for a single agent.
+
+    Attributes:
+        model:              OpenRouter model identifier.
+        max_input_tokens:   Hard cap on prompt tokens sent to the model.
+        max_output_tokens:  Hard cap on completion tokens requested.
+    """
+
+    model: str
+    max_input_tokens: int = Field(gt=0)
+    max_output_tokens: int = Field(gt=0)
+
+
+class AgentConfig(BaseModel):
+    """Per-agent pipeline configuration (SPEC-07 S-07.8).
+
+    Centralises model assignments, token budgets, cost limits, retrieval
+    parameters, and reranking settings for the AI curation agents.
+    Values are defaults — override via environment or Settings fields.
+
+    Attributes:
+        agent_a:               Model and token budgets for Agent-A (Evidence Assembly).
+        agent_b:               Model and token budgets for Agent-B (Retrieval Augmentation).
+        agent_p:               Model and token budgets for Agent-P (Proposal Composer).
+        cost_limit_per_candidate: Maximum USD cost for the full agent chain
+                                  processing a single candidate.
+        max_retrieval_rounds:  Agent-B loop guard — maximum retrieval rounds
+                               before auto-deferring the candidate.
+        reranking_top_n:       Number of top chunks returned by reranking
+                               before feeding to Agent-A/Agent-P.
+    """
+
+    agent_a: AgentModelConfig = AgentModelConfig(
+        model="openai/gpt-4o-mini",
+        max_input_tokens=8000,
+        max_output_tokens=2000,
+    )
+    agent_b: AgentModelConfig = AgentModelConfig(
+        model="openai/gpt-4o-mini",
+        max_input_tokens=8000,
+        max_output_tokens=1000,
+    )
+    agent_p: AgentModelConfig = AgentModelConfig(
+        model="openai/gpt-4o-mini",
+        max_input_tokens=8000,
+        max_output_tokens=2000,
+    )
+    cost_limit_per_candidate: float = Field(default=0.10, gt=0.0)
+    max_retrieval_rounds: int = Field(default=3, ge=1, le=10)
+    reranking_top_n: int = Field(default=5, ge=1, le=50)
 
 
 class Settings(BaseSettings):
@@ -97,6 +156,14 @@ class Settings(BaseSettings):
     # Changing this after indexing requires re-ingestion of all documents.
     # -------------------------------------------------------------------------
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    # -------------------------------------------------------------------------
+    # Agent pipeline (SPEC-07 S-07.8)
+    # Per-agent model assignment, token budgets, cost limits, retrieval
+    # parameters.  Nested Pydantic model — overridable via env prefixed
+    # fields or by constructing AgentConfig directly in tests.
+    # -------------------------------------------------------------------------
+    AGENT_CONFIG: AgentConfig = Field(default_factory=AgentConfig)
 
 
 @lru_cache(maxsize=1)

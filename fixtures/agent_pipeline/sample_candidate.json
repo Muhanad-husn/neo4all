@@ -1,0 +1,18 @@
+{
+  "run_id": "test-run-agent-fallback-001",
+  "schema_version": "sv_agent_fixture_abc123",
+  "candidate_type": "exact_node_duplicate",
+  "candidate_lane": "node",
+  "collision_context": {
+    "similarity_score": 1.0,
+    "matching_property": "name",
+    "node_type": "Person"
+  },
+  "involved_element_refs": [
+    "Person|Jane Doe|sv_agent_fixture_abc123",
+    "Person|Jane M Doe|sv_agent_fixture_abc123"
+  ],
+  "severity": "high",
+  "detection_method": "exact_node_dedupe_key",
+  "_expected_candidate_id": "5c350d42374050dc60ceed1c5f49a421b13ad20f78d103ef8b8bd46427e2fc04"
+}
