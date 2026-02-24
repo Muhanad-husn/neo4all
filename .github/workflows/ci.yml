@@ -1,0 +1,18 @@
+# CI pipeline — dry-run placeholder (Batch 1: SPEC-08)
+# Will be wired with linting, type checks, and unit tests.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Placeholder
+        run: echo "CI pipeline not yet configured — see Batch 1 issue"
