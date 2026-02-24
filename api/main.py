@@ -36,7 +36,7 @@ from api.observability.middleware import CorrelationMiddleware
 
 logger = get_logger(__name__)
 
-_VERSION = "0.3.0"
+_VERSION = "0.5.0"
 
 
 @asynccontextmanager
@@ -90,7 +90,9 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance ready to serve requests.
     """
+    from api.routers import curation as curation_router
     from api.routers import documents as documents_router
+    from api.routers import extraction as extraction_router
     from api.routers import health as health_router
     from api.routers import monitoring as monitoring_router
     from api.routers import schema as schema_router
@@ -126,6 +128,10 @@ def create_app() -> FastAPI:
     app.include_router(schema_router.router, prefix="/api/schema")
     # /api/documents/ingest  /api/documents/{run_id}  /api/documents/{run_id}/{doc_id}/chunks
     app.include_router(documents_router.router, prefix="/api/documents")
+    # /api/extraction/run  /api/extraction/status/{run_id}  /api/extraction/results/{run_id}
+    app.include_router(extraction_router.router, prefix="/api/extraction")
+    # /api/curation/candidates/generate  /api/curation/candidates/{run_id}
+    app.include_router(curation_router.router, prefix="/api/curation")
 
     return app
 

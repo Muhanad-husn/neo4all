@@ -1,0 +1,109 @@
+{
+  "description": "Schema defines WORKS_FOR: Person→Organization and MENTORS: Person→Person. Graph has three relationships: one WORKS_FOR stored backwards (inverse violation), one MENTORS from Organization to Person (direction violation — neither forward nor reversed matches schema), and one valid WORKS_FOR (must produce no candidate).",
+  "run_id": "unit-test-run-curation-0004",
+  "schema_version_str": "sv_fixture_abc123def456",
+  "schema": {
+    "run_id": "unit-test-run-curation-0004",
+    "nodes": [
+      {
+        "node_class": "Entity",
+        "type": "Person",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "node_class": "Entity",
+        "type": "Organization",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ],
+    "edges": [
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Organization",
+        "type": "WORKS_FOR",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Person",
+        "type": "MENTORS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "dedupe_key": "Person::alice::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Alice"}
+    },
+    {
+      "dedupe_key": "Organization::acme::sv",
+      "node_type": "Organization",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "ACME"}
+    },
+    {
+      "dedupe_key": "Person::bob::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Bob"}
+    }
+  ],
+  "rels": [
+    {
+      "dedupe_key": "WORKS_FOR::acme::alice::sv",
+      "rel_type": "WORKS_FOR",
+      "start_dedupe_key": "Organization::acme::sv",
+      "end_dedupe_key": "Person::alice::sv",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    },
+    {
+      "dedupe_key": "MENTORS::acme::alice::sv",
+      "rel_type": "MENTORS",
+      "start_dedupe_key": "Organization::acme::sv",
+      "end_dedupe_key": "Person::alice::sv",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    },
+    {
+      "dedupe_key": "WORKS_FOR::alice::acme::sv",
+      "rel_type": "WORKS_FOR",
+      "start_dedupe_key": "Person::alice::sv",
+      "end_dedupe_key": "Organization::acme::sv",
+      "run_id": "unit-test-run-curation-0004",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    }
+  ],
+  "expected_candidates": [
+    {
+      "rel_dedupe_key": "WORKS_FOR::acme::alice::sv",
+      "candidate_type": "canonical_violation",
+      "detection_method": "canonical_inverse_violation",
+      "note": "WORKS_FOR stored as Organization→Person; schema requires Person→Organization"
+    },
+    {
+      "rel_dedupe_key": "MENTORS::acme::alice::sv",
+      "candidate_type": "canonical_violation",
+      "detection_method": "canonical_direction_violation",
+      "note": "MENTORS from Organization to Person; schema requires Person→Person; reversed also does not match"
+    }
+  ],
+  "compliant_rel_dedupe_key": "WORKS_FOR::alice::acme::sv"
+}

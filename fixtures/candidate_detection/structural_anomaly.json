@@ -1,0 +1,123 @@
+{
+  "description": "Graph designed to exercise all four StructuralAnomalyDetector sub-detectors in a single fixture. Ten normal Person nodes connect to one hub Organization node (degree outlier: total degree 10 exceeds mean+3σ threshold ≈ 9.58 computed over the 11 degree records). One isolated Person node is listed as an orphan. One Person node has a blank schema_version (missing provenance). One ghost relationship also has a blank schema_version. One Company node is missing the schema-required 'sector' qualifier property. Schema defines Company.qualifier='sector' to trigger qualifier_missing detection.",
+  "run_id": "unit-test-run-curation-0005",
+  "schema_version_str": "sv_fixture_abc123def456",
+  "schema": {
+    "run_id": "unit-test-run-curation-0005",
+    "nodes": [
+      {
+        "node_class": "Entity",
+        "type": "Person",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "node_class": "Entity",
+        "type": "Organization",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "node_class": "Entity",
+        "type": "Company",
+        "primary_property": "name",
+        "qualifier": "sector",
+        "additional_properties": []
+      }
+    ],
+    "edges": [
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Organization",
+        "type": "WORKS_FOR",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ]
+  },
+  "nodes": [
+    {"dedupe_key": "Person::n1::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person One"}},
+    {"dedupe_key": "Person::n2::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Two"}},
+    {"dedupe_key": "Person::n3::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Three"}},
+    {"dedupe_key": "Person::n4::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Four"}},
+    {"dedupe_key": "Person::n5::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Five"}},
+    {"dedupe_key": "Person::n6::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Six"}},
+    {"dedupe_key": "Person::n7::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Seven"}},
+    {"dedupe_key": "Person::n8::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Eight"}},
+    {"dedupe_key": "Person::n9::sv_fixture",  "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Nine"}},
+    {"dedupe_key": "Person::n10::sv_fixture", "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Person Ten"}},
+    {"dedupe_key": "Organization::hub_org::sv_fixture", "node_type": "Organization", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Hub Organization"}},
+    {"dedupe_key": "Person::orphan_pete::sv_fixture", "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Orphan Pete"}},
+    {"dedupe_key": "Person::no_prov::sv_fixture", "node_type": "Person", "run_id": "unit-test-run-curation-0005", "schema_version": "", "properties": {"name": "No Provenance"}},
+    {"dedupe_key": "Company::globex::sv_fixture", "node_type": "Company", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {"name": "Globex"}}
+  ],
+  "rels": [
+    {"dedupe_key": "WORKS_FOR::n1::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n1::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n2::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n2::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n3::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n3::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n4::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n4::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n5::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n5::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n6::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n6::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n7::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n7::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n8::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n8::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n9::hub::sv",  "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n9::sv_fixture",  "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {"dedupe_key": "WORKS_FOR::n10::hub::sv", "rel_type": "WORKS_FOR", "start_dedupe_key": "Person::n10::sv_fixture", "end_dedupe_key": "Organization::hub_org::sv_fixture", "run_id": "unit-test-run-curation-0005", "schema_version": "sv_fixture_abc123def456", "properties": {}},
+    {
+      "dedupe_key": "ghost_rel::missing_prov",
+      "rel_type": "UNKNOWN",
+      "start_dedupe_key": "Person::n1::sv_fixture",
+      "end_dedupe_key": "Person::n2::sv_fixture",
+      "run_id": "unit-test-run-curation-0005",
+      "schema_version": "",
+      "properties": {}
+    }
+  ],
+  "orphans_result": {
+    "orphan_dedupe_keys": ["Person::orphan_pete::sv_fixture"]
+  },
+  "degrees_result": {
+    "degrees": [
+      {"dedupe_key": "Person::n1::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n2::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n3::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n4::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n5::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n6::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n7::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n8::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n9::sv_fixture",  "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Person::n10::sv_fixture", "in_degree": 0, "out_degree": 1},
+      {"dedupe_key": "Organization::hub_org::sv_fixture", "in_degree": 10, "out_degree": 0}
+    ]
+  },
+  "expected_candidates": [
+    {
+      "detection_method": "orphan_node",
+      "involved_element_refs": ["Person::orphan_pete::sv_fixture"],
+      "note": "No in or out edges"
+    },
+    {
+      "detection_method": "degree_outlier",
+      "involved_element_refs": ["Organization::hub_org::sv_fixture"],
+      "note": "Total degree 10 exceeds mean+3σ ≈ 9.58 over 11 degree records"
+    },
+    {
+      "detection_method": "missing_provenance_node",
+      "involved_element_refs": ["Person::no_prov::sv_fixture"],
+      "note": "schema_version field is blank"
+    },
+    {
+      "detection_method": "missing_provenance_rel",
+      "involved_element_refs": ["ghost_rel::missing_prov"],
+      "note": "Relationship schema_version field is blank"
+    },
+    {
+      "detection_method": "qualifier_missing",
+      "involved_element_refs": ["Company::globex::sv_fixture"],
+      "note": "Company type requires 'sector' qualifier property; node has only 'name'"
+    }
+  ]
+}

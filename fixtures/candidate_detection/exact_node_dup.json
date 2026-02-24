@@ -1,0 +1,40 @@
+{
+  "description": "Two nodes share the same (node_type, dedupe_key) — one duplicate group. Third node is unique and must not generate a candidate.",
+  "run_id": "unit-test-run-curation-0001",
+  "schema_version_str": "sv_fixture_abc123def456",
+  "nodes": [
+    {
+      "dedupe_key": "Person::alice::sv_fixture",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0001",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Alice"}
+    },
+    {
+      "dedupe_key": "Person::alice::sv_fixture",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0001",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Alice (copy)"}
+    },
+    {
+      "dedupe_key": "Person::bob::sv_fixture",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0001",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Bob"}
+    }
+  ],
+  "expected_candidates": [
+    {
+      "candidate_type": "exact_node_duplicate",
+      "involved_element_refs": ["Person::alice::sv_fixture"],
+      "detection_method": "exact_node_dedupe_key",
+      "collision_context": {
+        "node_type": "Person",
+        "dedupe_key": "Person::alice::sv_fixture",
+        "duplicate_count": 2
+      }
+    }
+  ]
+}

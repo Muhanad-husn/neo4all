@@ -12,7 +12,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 | SPEC-02   | 0.2.0   | Domain schema definition | ✅ Complete |
 | SPEC-03   | 0.3.0   | Document ingestion & chunking | ✅ Complete |
 | SPEC-04   | 0.4.0   | AI-assisted extraction & ARQ worker | ✅ Complete |
-| SPEC-05   | 0.5.0   | Deterministic candidate generation | Pending |
+| SPEC-05   | 0.5.0   | Deterministic candidate generation | ✅ Complete |
 | SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | Pending |
 | SPEC-07   | 0.7.0   | AI curation agent pipeline | Pending |
 | SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation | Pending |
@@ -108,7 +108,7 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increments 1–4)
+### Available Endpoints (Increments 1–5)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -127,6 +127,8 @@ FastAPI auto-generates interactive docs at:
 | POST | `/api/extraction/run` | Enqueue extraction jobs for all chunks in a run |
 | GET | `/api/extraction/status/{run_id}` | Aggregated extraction progress for a run |
 | GET | `/api/extraction/results/{run_id}` | Extracted nodes and edges written to Neo4j |
+| POST | `/api/curation/candidates/generate` | Run all five deterministic detectors; cache results with 5-min TTL |
+| GET | `/api/curation/candidates/{run_id}` | Return cached candidates grouped by type and ordered by severity |
 
 ---
 
@@ -199,11 +201,27 @@ prompts/
 
 ---
 
-## Known Limitations (Increment 4)
+## Phase 4: Curation — Layer 1 (Candidate Generation)
 
-- No candidate generation or curation yet (SPEC-05 through SPEC-08)
+Once extraction is complete, deterministic pre-curation detects data quality issues in the graph before any AI or human curation decisions are made.
+
+1. **Trigger generation** — `POST /api/curation/candidates/generate` runs all five detectors against the Neo4j graph for a run. Results are cached with a 5-minute TTL.
+2. **Five detectors (zero-LLM)**:
+   - **Exact node duplicate** — same `NodeType` + `dedupe_key` appears under different IDs.
+   - **Exact relationship duplicate** — same rel type + same start/end `dedupe_key` appears more than once.
+   - **Probable duplicate** — same-type node pairs with Jaro-Winkler similarity ≥ 0.90 + shared context score (pure Python, no external library).
+   - **Canonical/inverse violation** — edge direction or inverse-mapping rules defined in the locked schema are violated.
+   - **Structural anomaly** — orphan nodes, degree outliers (3σ), missing provenance fields, or qualifier gaps.
+3. **View candidates** — `GET /api/curation/candidates/{run_id}` returns candidates grouped by type and ordered by severity (critical → high → medium → low).
+4. **Deterministic IDs** — `candidate_id = SHA-256(run_id + schema_version + candidate_type + sorted(involved_element_refs) + detection_method)`. Same graph situation always produces the same `candidate_id`, enabling idempotent re-runs.
+
+---
+
+## Known Limitations (Increment 5)
+
+- No manual curation or proposal pipeline yet (SPEC-06 through SPEC-08)
 - `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added in a later increment
-- Six modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/vector/indexer.py` (534), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
+- Seven modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/services/curation/candidates.py` (616), `api/vector/indexer.py` (534), `api/routers/curation.py` (546), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462)
 - ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation into `api/common/arq_pool.py` is a SKILL-B R-B7 item
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Qdrant collection (`chunks_{run_id}`) is not cleaned up on run deletion — no lifecycle management until SPEC-08

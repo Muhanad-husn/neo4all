@@ -1,0 +1,56 @@
+{
+  "description": "Three Person nodes. 'Jonathan Jones' and 'Jonathon Jones' differ only at one character — Jaro-Winkler similarity ≈ 0.97, above the 0.90 threshold. 'Alice Smith' is clearly different and must not pair with either. Schema defines Person.primary_property = 'name'.",
+  "run_id": "unit-test-run-curation-0003",
+  "schema_version_str": "sv_fixture_abc123def456",
+  "schema": {
+    "run_id": "unit-test-run-curation-0003",
+    "nodes": [
+      {
+        "node_class": "Entity",
+        "type": "Person",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ],
+    "edges": []
+  },
+  "nodes": [
+    {
+      "dedupe_key": "Person::jonathan_jones::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0003",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Jonathan Jones"}
+    },
+    {
+      "dedupe_key": "Person::jonathon_jones::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0003",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Jonathon Jones"}
+    },
+    {
+      "dedupe_key": "Person::alice_smith::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-curation-0003",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {"name": "Alice Smith"}
+    }
+  ],
+  "expected_candidates": [
+    {
+      "candidate_type": "probable_duplicate",
+      "involved_element_refs": [
+        "Person::jonathan_jones::sv",
+        "Person::jonathon_jones::sv"
+      ],
+      "detection_method": "jaro_winkler_0.90",
+      "jw_min": 0.90
+    }
+  ],
+  "non_candidate_pairs": [
+    ["Person::jonathan_jones::sv", "Person::alice_smith::sv"],
+    ["Person::jonathon_jones::sv", "Person::alice_smith::sv"]
+  ]
+}
