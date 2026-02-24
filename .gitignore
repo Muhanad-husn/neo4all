@@ -44,6 +44,7 @@ htmlcov/
 
 # Claude Code local settings
 .claude/
+.mcp.json
 
 # IDE
 .vscode/
