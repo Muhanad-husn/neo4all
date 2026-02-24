@@ -78,3 +78,67 @@ class RunSummaryResponse(BaseResponse):
     found: bool
     phase: str | None = None
     schema_version: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Worker monitoring models — GET /api/monitoring/workers (SPEC-04 S-04.8)
+#                            GET /api/monitoring/jobs/{run_id}
+# ---------------------------------------------------------------------------
+
+
+class WorkerJobDetail(BaseModel):
+    """Per-chunk extraction job detail returned in JobStatusResponse.
+
+    Attributes:
+        chunk_id:      Source chunk identifier (safe to log — never raw text).
+        doc_id:        Parent document identifier.
+        status:        Job lifecycle state: queued | running | complete | failed.
+        error:         Error message set on "failed"; None otherwise.
+        nodes_created: Nodes created in Neo4j on "complete".
+        edges_created: Edges created in Neo4j on "complete".
+        started_at:    ISO 8601 UTC timestamp when the job started running.
+        completed_at:  ISO 8601 UTC timestamp when the job finished (any status).
+    """
+
+    chunk_id: str
+    doc_id: str
+    status: str
+    error: str | None = None
+    nodes_created: int = 0
+    edges_created: int = 0
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+class WorkerStatusResponse(BaseResponse):
+    """Response model for GET /api/monitoring/workers.
+
+    Attributes:
+        queue_depth:  Number of jobs waiting in the ARQ sorted-set queue.
+        active_jobs:  Number of chunk jobs currently in "running" state across
+                      all runs (derived from Redis job-status keys).
+        worker_count: Number of live ARQ worker processes (counted via Redis
+                      health-check keys written by each worker with a TTL).
+    """
+
+    queue_depth: int = 0
+    active_jobs: int = 0
+    worker_count: int = 0
+
+
+class JobStatusResponse(BaseResponse):
+    """Response model for GET /api/monitoring/jobs/{run_id}.
+
+    Attributes:
+        jobs:      Per-chunk job details scanned from Redis for this run.
+        total:     Total number of job records found in Redis.
+        completed: Jobs with status "complete".
+        failed:    Jobs with status "failed".
+        pending:   Jobs with status "queued" or "running".
+    """
+
+    jobs: list[WorkerJobDetail] = []
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+    pending: int = 0

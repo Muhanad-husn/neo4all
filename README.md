@@ -11,7 +11,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 | SPEC-01   | 0.1.0   | Scaffolding, session lifecycle, logging, caching, monitoring | ✅ Complete  |
 | SPEC-02   | 0.2.0   | Domain schema definition | ✅ Complete |
 | SPEC-03   | 0.3.0   | Document ingestion & chunking | ✅ Complete |
-| SPEC-04   | 0.4.0   | AI-assisted extraction | Pending |
+| SPEC-04   | 0.4.0   | AI-assisted extraction & ARQ worker | ✅ Complete |
 | SPEC-05   | 0.5.0   | Deterministic candidate generation | Pending |
 | SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | Pending |
 | SPEC-07   | 0.7.0   | AI curation agent pipeline | Pending |
@@ -95,8 +95,10 @@ This starts: FastAPI (`:8000`), Streamlit (`:8501`), Redis (`:6379`), RustFS (`:
 uv pip install -e ".[dev]"
 api-server        # starts FastAPI on :8000
 streamlit run ui/app.py   # starts Streamlit on :8501
-arq-worker        # starts ARQ worker
+arq-worker        # starts ARQ worker (api.worker.entry:WorkerSettings)
 ```
+
+> **Note (SPEC-04):** The ARQ worker must be running for Phase 3 extraction jobs to execute. The worker requires the same environment variables as the API server, plus a locked domain schema (Phase 1 complete) before extraction can be triggered.
 
 ---
 
@@ -106,20 +108,25 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increments 1–3)
+### Available Endpoints (Increments 1–4)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Basic backend health check |
 | GET | `/api/monitoring/health` | Per-service connectivity with latency |
-| GET | `/api/monitoring/logs/recent` | Recent log entries (filterable) |
+| GET | `/api/monitoring/logs/recent` | Recent log entries (filterable by level) |
 | GET | `/api/monitoring/run/{run_id}` | Run-level summary |
+| GET | `/api/monitoring/workers` | ARQ queue depth and active worker count |
+| GET | `/api/monitoring/jobs/{run_id}` | Per-chunk extraction job statuses |
 | POST | `/api/schema/propose` | Generate candidate schema via LLM for human review |
 | POST | `/api/schema/approve` | Lock the domain schema for a run (immutable after this call) |
 | GET | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query) |
 | POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded PDF or DOCX document |
 | GET | `/api/documents/{run_id}` | List all successfully ingested documents for a run |
 | GET | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
+| POST | `/api/extraction/run` | Enqueue extraction jobs for all chunks in a run |
+| GET | `/api/extraction/status/{run_id}` | Aggregated extraction progress for a run |
+| GET | `/api/extraction/results/{run_id}` | Extracted nodes and edges written to Neo4j |
 
 ---
 
@@ -168,12 +175,36 @@ Parser tiers are individually toggleable via `ENABLE_DOCLING`, `ENABLE_UNSTRUCTU
 
 ---
 
-## Known Limitations (Increment 3)
+## Phase 3: AI-Assisted Extraction
 
-- No AI-assisted extraction, candidate generation, or curation yet (SPEC-04 through SPEC-08)
-- Monitoring endpoints return stub data until downstream services are implemented
-- ARQ worker entry point defined but worker jobs not yet implemented
-- Six modules exceed the ~400-line limit and are scheduled for refactoring before SPEC-04: `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/vector/indexer.py` (534), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
+Once documents are ingested, extraction enqueues one ARQ job per chunk. Each job sends the chunk text and locked schema to the LLM (via OpenRouter), validates the response, and writes MERGE operations to Neo4j.
+
+**Prerequisites**: Domain schema must be locked (Phase 1 complete). The ARQ worker must be running.
+
+1. **Trigger extraction** — `POST /api/extraction/run` enqueues one `extraction_job` per chunk in the run. Returns immediately; jobs execute in the background ARQ worker.
+2. **LLM extraction** — Each job loads the chunk text from S3, retrieves the locked schema from the Redis cache (`CacheKey.schema(run_id)`), and sends both to OpenRouter using `prompts/extraction/v1.yaml`. Output is validated against `ExtractionResult` (fail-closed: malformed LLM output is blocked and logged, never silently accepted).
+3. **Graph writes** — Valid extracted nodes and edges are written to Neo4j via `MERGE` on `node_dedupe_key` / `rel_dedupe_key`. Rerunning the same chunk always produces the same graph state (idempotent).
+4. **Per-job status tracking** — Each job writes a `ChunkJobStatus` record to Redis (`job:{run_id}:{chunk_id}`). `GET /api/monitoring/jobs/{run_id}` scans these keys for real-time progress. Status values: `queued → running → complete | failed`.
+5. **Worker monitoring** — `GET /api/monitoring/workers` returns queue depth, active job count, and live worker count directly from Redis (no database queries).
+
+### Prompt Template: Extraction
+
+```
+prompts/
+├── schema_propose/
+│   └── v1.yaml     # job_id=schema_propose, template_version=v1
+└── extraction/
+    └── v1.yaml     # job_id=extraction, template_version=v1
+```
+
+---
+
+## Known Limitations (Increment 4)
+
+- No candidate generation or curation yet (SPEC-05 through SPEC-08)
+- `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added in a later increment
+- Six modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/vector/indexer.py` (534), `api/storage/artifacts.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
+- ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation into `api/common/arq_pool.py` is a SKILL-B R-B7 item
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Qdrant collection (`chunks_{run_id}`) is not cleaned up on run deletion — no lifecycle management until SPEC-08
 

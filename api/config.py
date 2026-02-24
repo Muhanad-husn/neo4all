@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     NEO4J_DEV_PASSWORD: str
 
     # -------------------------------------------------------------------------
+    # Neo4j connection pool (SPEC-04 S-04.4)
+    # -------------------------------------------------------------------------
+    NEO4J_MAX_POOL_SIZE: int = 50
+    NEO4J_CONNECTION_TIMEOUT_S: float = 30.0
+
+    # -------------------------------------------------------------------------
     # Neo4j Aura — CI instance (optional; integration tests skip when absent)
     # -------------------------------------------------------------------------
     NEO4J_CI_URI: str | None = None

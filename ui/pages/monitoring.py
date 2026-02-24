@@ -5,6 +5,10 @@ Read-only page. Polls backend monitoring endpoints and renders:
   - Backend panel: per-service health with latency (GET /api/monitoring/health)
   - Log viewer:    recent log entries, filterable by level
                    (GET /api/monitoring/logs/recent)
+  - Worker panel:  ARQ queue depth, active jobs, worker count
+                   (GET /api/monitoring/workers)  [SPEC-04]
+  - Job tracker:   per-chunk extraction job statuses in an expander
+                   (GET /api/monitoring/jobs/{run_id})  [SPEC-04]
   - Session panel: frontend phase state and timings from StateManager
   - Auto-refresh:  configurable poll interval, default 5 seconds
 
@@ -16,11 +20,18 @@ Architecture rules:
   - Panels hide gracefully when backend endpoints are unreachable
     (SKILL-D R-D12: "UI panels gracefully hide sections whose backend
     endpoints are not yet implemented").
+  - No direct Redis access in UI — all worker/job data fetched via API.
 
-Backend endpoints consumed (SPEC-01 set):
-  GET /api/monitoring/health
-  GET /api/monitoring/logs/recent?level=<level>&limit=<n>
-  GET /api/monitoring/run/{run_id}        (returns found=False in SPEC-01)
+Backend endpoints consumed:
+  SPEC-01: GET /api/monitoring/health
+           GET /api/monitoring/logs/recent?level=<level>&limit=<n>
+           GET /api/monitoring/run/{run_id}
+  SPEC-04: GET /api/monitoring/workers
+           GET /api/monitoring/jobs/{run_id}
+
+SKILL-B R-B7 note: This file is approaching the ~400-line guidance limit.
+  Refactoring to ui/pages/monitoring_panels.py is scheduled for the SPEC-04
+  governance pass.
 """
 
 import os
@@ -230,6 +241,103 @@ def _render_session_panel(state: StateManager) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Worker monitoring panels (SPEC-04)
+# ---------------------------------------------------------------------------
+
+
+def _render_worker_panel(data: dict[str, Any] | None) -> None:
+    """Render ARQ worker status from GET /api/monitoring/workers.
+
+    Hides gracefully when data is None (API unreachable or endpoint not yet
+    available). Displays queue depth, active jobs, and worker count as metrics.
+    No business logic — pure display (SKILL-B R-B3).
+    """
+    st.subheader("Worker Status")
+
+    if data is None:
+        st.warning("Cannot reach API — worker data unavailable.")
+        return
+
+    if data.get("status") == "error":
+        for e in data.get("errors", []):
+            st.caption(f":orange[{e.get('message', 'Worker status unavailable')}]")
+        return
+
+    queue_depth: int = data.get("queue_depth", 0)
+    active_jobs: int = data.get("active_jobs", 0)
+    worker_count: int = data.get("worker_count", 0)
+
+    col_q, col_a, col_w = st.columns(3)
+    col_q.metric("Queue Depth", queue_depth, help="Jobs waiting in the ARQ sorted-set queue.")
+    col_a.metric("Active Jobs", active_jobs, help="Chunk jobs currently in 'running' state.")
+    col_w.metric("Workers", worker_count, help="Live ARQ worker processes (health-check keys).")
+
+    if worker_count == 0:
+        st.caption(
+            ":orange[No workers connected. Start the ARQ worker process to "
+            "process extraction jobs.]"
+        )
+    elif queue_depth == 0 and active_jobs == 0:
+        st.caption(":green[Workers idle — all queued jobs are complete.]")
+
+
+def _render_job_tracker(data: dict[str, Any] | None) -> None:
+    """Render per-chunk extraction job statuses for the current run.
+
+    Called with data from GET /api/monitoring/jobs/{run_id}. Hidden when data
+    is None. Uses st.expander so the tracker is collapsed by default for runs
+    with many chunks (> 20). Renders at most 50 rows to avoid overwhelming the
+    UI. No business logic — pure display (SKILL-B R-B3).
+    """
+    total: int = data.get("total", 0) if data else 0
+    label = f"Extraction Job Tracker — {total} chunk(s)"
+
+    with st.expander(label, expanded=(0 < total <= 20)):
+        if data is None:
+            st.warning("Cannot reach API — job data unavailable.")
+            return
+
+        if data.get("status") == "error":
+            for e in data.get("errors", []):
+                st.caption(f":orange[{e.get('message', 'Job data unavailable')}]")
+            return
+
+        jobs: list[dict[str, Any]] = data.get("jobs", [])
+        if not jobs:
+            st.info("No extraction jobs found for this run. Start extraction in Phase 3.")
+            return
+
+        completed: int = data.get("completed", 0)
+        failed: int = data.get("failed", 0)
+        pending: int = data.get("pending", 0)
+
+        col_c, col_f, col_p = st.columns(3)
+        col_c.metric("Complete", completed)
+        col_f.metric("Failed", failed)
+        col_p.metric("Pending", pending)
+
+        st.divider()
+
+        display_jobs = jobs[:50]
+        if len(jobs) > 50:
+            st.caption(f"Showing 50 of {len(jobs)} chunks (oldest first).")
+
+        rows = [
+            {
+                "Status": j.get("status", "unknown"),
+                "Chunk": (j.get("chunk_id") or "")[:12] + "…",
+                "Doc": (j.get("doc_id") or "")[:12] + "…",
+                "Nodes": j.get("nodes_created", 0),
+                "Edges": j.get("edges_created", 0),
+                "Started": (j.get("started_at") or "")[ 11:19],
+                "Error": (j.get("error") or "")[:40],
+            }
+            for j in display_jobs
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 
@@ -310,6 +418,12 @@ def main() -> None:
     if run_id:
         run_summary_data = _fetch(f"/api/monitoring/run/{run_id}")
 
+    # SPEC-04: worker status and per-run job tracking
+    workers_data = _fetch("/api/monitoring/workers")
+    jobs_data: dict[str, Any] | None = None
+    if run_id:
+        jobs_data = _fetch(f"/api/monitoring/jobs/{run_id}")
+
     # --- Layout: two-column backend panels ---
     col_health, col_logs = st.columns(2)
 
@@ -329,8 +443,19 @@ def main() -> None:
 
     st.divider()
 
-    # --- Full-width frontend session panel ---
-    _render_session_panel(state)
+    # --- Worker status (left) + session panel (right) ---
+    col_worker, col_session = st.columns(2)
+
+    with col_worker:
+        _render_worker_panel(workers_data)
+
+    with col_session:
+        _render_session_panel(state)
+
+    # --- Per-run job tracker (full-width, collapsible) ---
+    if run_id:
+        st.divider()
+        _render_job_tracker(jobs_data)
 
     # --- Auto-refresh: sleep then rerun (SKILL-D R-D12) ---
     # time.sleep() blocks this Streamlit connection for the interval.

@@ -300,7 +300,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 | [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 0.1.0 | ✅ Complete |
 | [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | ✅ Complete |
 | [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | ✅ Complete |
-| [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | Pending |
+| [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | ✅ Complete |
 | [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | Pending |
 | [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | Pending |
 | [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | Pending |
@@ -347,3 +347,54 @@ Read and follow ALL skills during every implementation task.
 | [SKILL-B](docs/skills/SKILL-B-governance.md) | Every change | Folder structure, layers, docs, semver, refactoring |
 | [SKILL-C](docs/skills/SKILL-C-packaging.md) | All increments | Entry points, imports, init files, dependencies |
 | [SKILL-D](docs/skills/SKILL-D-observability.md) | Every module | Logging, caching, monitoring |
+
+---
+
+## 18. Skill Rules (Condensed)
+
+The rules below are extracted from the skill files. Refer to the full skill files in `docs/skills/` only when running verification checklists.
+
+### SKILL-A: API Contracts
+
+- **R-A1**: Every FastAPI endpoint must have a Pydantic request model and a response model defined in `models.py` within the relevant `api/` subdirectory
+- **R-A2**: All responses extend `BaseResponse(run_id, status, errors[])`
+- **R-A3**: Inter-service calls pass typed Pydantic objects — raw dicts banned at module boundaries
+- **R-A4**: Invalid payloads rejected at router layer with structured `ErrorDetail` — never silently coerced
+- **R-A5**: Request/response models must exist in the same commit as their route handler
+- **R-A6**: Auto-generated OpenAPI schema must stay accurate — fix models, not schema overrides
+
+### SKILL-B: Governance
+
+- **R-B1**: `CLAUDE.md` is the constitution — if a change conflicts, the change is wrong
+- **R-B2**: Every file must land in the correct directory per §2 (see folder table in `SKILL-B`)
+- **R-B3**: Layer violations are blockers — `ui/` must not import from `api/graph/`, `api/agents/`, `api/vector/`, `api/diff/`, or `api/audit/`; no `st.session_state` outside `ui/state.py`
+- **R-B4**: New modules/dirs → update §2; new env vars → update §9; new agents → update §7; architectural decisions → new ADR
+- **R-B5**: `README.md` updated every increment (status, setup, endpoints, limitations)
+- **R-B6**: Semver in `pyproject.toml` — PATCH for bugfixes, MINOR (0.X.0) per completed increment, MAJOR for breaking changes
+- **R-B7**: Proactive refactoring: >400 lines → split; >5 params → Pydantic model; duplicated in 2+ modules → extract; model used in 3+ → move to `api/models/`
+- **R-B8**: New spec/skill docs → update §17
+
+### SKILL-C: Packaging
+
+- **R-C1**: `pyproject.toml` defines entry points: `api-server = "api.main:run"`, `arq-worker = "api.worker.entry:run"`
+- **R-C2**: Absolute imports only (`from api.x import y`) — relative imports banned
+- **R-C3**: Every Python directory must have `__init__.py`
+- **R-C4**: All dependencies in `pyproject.toml` with version bounds (`>=min,<max`)
+- **R-C5**: Per-service Dockerfiles: `Dockerfile.api`, `Dockerfile.worker`, `Dockerfile.ui`
+- **R-C6**: No hardcoded file paths — derive from env vars or config
+
+### SKILL-D: Observability
+
+- **R-D1**: All logging via `api/observability/logger.py` factory → `get_logger(__name__)`. No `logging.basicConfig()`
+- **R-D2**: Correlation IDs on every request (from `run_id` or generated), propagated through logs, ARQ jobs, downstream calls
+- **R-D3**: Structured log events only: `logger.info("event_name", key=val)` — no f-string messages
+- **R-D4**: Log levels: DEBUG (diagnostics), INFO (operations), WARNING (degraded), ERROR (failures), CRITICAL (system)
+- **R-D5**: Never log credentials, API keys, raw document content, or full LLM prompts in production
+- **R-D6**: Redis-backed cache via `api/cache/client.py` — no direct Redis calls outside this module
+- **R-D7**: Cache keys via `CacheKey` builders in `api/cache/keys.py` — no ad-hoc string concatenation
+- **R-D8**: Cache: locked schema (run lifetime), manifest (1h), graph queries (5min), chunks (30min), candidates (5min)
+- **R-D9**: Cache misses are normal (DEBUG level) — system falls through to source; Redis failures logged at WARNING, never fail-closed
+- **R-D10**: After any graph mutation, invalidate all run-scoped cache keys (post-execution hook in Agent-C)
+- **R-D11**: Monitoring endpoints introduced progressively per spec (see `SKILL-D` for the full table)
+- **R-D12**: Frontend monitoring page is read-only, no business logic — renders data from backend endpoints
+- **R-D13**: Monitoring never blocks pipeline — in-memory metrics, ring buffer for logs, Redis INFO for cache stats

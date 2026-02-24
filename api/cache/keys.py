@@ -82,6 +82,17 @@ class CacheKey:
         return f"candidates:{run_id}:{detection_hash}"
 
     @staticmethod
+    def job_status(run_id: str, chunk_id: str) -> str:
+        """Key for per-chunk extraction job status.
+
+        Pattern: job:{run_id}:{chunk_id}
+        TTL: 86400 s (24 hours — enough to span any extraction run).
+        Written by api/worker/jobs.py; read by api/routers/monitoring.py
+        (GET /api/monitoring/jobs/{run_id}).
+        """
+        return f"job:{run_id}:{chunk_id}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 

@@ -1,0 +1,293 @@
+# prompts/extraction/v1.yaml
+#
+# Job:              extraction
+# Template version: v1
+# Introduced in:    SPEC-04 (increment 4, version 0.4.0)
+#
+# IMMUTABILITY NOTICE
+# -------------------
+# This file is immutable once used in any run. Never edit it after initial
+# deployment. To change prompting behaviour, create v2.yaml and update
+# ExtractionService._TEMPLATE_VERSION (CLAUDE.md §14).
+#
+# LOADER CONTRACT
+# ---------------
+# api/services/extraction.py loads this file via _load_prompt_template().
+# Required keys: system_prompt, user_template.
+# user_template is rendered with Python str.format(schema_json=..., chunk_text=...).
+# WARNING: any {placeholder} in user_template other than {schema_json} and
+# {chunk_text} will raise a KeyError in ExtractionService.extract_chunk().
+# system_prompt is used verbatim — it is NOT passed through str.format().
+# Literal braces in system_prompt do not need escaping.
+#
+# OUTPUT VALIDATION
+# -----------------
+# The LLM response is validated against _LLMExtractionOutput (api/services/extraction.py)
+# which wraps _RawNode and _RawEdge. Each node_type and rel_type is then checked
+# against the locked SchemaVersion by ExtractionService._validate_schema_conformance().
+# Any type mismatch raises ExtractionError — the service fails closed (CLAUDE.md §4.4).
+#
+# RESPONSE FORMAT
+# ---------------
+# ExtractionService configures the LLM with response_format={"type": "json_object"},
+# so the model is constrained to return valid JSON. The system_prompt specifies
+# the exact top-level key contract the validator expects.
+
+job_id: "extraction"
+template_version: "v1"
+
+description: >-
+  Instructs the LLM to extract named entities (nodes) and relationships (edges)
+  from a single document chunk, constrained to the types defined in a locked
+  domain schema. Called once per chunk during Phase 3 (AI-Assisted Extraction).
+  The schema and chunk text are injected at call time via user_template placeholders.
+
+# ── System prompt ──────────────────────────────────────────────────────────────
+# Used as the system message in the OpenRouter chat completion request.
+# This string is NOT passed through str.format() at call time — all JSON
+# examples below use literal braces and are safe without escaping.
+system_prompt: |
+  You are an information extraction assistant specialising in knowledge graph
+  construction. Your task is to identify entities (nodes) and relationships
+  (edges) that appear in a document chunk, constrained strictly to the types
+  defined in a provided domain schema.
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION RULES
+  ═══════════════════════════════════════════════════════════
+  1. Only use node types that appear in the schema's "nodes" list.
+     Do not invent node types. Do not use synonyms or abbreviations.
+  2. Only use relationship types that appear in the schema's "edges" list.
+     Do not invent relationship types.
+  3. For each node, extract the value of the property named in the schema's
+     "primary_property" field for that node type.
+  4. For each relationship, both the start node and end node must be
+     explicitly or strongly implied in the chunk text.
+  5. start_primary_value and end_primary_value must correspond to nodes
+     that you are also extracting in the "nodes" array of your output.
+  6. Do not hallucinate entities, values, or relationships not supported
+     by the text.  Omit uncertain or speculative extractions.
+  7. Extract all clearly identifiable entities — do not arbitrarily truncate.
+  8. If no entities or relationships can be extracted from the chunk, return
+     empty arrays for both "nodes" and "edges".
+
+  ═══════════════════════════════════════════════════════════
+  NODE EXTRACTION
+  ═══════════════════════════════════════════════════════════
+  For each entity found in the text:
+
+    node_type      — Exact type string from the schema (case-sensitive).
+    primary_value  — The extracted value of the schema's primary_property for
+                     this node type.  This value is used for deduplication:
+                     two chunks that mention the same entity must produce the
+                     same primary_value string so they MERGE into one graph node.
+    properties     — A JSON object containing additional properties defined in
+                     the schema's additional_properties list.  Omit properties
+                     you cannot extract — use an empty object {} if none.
+
+  ═══════════════════════════════════════════════════════════
+  RELATIONSHIP EXTRACTION
+  ═══════════════════════════════════════════════════════════
+  For each relationship found in the text:
+
+    rel_type             — Exact relationship type string from the schema.
+    start_node_type      — Exact node type of the source entity.
+    start_primary_value  — primary_value of the source entity (must appear in nodes).
+    end_node_type        — Exact node type of the target entity.
+    end_primary_value    — primary_value of the target entity (must appear in nodes).
+    properties           — Additional relationship properties from the schema.
+                           Use an empty object {} if none.
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT CONTRACT (strict JSON — no prose, no markdown fences)
+  ═══════════════════════════════════════════════════════════
+  Return a single JSON object with exactly two top-level keys:
+
+  {
+    "nodes": [
+      {
+        "node_type": "ExactTypeFromSchema",
+        "primary_value": "extracted primary property value",
+        "properties": {
+          "additional_prop_name": "extracted value"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "rel_type": "EXACT_REL_TYPE_FROM_SCHEMA",
+        "start_node_type": "StartNodeType",
+        "start_primary_value": "primary value of the start node",
+        "end_node_type": "EndNodeType",
+        "end_primary_value": "primary value of the end node",
+        "properties": {}
+      }
+    ]
+  }
+
+  Constraints:
+  - "nodes" and "edges" must always be present (use [] if nothing extracted).
+  - node_type must exactly match a type in the schema's nodes list.
+  - rel_type must exactly match a type in the schema's edges list.
+  - start_node_type and end_node_type must match types in the schema's nodes list.
+  - "properties" must be a JSON object — never null, never a string.
+  - Do not include any fields not shown in the contract above.
+  - Return only the JSON object.  No explanation, no markdown, no commentary.
+
+  ═══════════════════════════════════════════════════════════
+  EXAMPLE — FINANCIAL NEWS DOMAIN
+  ═══════════════════════════════════════════════════════════
+  Schema (abbreviated):
+    nodes: [Person(primary_property=name), Company(primary_property=name)]
+    edges: [Person -[WORKS_FOR]-> Company]
+
+  Chunk: "Jane Smith, CEO of Acme Corp, announced record quarterly earnings."
+
+  Correct output:
+  {
+    "nodes": [
+      {
+        "node_type": "Person",
+        "primary_value": "Jane Smith",
+        "properties": {"title": "CEO"}
+      },
+      {
+        "node_type": "Company",
+        "primary_value": "Acme Corp",
+        "properties": {}
+      }
+    ],
+    "edges": [
+      {
+        "rel_type": "WORKS_FOR",
+        "start_node_type": "Person",
+        "start_primary_value": "Jane Smith",
+        "end_node_type": "Company",
+        "end_primary_value": "Acme Corp",
+        "properties": {}
+      }
+    ]
+  }
+
+# ── User template ──────────────────────────────────────────────────────────────
+# Rendered at call time: str.format(schema_json=..., chunk_text=...).
+# ONLY {schema_json} and {chunk_text} are valid placeholders here.
+# Do NOT add any other {placeholder} tokens — they will raise KeyError.
+# Do NOT include JSON examples here — all literal braces must be escaped
+# as {{ and }} if added.  Keep this template minimal and unambiguous.
+user_template: |
+  ## Domain Schema
+  {schema_json}
+
+  ## Document Chunk
+  {chunk_text}
+
+  Extract all entities and relationships from the document chunk that conform
+  to the domain schema above. Return only the JSON object with "nodes" and
+  "edges" arrays. Follow the output contract in your instructions exactly.
+
+# ── Output schema reference ────────────────────────────────────────────────────
+# Documents the expected LLM response structure. This section is not read by
+# the loader at runtime. Validation is performed by Pydantic in
+# api/services/extraction.py (_LLMExtractionOutput, _RawNode, _RawEdge).
+# A second validation pass checks every node_type / rel_type against the
+# locked SchemaVersion (ExtractionService._validate_schema_conformance).
+#
+# Mirrors: api/services/extraction.py :: _LLMExtractionOutput
+output_schema:
+  type: object
+  required:
+    - nodes
+    - edges
+  additionalProperties: false
+  properties:
+
+    nodes:
+      type: array
+      description: >-
+        Extracted entity instances. Empty array if no entities found.
+        Each entry is validated against _RawNode and then promoted to
+        a frozen ExtractedNode by ExtractionService._promote_to_result().
+      items:
+        type: object
+        required:
+          - node_type
+          - primary_value
+        additionalProperties: false
+        properties:
+          node_type:
+            type: string
+            minLength: 1
+            description: >-
+              Exact Neo4j label. Must match a NodeTypeDef.type in the
+              locked schema. Validated by _validate_schema_conformance();
+              mismatch raises ExtractionError (fail-closed).
+          primary_value:
+            type: string
+            minLength: 1
+            description: >-
+              Extracted value of NodeTypeDef.primary_property for this
+              node type. Forms part of node_dedupe_key:
+                (node_type, primary_value, schema_version)
+              Two identical primary_values for the same type MERGE into
+              one graph node.
+          properties:
+            type: object
+            description: >-
+              Additional extracted properties keyed by property name.
+              Keys should correspond to NodeTypeDef.additional_properties.
+              May be an empty object. Never null.
+            additionalProperties: true
+
+    edges:
+      type: array
+      description: >-
+        Extracted relationship instances. Empty array if no relationships
+        found. Each entry is validated against _RawEdge and then promoted
+        to a frozen ExtractedEdge by ExtractionService._promote_to_result().
+      items:
+        type: object
+        required:
+          - rel_type
+          - start_node_type
+          - start_primary_value
+          - end_node_type
+          - end_primary_value
+        additionalProperties: false
+        properties:
+          rel_type:
+            type: string
+            minLength: 1
+            description: >-
+              Exact Neo4j relationship type. Must match an EdgeTypeDef.type
+              in the locked schema. Validated by _validate_schema_conformance();
+              mismatch raises ExtractionError (fail-closed).
+          start_node_type:
+            type: string
+            minLength: 1
+            description: >-
+              Neo4j label of the source node. Must match a NodeTypeDef.type.
+          start_primary_value:
+            type: string
+            minLength: 1
+            description: >-
+              Primary property value of the source node. Should correspond
+              to a node in the "nodes" array of this output.
+          end_node_type:
+            type: string
+            minLength: 1
+            description: >-
+              Neo4j label of the target node. Must match a NodeTypeDef.type.
+          end_primary_value:
+            type: string
+            minLength: 1
+            description: >-
+              Primary property value of the target node. Should correspond
+              to a node in the "nodes" array of this output.
+          properties:
+            type: object
+            description: >-
+              Additional extracted relationship properties. Keys should
+              correspond to EdgeTypeDef.additional_properties. May be an
+              empty object. Never null.
+            additionalProperties: true

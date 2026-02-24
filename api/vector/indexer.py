@@ -360,6 +360,63 @@ class VectorIndexer:
         )
         return payloads
 
+    async def get_chunk_text(self, run_id: str, chunk_id: str) -> str | None:
+        """Retrieve raw chunk text from Qdrant payload by deterministic point ID.
+
+        Used exclusively by the extraction job (api/worker/jobs.py) to get
+        chunk text for LLM processing. chunk.text is stored in the Qdrant
+        payload during index_chunks() but excluded from get_chunks_for_doc()
+        to avoid surfacing raw content through the listing endpoint
+        (SKILL-D R-D5). This method provides the internal retrieval path
+        for the extraction pipeline.
+
+        Evidence-only contract: returns None (never raises) on Qdrant error
+        or if the point is absent — consistent with CLAUDE.md §4.1.
+
+        Args:
+            run_id:   Governed run identifier (determines collection name).
+            chunk_id: 64-char SHA-256 chunk identifier.
+
+        Returns:
+            Chunk text string on success; None on absence or Qdrant error.
+
+        Log events:
+            chunk_text_retrieved        DEBUG   — run_id, chunk_id
+            chunk_text_not_found        WARNING — run_id, chunk_id
+            chunk_text_retrieval_error  ERROR   — run_id, chunk_id, error
+        """
+        point_id = _chunk_id_to_point_id(chunk_id)
+        collection = f"chunks_{run_id}"
+
+        try:
+            client = self._get_qdrant_client()
+            results = await client.retrieve(
+                collection_name=collection,
+                ids=[point_id],
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not results:
+                logger.warning("chunk_text_not_found", run_id=run_id, chunk_id=chunk_id)
+                return None
+
+            text: str | None = (results[0].payload or {}).get("text")
+            if text is None:
+                logger.warning("chunk_text_not_found", run_id=run_id, chunk_id=chunk_id)
+                return None
+
+            logger.debug("chunk_text_retrieved", run_id=run_id, chunk_id=chunk_id)
+            return text
+
+        except Exception as exc:
+            logger.error(
+                "chunk_text_retrieval_error",
+                run_id=run_id,
+                chunk_id=chunk_id,
+                error=str(exc),
+            )
+            return None
+
     # ------------------------------------------------------------------
     # Internal: Qdrant client
     # ------------------------------------------------------------------
