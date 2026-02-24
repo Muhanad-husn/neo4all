@@ -1,0 +1,51 @@
+{
+  "_description": "Reference diff for sample_proposal.json. Expected shape after DiffBuilder processes the fixture proposal. Also loadable as a standalone DiffPlan (proposal_id is a placeholder — the real value is computed from proposal fields).",
+  "_proposal_id_note": "proposal_id below is a 64-char placeholder. Tests compute the actual value from sample_proposal.json fields.",
+  "proposal_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "run_id": "unit-test-run-curation-fixture-01",
+  "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "schema_version": "sv_curation_fixture_v1",
+  "steps": [
+    {
+      "operation": "update_node",
+      "dedupe_key": "Person|alice smith|sv_curation_fixture_v1",
+      "properties_set": {"name": "Alice Smith"},
+      "properties_remove": [],
+      "merge_keys": [],
+      "node_labels": [],
+      "start_dedupe_key": "",
+      "end_dedupe_key": "",
+      "rel_type": "",
+      "rationale": "Standardise name casing to title case per rule R-CANON-01",
+      "rule_ids": ["R-CANON-01"]
+    },
+    {
+      "operation": "update_node",
+      "dedupe_key": "Person|bob jones|sv_curation_fixture_v1",
+      "properties_set": {"name": "Bob Jones"},
+      "properties_remove": [],
+      "merge_keys": [],
+      "node_labels": [],
+      "start_dedupe_key": "",
+      "end_dedupe_key": "",
+      "rel_type": "",
+      "rationale": "Standardise name casing to title case per rule R-CANON-01",
+      "rule_ids": ["R-CANON-01"]
+    }
+  ],
+  "proposal_class": "canonicalize",
+  "expected_step_count": 2,
+  "expected_operations": ["update_node", "update_node"],
+  "expected_step_order": [
+    {
+      "operation": "update_node",
+      "dedupe_key": "Person|alice smith|sv_curation_fixture_v1",
+      "properties_set": {"name": "Alice Smith"}
+    },
+    {
+      "operation": "update_node",
+      "dedupe_key": "Person|bob jones|sv_curation_fixture_v1",
+      "properties_set": {"name": "Bob Jones"}
+    }
+  ]
+}

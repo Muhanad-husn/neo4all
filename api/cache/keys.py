@@ -93,6 +93,67 @@ class CacheKey:
         return f"job:{run_id}:{chunk_id}"
 
     @staticmethod
+    def proposal(proposal_id: str) -> str:
+        """Key for a single ProposalPacket (no TTL — proposals live for run lifetime).
+
+        Pattern: proposal:{proposal_id}
+        """
+        return f"proposal:{proposal_id}"
+
+    @staticmethod
+    def proposals_index(run_id: str) -> str:
+        """Key for the ordered list of proposal_ids belonging to a run.
+
+        Pattern: proposals_index:{run_id}
+        Maintained by ProposalService as an append-only Redis list of proposal_ids.
+        Used by list_for_run() to avoid S3 prefix listing on every request.
+        """
+        return f"proposals_index:{run_id}"
+
+    @staticmethod
+    def approval(approval_id: str) -> str:
+        """Key for an ApprovalRecord issued by the Approval Gate.
+
+        Pattern: approval:{approval_id}
+        No TTL — approval records are immutable for run lifetime.
+        Written by api/routers/approvals.py; read by api/agents/execution.py.
+        """
+        return f"approval:{approval_id}"
+
+    @staticmethod
+    def graph_query_prefix(run_id: str) -> str:
+        """Prefix for all graph-reader cache keys belonging to a run.
+
+        Pattern: gq:{run_id}:
+
+        Passed to CacheClient.invalidate_prefix() by Agent-C after a graph
+        mutation to evict stale graph query results (SKILL-D R-D10).
+        """
+        return f"gq:{run_id}:"
+
+    @staticmethod
+    def candidates_prefix(run_id: str) -> str:
+        """Prefix for all candidate-detection cache keys belonging to a run.
+
+        Pattern: candidates:{run_id}:
+
+        Passed to CacheClient.invalidate_prefix() by Agent-C after a graph
+        mutation to evict stale candidate results (SKILL-D R-D10).
+        """
+        return f"candidates:{run_id}:"
+
+    @staticmethod
+    def confirmation(token: str) -> str:
+        """Key for a pending two-phase approval confirmation record.
+
+        Pattern: confirm:{token}
+        TTL: 3600 s (1 hour — enough time for the operator to complete phase 2).
+        Written by api/routers/approvals.py (phase 1 of high-risk approval);
+        read and deleted on confirm (phase 2).
+        """
+        return f"confirm:{token}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 

@@ -1,27 +1,25 @@
 """
-api/routers/curation.py — POST /api/curation/candidates/generate,
-GET /api/curation/candidates/{run_id} (SPEC-05 S-05.4).
+api/routers/curation.py — Curation endpoints (SPEC-05 S-05.4, SPEC-06 S-06.8).
 
-Candidate generation lifecycle:
-  POST /candidates/generate  — Read graph data for a run, run all five
-                               deterministic detectors, deduplicate by
-                               candidate_id, cache results (5-min TTL),
-                               and return a count summary per detector type.
-  GET  /candidates/{run_id}  — Read cached candidates and return them
-                               grouped by type and ordered by severity.
+Candidate generation lifecycle (SPEC-05):
+  POST /candidates/generate  — Run all five deterministic detectors, cache results.
+  GET  /candidates/{run_id}  — Return cached candidates grouped by type.
+
+Manual proposal pipeline (SPEC-06):
+  POST /propose                           — Create a Proposal Packet (same governed
+                                           pipeline as AI — no bypass).
+  GET  /proposals/{run_id}               — List all proposals for a run.
+  POST /proposals/{proposal_id}/execute  — Build diff and execute via Agent-C.
 
 Architecture (SKILL-B: thin routers)
 --------------------------------------
 All detection logic lives in api/services/curation/candidates.py.
 All graph reads are delegated to api/graph/reader.py (GraphReader).
+Proposal lifecycle is managed by api/proposals/service.py (ProposalService).
+Diff construction is delegated to api/diff/builder.py (DiffBuilder).
+Execution is delegated to api/agents/execution.py (ExecutionAgent).
 Route handlers coordinate calls, map errors to HTTP status codes, and
-build response models.  No detector logic in this file.
-
-Request/response models (SKILL-A)
-----------------------------------
-Models are co-located in this module following the SPEC-04 extraction
-router pattern.  All response models extend BaseResponse (SKILL-A R-A2).
-No raw dicts cross module boundaries (SKILL-A R-A3).
+build response models.  No detector or execution logic in this file.
 
 Error handling
 --------------
@@ -31,13 +29,22 @@ POST /candidates/generate:
 GET /candidates/{run_id}:
   Always HTTP 200.  Returns empty groups if generation has not yet been
   triggered or the 5-minute cache TTL has expired.
+POST /propose:
+  409 — schema not locked for this run_id.
+  422 — invalid proposal fields (Pydantic validation failure).
+  503 — S3 storage error.
+GET /proposals/{run_id}:
+  Always HTTP 200.  Returns empty list if no proposals exist.
+POST /proposals/{proposal_id}/execute:
+  404 — proposal not found.
+  409 — proposal not in "approved" state.
+  200 — returns AuditRecord summary (outcome may be "failed" or "rejected").
 
 Caching (SKILL-D R-D8)
 -----------------------
 Candidate results cached under CacheKey.candidates(run_id, detection_hash)
-with 5-minute TTL.  detection_hash is deterministic: SHA-256 of
-schema_version + all_detectors sentinel, so a schema change (which cannot
-happen after lock) would naturally produce a different key.
+with 5-minute TTL.  After Agent-C execution, run-scoped cache is invalidated
+automatically (SKILL-D R-D10) inside ExecutionAgent.
 """
 
 from __future__ import annotations
@@ -47,7 +54,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
@@ -55,6 +62,12 @@ from api.graph.reader import GraphReader, get_graph_reader
 from api.models.candidate import Candidate, CandidateType
 from api.models.responses import BaseResponse, ErrorDetail
 from api.observability.logger import get_logger
+from api.proposals.models import (
+    ElementRef,
+    ProposalClass,
+    ProposalPacket,
+    ProposalState,
+)
 from api.schema.models import SchemaVersion
 from api.services.curation.candidates import (
     CanonicalViolationDetector,
@@ -544,3 +557,520 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
     )
 
     return result
+
+
+# ===========================================================================
+# SPEC-06 S-06.8: Manual proposal pipeline
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class ElementRefIn(BaseModel):
+    """Request-side representation of a graph element targeted by a proposal.
+
+    Mirrors ElementRef but without frozen constraints — acts as the deserialized
+    input from the human operator before conversion to the governed model.
+    """
+
+    element_type: str  # "node" | "relationship"
+    dedupe_key: str
+    label: str = ""
+    properties: dict[str, Any] = {}
+
+    @field_validator("element_type")
+    @classmethod
+    def _valid_element_type(cls, v: str) -> str:
+        allowed = {"node", "relationship"}
+        if v not in allowed:
+            raise ValueError(f"element_type must be one of {allowed!r}")
+        return v
+
+    @field_validator("dedupe_key")
+    @classmethod
+    def _non_empty_dedupe_key(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("dedupe_key must be non-empty")
+        return v
+
+
+class ProposeRequest(BaseModel):
+    """Request body for POST /propose.
+
+    The schema_version is resolved automatically from the run's locked schema
+    — callers do not supply it directly.
+
+    rationale is required and must be non-empty (CLAUDE.md §6 governance field).
+    confidence_score defaults to 1.0 for human operators.
+    """
+
+    run_id: str
+    candidate_id: str
+    proposal_class: ProposalClass
+    evidence_chunk_ids: list[str] = []
+    evidence_doc_ids: list[str] = []
+    targets: list[ElementRefIn] = []
+    rule_ids: list[str] = []
+    rationale: str
+    confidence_score: float = 1.0
+
+    @field_validator("run_id", "candidate_id", "rationale")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+    @field_validator("candidate_id")
+    @classmethod
+    def _candidate_id_length(cls, v: str) -> str:
+        if len(v) != 64:
+            raise ValueError(
+                f"candidate_id must be a 64-character SHA-256 hex digest, "
+                f"got {len(v)} chars"
+            )
+        return v
+
+
+class ProposeResponse(BaseResponse):
+    """Response for POST /propose.
+
+    Attributes:
+        proposal_id: Deterministic SHA-256 of the new ProposalPacket.
+        state:       Initial state ("pending").
+    """
+
+    proposal_id: str = ""
+    state: str = ""
+
+
+class ProposalOut(BaseModel):
+    """Serialisable representation of a ProposalPacket for API responses.
+
+    Converts frozen tuple fields to lists and enum fields to strings so the
+    response is fully JSON-native (SKILL-A R-A3).
+    """
+
+    proposal_id: str
+    run_id: str
+    candidate_id: str
+    proposal_class: str
+    schema_version: str
+    evidence_chunk_ids: list[str]
+    evidence_doc_ids: list[str]
+    targets: list[dict[str, Any]]
+    rule_ids: list[str]
+    rationale: str
+    confidence_score: float
+    state: str
+
+
+class ListProposalsResponse(BaseResponse):
+    """Response for GET /proposals/{run_id}.
+
+    Attributes:
+        total:     Total proposals for this run.
+        proposals: All proposals in creation order.
+    """
+
+    total: int = 0
+    proposals: list[ProposalOut] = []
+
+
+class ExecuteProposalRequest(BaseModel):
+    """Request body for POST /proposals/{proposal_id}/execute.
+
+    Attributes:
+        run_id:      Governed run the proposal belongs to.
+        approval_id: Token issued by the Approval Gate for this proposal.
+        actor:       Identity of the human operator initiating execution.
+    """
+
+    run_id: str
+    approval_id: str
+    actor: str
+
+    @field_validator("run_id", "approval_id", "actor")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class ExecuteProposalResponse(BaseResponse):
+    """Response for POST /proposals/{proposal_id}/execute.
+
+    Returns the AuditRecord summary.  The outcome field indicates whether
+    execution succeeded; check error_detail for failure reasons.
+
+    Attributes:
+        proposal_id:   The proposal that was executed.
+        diff_id:       SHA-256 of the DiffPlan that was applied.
+        approval_id:   The approval token used to authorise execution.
+        outcome:       "applied", "failed", or "rejected".
+        steps_applied: Number of DiffSteps successfully applied.
+        error_detail:  Structured failure payload (empty on success).
+    """
+
+    proposal_id: str = ""
+    diff_id: str = ""
+    approval_id: str = ""
+    outcome: str = ""
+    steps_applied: int = 0
+    error_detail: dict[str, Any] = {}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _to_proposal_out(packet: ProposalPacket) -> ProposalOut:
+    """Convert a frozen ProposalPacket to its API-safe ProposalOut representation."""
+    return ProposalOut(
+        proposal_id=packet.proposal_id,
+        run_id=packet.run_id,
+        candidate_id=packet.candidate_id,
+        proposal_class=str(packet.proposal_class),
+        schema_version=packet.schema_version,
+        evidence_chunk_ids=list(packet.evidence_chunk_ids),
+        evidence_doc_ids=list(packet.evidence_doc_ids),
+        targets=[
+            {
+                "element_type": t.element_type,
+                "dedupe_key": t.dedupe_key,
+                "label": t.label,
+                "properties": dict(t.properties),
+            }
+            for t in packet.targets
+        ],
+        rule_ids=list(packet.rule_ids),
+        rationale=packet.rationale,
+        confidence_score=packet.confidence_score,
+        state=str(packet.state),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /propose
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/propose",
+    response_model=ProposeResponse,
+    summary="Create a manual Proposal Packet (same governed pipeline as AI)",
+    responses={
+        409: {
+            "model": ProposeResponse,
+            "description": "Schema not locked — approve Phase 1 first",
+        },
+        503: {
+            "model": ProposeResponse,
+            "description": "Proposal storage unavailable",
+        },
+    },
+)
+async def propose(
+    request: ProposeRequest,
+    response: Response,
+) -> ProposeResponse:
+    """Create a Proposal Packet for a candidate.
+
+    Human proposals follow the same governed pipeline as AI proposals (Agent-P):
+    the packet is stored via ProposalService and must pass through the Approval
+    Gate before any graph mutation occurs.  There is no bypass.
+
+    The schema_version is resolved from the run's locked schema — the schema
+    must be approved (Phase 1 complete) before proposals can be created.
+
+    **Errors**
+    - ``409 Conflict`` — no locked schema found for this run_id.
+    - ``503 Service Unavailable`` — S3 storage failure.
+    """
+    from api.proposals.service import ProposalService, ProposalStorageError
+
+    run_id = request.run_id
+    logger.info(
+        "curation_propose_requested",
+        run_id=run_id,
+        candidate_id=request.candidate_id,
+        proposal_class=str(request.proposal_class),
+    )
+
+    cache = get_cache_client()
+
+    # 1. Resolve locked schema — fail-closed if absent.
+    schema: SchemaVersion | None = await cache.get(
+        CacheKey.schema(run_id=run_id), model=SchemaVersion
+    )
+    if schema is None:
+        logger.warning("curation_propose_schema_not_locked", run_id=run_id)
+        response.status_code = 409
+        return ProposeResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="schema_not_locked",
+                    message=(
+                        f"No locked schema found for run '{run_id}'. "
+                        "Complete Phase 1 (approve the domain schema) first."
+                    ),
+                )
+            ],
+        )
+
+    # 2. Convert request targets to typed ElementRef instances.
+    targets = tuple(
+        ElementRef(
+            element_type=t.element_type,
+            dedupe_key=t.dedupe_key,
+            label=t.label,
+            properties=dict(t.properties),
+        )
+        for t in request.targets
+    )
+
+    # 3. Construct the frozen ProposalPacket.
+    packet = ProposalPacket(
+        run_id=run_id,
+        candidate_id=request.candidate_id,
+        proposal_class=request.proposal_class,
+        schema_version=schema.version_hash,
+        evidence_chunk_ids=tuple(request.evidence_chunk_ids),
+        evidence_doc_ids=tuple(request.evidence_doc_ids),
+        targets=targets,
+        rule_ids=tuple(request.rule_ids),
+        rationale=request.rationale,
+        confidence_score=request.confidence_score,
+    )
+
+    # 4. Persist via ProposalService (idempotent on same proposal_id).
+    service = ProposalService()
+    try:
+        stored = await service.create(packet)
+    except ProposalStorageError as exc:
+        logger.error(
+            "curation_propose_storage_error",
+            run_id=run_id,
+            proposal_id=packet.proposal_id,
+            error=str(exc),
+        )
+        response.status_code = 503
+        return ProposeResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code="storage_error", message=str(exc))],
+        )
+
+    logger.info(
+        "curation_propose_success",
+        run_id=run_id,
+        proposal_id=stored.proposal_id,
+        proposal_class=str(stored.proposal_class),
+    )
+
+    return ProposeResponse(
+        run_id=run_id,
+        status="success",
+        proposal_id=stored.proposal_id,
+        state=str(stored.state),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /proposals/{run_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/proposals/{run_id}",
+    response_model=ListProposalsResponse,
+    summary="List all proposals for a governed run in creation order",
+)
+async def list_proposals(run_id: str) -> ListProposalsResponse:
+    """Return all proposals for a run, in creation order.
+
+    Reads from the per-run proposal index maintained by ProposalService.
+    Returns HTTP 200 with ``total=0`` and empty ``proposals`` if no proposals
+    have been created yet.
+
+    Always returns HTTP 200.
+    """
+    from api.proposals.service import ProposalService
+
+    logger.info("curation_proposals_list_requested", run_id=run_id)
+
+    service = ProposalService()
+    packets = await service.list_for_run(run_id)
+
+    proposals = [_to_proposal_out(p) for p in packets]
+
+    logger.info(
+        "curation_proposals_list_success",
+        run_id=run_id,
+        total=len(proposals),
+    )
+
+    return ListProposalsResponse(
+        run_id=run_id,
+        status="success",
+        total=len(proposals),
+        proposals=proposals,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /proposals/{proposal_id}/execute
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/proposals/{proposal_id}/execute",
+    response_model=ExecuteProposalResponse,
+    summary="Build a deterministic diff and execute an approved proposal via Agent-C",
+    responses={
+        404: {
+            "model": ExecuteProposalResponse,
+            "description": "Proposal not found",
+        },
+        409: {
+            "model": ExecuteProposalResponse,
+            "description": "Proposal is not in 'approved' state",
+        },
+        503: {
+            "model": ExecuteProposalResponse,
+            "description": "Proposal storage unavailable",
+        },
+    },
+)
+async def execute_proposal(
+    proposal_id: str,
+    request: ExecuteProposalRequest,
+    response: Response,
+) -> ExecuteProposalResponse:
+    """Execute an approved proposal through the full governed pipeline.
+
+    Fetches the proposal, builds a deterministic DiffPlan, then delegates
+    to Agent-C (ExecutionAgent) for pre-execution validation, step application,
+    post-apply invariant checks, cache invalidation, and audit logging.
+
+    Pre-execution validation is enforced by Agent-C (fail-closed):
+    - approval_id must exist in Redis.
+    - approval_id must refer to this proposal_id.
+    - Proposal must be in "approved" state.
+    - DiffPlan schema_version must match current locked schema.
+
+    The response always includes an ``outcome`` field:
+    - ``applied``  — all steps succeeded and graph was mutated.
+    - ``failed``   — a step or invariant check failed; graph may be partially
+                     mutated (check error_detail).
+    - ``rejected`` — pre-execution validation blocked execution; graph not touched.
+
+    **Errors**
+    - ``404 Not Found`` — proposal_id not found in storage.
+    - ``409 Conflict`` — proposal exists but is not in "approved" state.
+    - ``503 Service Unavailable`` — proposal storage error.
+    """
+    from api.agents.execution import ExecutionAgent
+    from api.diff.builder import DiffBuilder
+    from api.proposals.service import ProposalService, ProposalStorageError
+
+    run_id = request.run_id
+    approval_id = request.approval_id
+    actor = request.actor
+
+    logger.info(
+        "curation_execute_requested",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        actor=actor,
+    )
+
+    service = ProposalService()
+
+    # 1. Fetch the proposal — fail-closed on not found.
+    try:
+        packet = await service.get_for_run(run_id, proposal_id)
+    except ProposalStorageError as exc:
+        response.status_code = 503
+        return ExecuteProposalResponse(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[ErrorDetail(code="storage_error", message=str(exc))],
+        )
+
+    if packet is None:
+        logger.warning(
+            "curation_execute_proposal_not_found",
+            proposal_id=proposal_id,
+            run_id=run_id,
+        )
+        response.status_code = 404
+        return ExecuteProposalResponse(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="proposal_not_found",
+                    message=f"Proposal '{proposal_id}' not found in run '{run_id}'.",
+                )
+            ],
+        )
+
+    # 2. Guard: proposal must be approved before we build the diff.
+    #    Agent-C enforces this again, but early rejection gives a cleaner 409.
+    if packet.state != ProposalState.approved:
+        logger.warning(
+            "curation_execute_not_approved",
+            proposal_id=proposal_id,
+            state=str(packet.state),
+        )
+        response.status_code = 409
+        return ExecuteProposalResponse(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="proposal_not_approved",
+                    message=(
+                        f"Proposal '{proposal_id}' is in state '{packet.state}'. "
+                        "Approve it via POST /proposals/{id}/approve first."
+                    ),
+                )
+            ],
+        )
+
+    # 3. Build deterministic DiffPlan (no LLM, no randomness).
+    diff = DiffBuilder().build(packet)
+
+    # 4. Delegate to Agent-C — always returns an AuditRecord.
+    agent = ExecutionAgent()
+    audit_record = await agent.execute(diff=diff, approval_id=approval_id, actor=actor)
+
+    logger.info(
+        "curation_execute_complete",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        diff_id=audit_record.diff_id,
+        outcome=str(audit_record.outcome),
+        steps_applied=audit_record.steps_applied,
+    )
+
+    return ExecuteProposalResponse(
+        run_id=run_id,
+        proposal_id=proposal_id,
+        status="success",
+        approval_id=audit_record.approval_id,
+        diff_id=audit_record.diff_id,
+        outcome=str(audit_record.outcome),
+        steps_applied=audit_record.steps_applied,
+        error_detail=dict(audit_record.error_detail),
+    )

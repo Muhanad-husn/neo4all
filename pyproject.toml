@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neo4all"
-version = "0.5.0"
+version = "0.6.0"
 description = "AI-Powered Graph Extraction & Curation Platform"
 requires-python = ">=3.12"
 dependencies = [

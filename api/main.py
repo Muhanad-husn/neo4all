@@ -36,7 +36,7 @@ from api.observability.middleware import CorrelationMiddleware
 
 logger = get_logger(__name__)
 
-_VERSION = "0.5.0"
+_VERSION = "0.6.0"
 
 
 @asynccontextmanager
@@ -90,9 +90,12 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance ready to serve requests.
     """
+    from api.routers import approvals as approvals_router
     from api.routers import curation as curation_router
     from api.routers import documents as documents_router
+    from api.routers import evidence as evidence_router
     from api.routers import extraction as extraction_router
+    from api.routers import graph_explorer as graph_explorer_router
     from api.routers import health as health_router
     from api.routers import monitoring as monitoring_router
     from api.routers import schema as schema_router
@@ -131,7 +134,15 @@ def create_app() -> FastAPI:
     # /api/extraction/run  /api/extraction/status/{run_id}  /api/extraction/results/{run_id}
     app.include_router(extraction_router.router, prefix="/api/extraction")
     # /api/curation/candidates/generate  /api/curation/candidates/{run_id}
+    # /api/curation/propose  /api/curation/proposals/{run_id}
+    # /api/curation/proposals/{id}/execute
     app.include_router(curation_router.router, prefix="/api/curation")
+    # /api/curation/evidence/{candidate_id}  /api/curation/evidence/query
+    app.include_router(evidence_router.router, prefix="/api/curation")
+    # /api/curation/proposals/{id}/approve  /reject  /defer  /confirm
+    app.include_router(approvals_router.router, prefix="/api/curation")
+    # /api/graph/nodes/{run_id}  /api/graph/edges/{run_id}  (+ /count variants)
+    app.include_router(graph_explorer_router.router, prefix="/api/graph")
 
     return app
 

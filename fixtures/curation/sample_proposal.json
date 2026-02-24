@@ -1,0 +1,27 @@
+{
+  "_description": "Valid ProposalPacket fixture (canonicalize) — used by test_diff_determinism and test_manual_curation_cycle.",
+  "run_id": "unit-test-run-curation-fixture-01",
+  "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "proposal_class": "canonicalize",
+  "schema_version": "sv_curation_fixture_v1",
+  "state": "pending",
+  "confidence_score": 1.0,
+  "evidence_chunk_ids": [],
+  "evidence_doc_ids": [],
+  "rule_ids": ["R-CANON-01"],
+  "rationale": "Standardise name casing to title case per rule R-CANON-01",
+  "targets": [
+    {
+      "element_type": "node",
+      "dedupe_key": "Person|alice smith|sv_curation_fixture_v1",
+      "label": "Alice Smith",
+      "properties": {"name": "Alice Smith"}
+    },
+    {
+      "element_type": "node",
+      "dedupe_key": "Person|bob jones|sv_curation_fixture_v1",
+      "label": "Bob Jones",
+      "properties": {"name": "Bob Jones"}
+    }
+  ]
+}
