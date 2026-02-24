@@ -72,3 +72,4 @@ qdrant_storage/
 *.bak
 scratch/
 implementation/
+docs/human
