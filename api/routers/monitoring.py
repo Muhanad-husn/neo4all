@@ -27,9 +27,7 @@ Architecture (SKILL-B: thin routers)
 --------------------------------------
 Worker and job data come directly from Redis via the ARQ pool. No S3 calls
 are made here — job status keys are scanned by run-scoped Redis pattern.
-The ARQ pool is a module-level lazy singleton (mirrors api/routers/extraction.py).
-Duplication of _get_arq_pool() is a SKILL-B R-B7 item for governance
-consolidation into api/common/arq_pool.py in a future increment.
+The ARQ pool is a shared lazy singleton from api/common/arq_pool.py.
 
 Agent telemetry is sourced from the in-memory telemetry store in
 api/observability/metrics.py — no Redis or database queries required.
@@ -46,11 +44,10 @@ REDIS_URL is never logged in full. chunk_id (a safe hash) is safe to log.
 
 import json
 import time
-from typing import Any
-
 from fastapi import APIRouter, Query
 
 from api.cache.client import get_cache_client
+from api.common.arq_pool import QUEUE_NAME, get_arq_pool
 from api.config import get_settings
 from api.models.responses import ErrorDetail
 from api.observability.logger import get_logger, get_recent_logs
@@ -83,16 +80,6 @@ router = APIRouter(tags=["monitoring"])
 
 _VERSION = "0.1.0"
 
-# ---------------------------------------------------------------------------
-# ARQ pool — module-level lazy singleton for worker monitoring queries.
-# Separate from api/routers/extraction.py's pool; both connect to the same
-# Redis instance. Duplication noted as SKILL-B R-B7 item.
-# ---------------------------------------------------------------------------
-
-_arq_pool: Any = None
-_QUEUE_NAME: str = "arq:queue"  # must match WorkerSettings.queue_name
-
-
 def _observe_response_time(endpoint: str, start: float) -> None:
     """Record endpoint response duration in the in-memory histogram.
 
@@ -105,34 +92,6 @@ def _observe_response_time(endpoint: str, start: float) -> None:
     get_metrics().observe("response_duration_ms", duration_ms)
     get_metrics().increment("response_count", endpoint=endpoint)
 
-
-async def _get_arq_pool() -> Any:
-    """Return (or create) the monitoring-scoped ARQ Redis pool.
-
-    Uses a module-level variable so a single connection pool is shared across
-    all monitoring requests in the process. Created lazily on first call.
-
-    Raises:
-        Exception: If REDIS_URL is absent from Settings or Redis is unreachable.
-
-    Log events:
-        monitoring_arq_pool_created  INFO — redis_host
-    """
-    global _arq_pool
-    if _arq_pool is None:
-        from arq import create_pool as arq_create_pool
-        from arq.connections import RedisSettings
-
-        settings = get_settings()
-        redis_url = settings.REDIS_URL
-        _arq_pool = await arq_create_pool(
-            RedisSettings.from_dsn(redis_url),
-            default_queue_name=_QUEUE_NAME,
-        )
-        safe_host = redis_url.split("@")[-1] if "@" in redis_url else redis_url
-        logger.info("monitoring_arq_pool_created", redis_host=safe_host)
-
-    return _arq_pool
 
 
 @router.get("/health", response_model=ExtendedHealthResponse)
@@ -254,7 +213,7 @@ async def get_worker_status() -> WorkerStatusResponse:
     at ERROR if the pool cannot be created.
 
     Log events:
-        monitoring_arq_pool_created      INFO  — redis_host (on first call)
+        arq_pool_created      INFO  — redis_host (on first call)
         worker_status_queried            INFO  — queue_depth, active_jobs, worker_count
         worker_status_arq_unavailable    ERROR — error
         worker_queue_depth_failed        WARNING — error
@@ -265,7 +224,7 @@ async def get_worker_status() -> WorkerStatusResponse:
     logger.info("worker_status_requested")
 
     try:
-        pool = await _get_arq_pool()
+        pool = await get_arq_pool()
     except Exception as exc:
         logger.error("worker_status_arq_unavailable", error=str(exc))
         _observe_response_time("workers", start)
@@ -278,7 +237,7 @@ async def get_worker_status() -> WorkerStatusResponse:
     # --- Queue depth: sorted-set cardinality ---
     queue_depth = 0
     try:
-        queue_depth = await pool.zcard(_QUEUE_NAME)
+        queue_depth = await pool.zcard(QUEUE_NAME)
     except Exception as exc:
         logger.warning("worker_queue_depth_failed", error=str(exc))
 
@@ -350,7 +309,7 @@ async def get_run_jobs(run_id: str) -> JobStatusResponse:
 
     Log events:
         jobs_status_requested         INFO  — run_id
-        monitoring_arq_pool_created   INFO  — redis_host (on first pool creation)
+        arq_pool_created   INFO  — redis_host (on first pool creation)
         jobs_status_arq_unavailable   ERROR — run_id, error
         job_status_parse_error        WARNING — run_id, error
         jobs_status_success           INFO  — run_id, total, completed, failed, pending
@@ -358,7 +317,7 @@ async def get_run_jobs(run_id: str) -> JobStatusResponse:
     logger.info("jobs_status_requested", run_id=run_id)
 
     try:
-        pool = await _get_arq_pool()
+        pool = await get_arq_pool()
     except Exception as exc:
         logger.error("jobs_status_arq_unavailable", run_id=run_id, error=str(exc))
         return JobStatusResponse(

@@ -59,6 +59,7 @@ from pydantic import BaseModel
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
+from api.common.arq_pool import get_arq_pool
 from api.graph.client import Neo4jClient, get_neo4j_client
 from api.models.responses import BaseResponse, ErrorDetail
 from api.observability.correlation import get_correlation_id
@@ -71,47 +72,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["extraction"])
 
-# ---------------------------------------------------------------------------
-# ARQ pool — module-level singleton, created on first enqueue request
-# ---------------------------------------------------------------------------
-
-_arq_pool: Any = None
-
 _JOB_STATUS_TTL_S: int = 86400   # 24 h — mirrors api/worker/jobs._JOB_STATUS_TTL_S
-_QUEUE_NAME: str = "arq:queue"   # must match api/worker/entry.WorkerSettings.queue_name
-
-
-async def _get_arq_pool() -> Any:
-    """Return (or create) the process-level ARQ Redis pool.
-
-    Uses a module-level variable so a single connection pool is shared across
-    all requests in the process.  Created lazily on first call to avoid
-    importing ARQ at module load time when env vars may not yet be present.
-
-    Raises:
-        ValidationError: If REDIS_URL is absent from Settings (fail-closed).
-
-    Log events:
-        arq_pool_created  INFO — redis_host
-    """
-    global _arq_pool
-    if _arq_pool is None:
-        from arq import create_pool as arq_create_pool
-        from arq.connections import RedisSettings
-
-        from api.config import get_settings
-
-        settings = get_settings()
-        redis_url = settings.REDIS_URL
-        _arq_pool = await arq_create_pool(
-            RedisSettings.from_dsn(redis_url),
-            default_queue_name=_QUEUE_NAME,
-        )
-        # Log only the host fragment — never the full URL (SKILL-D R-D5).
-        safe_host = redis_url.split("@")[-1] if "@" in redis_url else redis_url
-        logger.info("arq_pool_created", redis_host=safe_host)
-
-    return _arq_pool
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +302,7 @@ async def run_extraction(
     # ------------------------------------------------------------------
     # 3. Enqueue jobs for all non-complete chunks
     # ------------------------------------------------------------------
-    arq_pool = await _get_arq_pool()
+    arq_pool = await get_arq_pool()
     jobs_enqueued = 0
 
     for manifest in manifests:
