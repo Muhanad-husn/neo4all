@@ -31,8 +31,6 @@ import asyncio
 from typing import Any
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
-from pydantic import BaseModel
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
@@ -41,6 +39,13 @@ from api.proposals.models import (
     ProposalPacket,
     ProposalState,
     allowed_transitions,
+)
+from api.proposals.storage import (
+    ProposalStorageError,
+    _ProposalIndex,
+    _proposal_s3_key,
+    _sync_get_proposal,
+    _sync_put_proposal,
 )
 
 logger = get_logger(__name__)
@@ -89,97 +94,9 @@ class InvalidTransitionError(Exception):
         self.to_state = to_state
 
 
-class ProposalStorageError(Exception):
-    """Raised for unrecoverable S3 write or read failures.
-
-    Attributes:
-        code:    Machine-readable error code (e.g. "s3_put_failed").
-        message: Human-readable description.
-    """
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-# ---------------------------------------------------------------------------
-# Redis index model — wraps a list of proposal_ids for typed cache storage
-# ---------------------------------------------------------------------------
-
-
-class _ProposalIndex(BaseModel):
-    """Thin Pydantic wrapper for a per-run ordered list of proposal_ids.
-
-    Required because CacheClient.get/set only accept Pydantic BaseModel
-    instances (SKILL-A R-A3 — no raw dicts at module boundaries).
-    """
-
-    proposal_ids: list[str] = []
-
-
-# ---------------------------------------------------------------------------
-# S3 key builders — single place for path layout (SKILL-C R-C6)
-# ---------------------------------------------------------------------------
-
-
-def _proposal_s3_key(run_id: str, proposal_id: str) -> str:
-    """S3 key for a serialised ProposalPacket."""
-    return f"{run_id}/proposals/{proposal_id}.json"
-
-
-# ---------------------------------------------------------------------------
-# Synchronous S3 helpers — always run inside asyncio.to_thread
-# ---------------------------------------------------------------------------
-
-
-def _sync_put_proposal(
-    client: Any,
-    bucket: str,
-    key: str,
-    body: bytes,
-) -> None:
-    """PUT proposal JSON to S3; raise ProposalStorageError on failure."""
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentType="application/json",
-        )
-    except (BotoCoreError, ClientError) as exc:
-        raise ProposalStorageError(
-            code="s3_put_failed",
-            message=f"S3 put failed for key {key!r}: {exc}",
-        ) from exc
-
-
-def _sync_get_proposal(
-    client: Any,
-    bucket: str,
-    key: str,
-) -> bytes | None:
-    """GET proposal JSON from S3.
-
-    Returns raw bytes on hit, None on 404 / NoSuchKey.
-    Raises ProposalStorageError for all other failures.
-    """
-    try:
-        response = client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
-    except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code", "")
-        if error_code in ("NoSuchKey", "404"):
-            return None
-        raise ProposalStorageError(
-            code="s3_get_failed",
-            message=f"S3 get failed for key {key!r}: {exc}",
-        ) from exc
-    except BotoCoreError as exc:
-        raise ProposalStorageError(
-            code="s3_get_failed",
-            message=f"S3 get failed for key {key!r}: {exc}",
-        ) from exc
+# ProposalStorageError is re-exported from api.proposals.storage via the
+# import block above.  Existing ``from api.proposals.service import
+# ProposalStorageError`` paths continue to work without modification.
 
 
 # ---------------------------------------------------------------------------

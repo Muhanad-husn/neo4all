@@ -43,142 +43,29 @@ The GraphReader's 5-minute TTL applies to all read results.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel
 
 from api.graph.reader import GraphReader, GraphReaderInjectionError, get_graph_reader
-from api.models.responses import BaseResponse, ErrorDetail
+from api.models.responses import ErrorDetail
 from api.observability.logger import get_logger
+from api.routers.graph_explorer_models import (
+    EdgeCountResponse,
+    EdgeOut,
+    EdgePageResponse,
+    NodeCountResponse,
+    NodeOut,
+    NodePageResponse,
+    TypeCount,
+    _DEFAULT_PAGE_SIZE,
+    _MAX_PAGE_SIZE,
+    _clamp_page,
+    _clamp_page_size,
+)
 
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["graph-explorer"])
-
-_MAX_PAGE_SIZE: int = 50
-_DEFAULT_PAGE_SIZE: int = 50
-
-
-# ---------------------------------------------------------------------------
-# Request / Response models (SKILL-A R-A1, R-A2)
-# ---------------------------------------------------------------------------
-
-
-class NodeOut(BaseModel):
-    """Serialisable representation of a graph node for API responses.
-
-    properties contains only JSON-serialisable primitives (the GraphReader
-    converts all Neo4j-specific types at read time).
-    """
-
-    dedupe_key: str
-    node_type: str
-    run_id: str
-    schema_version: str
-    properties: dict[str, Any]
-
-
-class EdgeOut(BaseModel):
-    """Serialisable representation of a directed graph edge for API responses."""
-
-    dedupe_key: str
-    rel_type: str
-    start_dedupe_key: str
-    end_dedupe_key: str
-    run_id: str
-    schema_version: str
-    properties: dict[str, Any]
-
-
-class TypeCount(BaseModel):
-    """Count of elements for a single type label."""
-
-    type: str
-    count: int
-
-
-class NodePageResponse(BaseResponse):
-    """Response for GET /nodes/{run_id}.
-
-    Attributes:
-        run_id:      The governed run being browsed.
-        page:        1-indexed current page number.
-        page_size:   Number of items per page (≤ 50).
-        total:       Total matching nodes (after type filtering, before paging).
-        has_more:    True if further pages exist.
-        items:       Nodes on this page, sorted by dedupe_key.
-    """
-
-    run_id: str = ""
-    page: int = 1
-    page_size: int = _DEFAULT_PAGE_SIZE
-    total: int = 0
-    has_more: bool = False
-    items: list[NodeOut] = []
-
-
-class EdgePageResponse(BaseResponse):
-    """Response for GET /edges/{run_id}.
-
-    Attributes:
-        run_id:      The governed run being browsed.
-        page:        1-indexed current page number.
-        page_size:   Number of items per page (≤ 50).
-        total:       Total matching edges (after type filtering, before paging).
-        has_more:    True if further pages exist.
-        items:       Edges on this page, sorted by dedupe_key.
-    """
-
-    run_id: str = ""
-    page: int = 1
-    page_size: int = _DEFAULT_PAGE_SIZE
-    total: int = 0
-    has_more: bool = False
-    items: list[EdgeOut] = []
-
-
-class NodeCountResponse(BaseResponse):
-    """Response for GET /nodes/{run_id}/count.
-
-    Attributes:
-        run_id:   The governed run.
-        total:    Total node count across all types.
-        by_type:  Per-type count, sorted descending by count.
-    """
-
-    run_id: str = ""
-    total: int = 0
-    by_type: list[TypeCount] = []
-
-
-class EdgeCountResponse(BaseResponse):
-    """Response for GET /edges/{run_id}/count.
-
-    Attributes:
-        run_id:   The governed run.
-        total:    Total edge count across all relationship types.
-        by_type:  Per-type count, sorted descending by count.
-    """
-
-    run_id: str = ""
-    total: int = 0
-    by_type: list[TypeCount] = []
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _clamp_page_size(requested: int) -> int:
-    """Clamp page_size to [1, _MAX_PAGE_SIZE]."""
-    return max(1, min(requested, _MAX_PAGE_SIZE))
-
-
-def _clamp_page(requested: int) -> int:
-    """Clamp page to ≥ 1."""
-    return max(1, requested)
 
 
 # ---------------------------------------------------------------------------

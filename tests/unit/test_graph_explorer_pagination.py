@@ -47,7 +47,8 @@ from api.graph.reader_models import (
     NodeListResult,
     RelListResult,
 )
-from api.routers.graph_explorer import _MAX_PAGE_SIZE, router
+from api.routers.graph_explorer import router
+from api.routers.graph_explorer_models import _MAX_PAGE_SIZE
 
 # ---------------------------------------------------------------------------
 # Module-level test application

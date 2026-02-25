@@ -40,6 +40,12 @@ from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.models.document import DocumentManifest
 from api.observability.logger import get_logger
+from api.storage.artifacts_helpers import (
+    _manifest_key,
+    _raw_document_key,
+    _sync_get_object,
+    _sync_put_object,
+)
 
 logger = get_logger(__name__)
 
@@ -63,68 +69,6 @@ class StorageError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-# ---------------------------------------------------------------------------
-# S3 key builders — deterministic, single place to change path layout
-# ---------------------------------------------------------------------------
-
-def _raw_document_key(run_id: str, doc_id: str) -> str:
-    return f"{run_id}/documents/{doc_id}/raw"
-
-
-def _manifest_key(run_id: str, doc_id: str) -> str:
-    return f"{run_id}/manifests/{doc_id}.json"
-
-
-# ---------------------------------------------------------------------------
-# Synchronous S3 helpers — always run inside asyncio.to_thread
-# ---------------------------------------------------------------------------
-
-def _sync_put_object(
-    client: Any,
-    bucket: str,
-    key: str,
-    body: bytes,
-    content_type: str,
-) -> None:
-    """PUT body to S3; raise StorageError on any boto3 failure."""
-    try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=body,
-            ContentType=content_type,
-        )
-    except (BotoCoreError, ClientError) as exc:
-        raise StorageError(
-            code="s3_put_failed",
-            message=f"S3 put failed for key {key!r}: {exc}",
-        ) from exc
-
-
-def _sync_get_object(client: Any, bucket: str, key: str) -> bytes | None:
-    """GET object from S3.
-
-    Returns raw bytes on success, None if the key does not exist (404 /
-    NoSuchKey). Raises StorageError for all other S3 / network failures.
-    """
-    try:
-        response = client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
-    except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code", "")
-        if error_code in ("NoSuchKey", "404"):
-            return None
-        raise StorageError(
-            code="s3_get_failed",
-            message=f"S3 get failed for key {key!r}: {exc}",
-        ) from exc
-    except BotoCoreError as exc:
-        raise StorageError(
-            code="s3_get_failed",
-            message=f"S3 get failed for key {key!r}: {exc}",
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
