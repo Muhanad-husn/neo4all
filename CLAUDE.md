@@ -20,15 +20,16 @@ A **session-based, AI-assisted web application** that transforms documents into 
 │   ├── components/      # Reusable UI widgets (phase indicator, etc.)
 │   └── pages/           # Per-phase page modules
 ├── api/                 # FastAPI backend (all business logic)
+│   ├── common/          # Shared utilities (ARQ pool singleton)
 │   ├── routers/         # HTTP route handlers
 │   ├── services/        # Domain services (ingestion, extraction, curation)
 │   ├── agents/          # Agent components (typed, constrained)
-│   ├── graph/           # Neo4j interaction (sole write authority)
+│   ├── graph/           # Neo4j interaction (sole write authority) + safety guards
 │   ├── vector/          # Qdrant retrieval (evidence-only, no writes)
 │   ├── storage/         # Artifact storage via boto3
-│   ├── worker/          # ARQ worker entry point
+│   ├── worker/          # ARQ worker entry point + agent pipeline jobs
 │   ├── schema/          # Domain schema definitions
-│   ├── proposals/       # Proposal Packet models
+│   ├── proposals/       # Proposal Packet models + S3 storage helpers
 │   ├── diff/            # Deterministic diff builder (non-LLM)
 │   ├── audit/           # Immutable audit log writers
 │   ├── cache/           # Redis-backed cache abstraction layer
