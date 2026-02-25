@@ -5,8 +5,9 @@ monitoring endpoints (SKILL-A R-A1, R-A2).
 SPEC-08 additions: CacheStatsResponse, ResponseTimePercentiles.
 
 Models are co-located in the api/routers/ subdirectory and imported by the
-route handlers in health.py and monitoring.py (SKILL-A R-A5). All models
-extend BaseResponse to carry the standard run_id/status/errors envelope.
+route handlers in health.py, monitoring.py, and monitoring_agents.py
+(SKILL-A R-A5). All models extend BaseResponse to carry the standard
+run_id/status/errors envelope.
 """
 
 from __future__ import annotations

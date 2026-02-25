@@ -40,7 +40,7 @@ from __future__ import annotations
 import hashlib
 
 from fastapi import APIRouter, Response
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from api.agents.execution import ApprovalRecord
 from api.cache.client import get_cache_client
@@ -53,6 +53,16 @@ from api.proposals.service import (
     ProposalNotFoundError,
     ProposalService,
     ProposalStorageError,
+)
+from api.routers.approvals_models import (
+    ApproveProposalRequest,
+    ApproveProposalResponse,
+    ConfirmProposalRequest,
+    ConfirmProposalResponse,
+    DeferProposalRequest,
+    DeferProposalResponse,
+    RejectProposalRequest,
+    RejectProposalResponse,
 )
 
 logger = get_logger(__name__)
@@ -98,110 +108,51 @@ def _derive_confirmation_token(proposal_id: str, actor: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Request / Response models (SKILL-A R-A1, R-A2)
+# Shared transition helper (reduces duplication in reject / defer)
 # ---------------------------------------------------------------------------
 
 
-class ApproveProposalRequest(BaseModel):
-    """Request body for POST /proposals/{proposal_id}/approve."""
-
-    run_id: str
-    actor: str
-
-    @field_validator("run_id", "actor")
-    @classmethod
-    def _non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("must be a non-empty, non-whitespace string")
-        return v
-
-
-class ApproveProposalResponse(BaseResponse):
-    """Response for POST /proposals/{proposal_id}/approve.
-
-    Attributes:
-        proposal_id:           The proposal that was approved (or pended).
-        approval_id:           Issued approval token (empty when confirmation
-                               is required — will be issued after /confirm).
-        confirmation_required: True when the proposal is high-risk and the
-                               caller must complete /confirm before execution.
-        confirmation_token:    Phase-1 token to supply to /confirm (only set
-                               when confirmation_required=True).
-    """
-
-    proposal_id: str = ""
-    approval_id: str = ""
-    confirmation_required: bool = False
-    confirmation_token: str = ""
-
-
-class ConfirmProposalRequest(BaseModel):
-    """Request body for POST /proposals/{proposal_id}/confirm (phase 2)."""
-
-    run_id: str
-    actor: str
-    confirmation_token: str
-
-    @field_validator("run_id", "actor", "confirmation_token")
-    @classmethod
-    def _non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("must be a non-empty, non-whitespace string")
-        return v
-
-
-class ConfirmProposalResponse(BaseResponse):
-    """Response for POST /proposals/{proposal_id}/confirm.
-
-    Attributes:
-        proposal_id: The proposal that was confirmed and approved.
-        approval_id: The final approval token to pass to the execute endpoint.
-    """
-
-    proposal_id: str = ""
-    approval_id: str = ""
-
-
-class RejectProposalRequest(BaseModel):
-    """Request body for POST /proposals/{proposal_id}/reject."""
-
-    run_id: str
-    actor: str
-    reason: str = ""
-
-    @field_validator("run_id", "actor")
-    @classmethod
-    def _non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("must be a non-empty, non-whitespace string")
-        return v
-
-
-class RejectProposalResponse(BaseResponse):
-    """Response for POST /proposals/{proposal_id}/reject."""
-
-    proposal_id: str = ""
-
-
-class DeferProposalRequest(BaseModel):
-    """Request body for POST /proposals/{proposal_id}/defer."""
-
-    run_id: str
-    actor: str
-    reason: str = ""
-
-    @field_validator("run_id", "actor")
-    @classmethod
-    def _non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("must be a non-empty, non-whitespace string")
-        return v
-
-
-class DeferProposalResponse(BaseResponse):
-    """Response for POST /proposals/{proposal_id}/defer."""
-
-    proposal_id: str = ""
+async def _transition_proposal(
+    run_id: str,
+    proposal_id: str,
+    target_state: ProposalState,
+    response: Response,
+    response_cls: type,
+) -> BaseResponse | None:
+    """Attempt a proposal state transition, returning an error response on failure or None on success."""
+    service = ProposalService()
+    try:
+        await service.transition(run_id, proposal_id, target_state)
+    except ProposalNotFoundError:
+        response.status_code = 404
+        return response_cls(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="proposal_not_found",
+                    message=f"Proposal '{proposal_id}' not found in run '{run_id}'.",
+                )
+            ],
+        )
+    except InvalidTransitionError as exc:
+        response.status_code = 409
+        return response_cls(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[ErrorDetail(code="transition_failed", message=str(exc))],
+        )
+    except ProposalStorageError as exc:
+        response.status_code = 503
+        return response_cls(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="error",
+            errors=[ErrorDetail(code="storage_error", message=str(exc))],
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -498,40 +449,12 @@ async def confirm_proposal(
             ],
         )
 
-    service = ProposalService()
-
     # Transition proposal → approved.
-    try:
-        await service.transition(run_id, proposal_id, ProposalState.approved)
-    except ProposalNotFoundError:
-        response.status_code = 404
-        return ConfirmProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[
-                ErrorDetail(
-                    code="proposal_not_found",
-                    message=f"Proposal '{proposal_id}' not found in run '{run_id}'.",
-                )
-            ],
-        )
-    except InvalidTransitionError as exc:
-        response.status_code = 409
-        return ConfirmProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="transition_failed", message=str(exc))],
-        )
-    except ProposalStorageError as exc:
-        response.status_code = 503
-        return ConfirmProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="storage_error", message=str(exc))],
-        )
+    err = await _transition_proposal(
+        run_id, proposal_id, ProposalState.approved, response, ConfirmProposalResponse,
+    )
+    if err is not None:
+        return err
 
     # Issue the approval_id and write the ApprovalRecord.
     approval_id = _derive_approval_id(proposal_id, actor)
@@ -611,39 +534,11 @@ async def reject_proposal(
         actor=request.actor,
     )
 
-    service = ProposalService()
-
-    try:
-        await service.transition(run_id, proposal_id, ProposalState.rejected)
-    except ProposalNotFoundError:
-        response.status_code = 404
-        return RejectProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[
-                ErrorDetail(
-                    code="proposal_not_found",
-                    message=f"Proposal '{proposal_id}' not found in run '{run_id}'.",
-                )
-            ],
-        )
-    except InvalidTransitionError as exc:
-        response.status_code = 409
-        return RejectProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="transition_failed", message=str(exc))],
-        )
-    except ProposalStorageError as exc:
-        response.status_code = 503
-        return RejectProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="storage_error", message=str(exc))],
-        )
+    err = await _transition_proposal(
+        run_id, proposal_id, ProposalState.rejected, response, RejectProposalResponse,
+    )
+    if err is not None:
+        return err
 
     logger.info(
         "proposal_rejected",
@@ -708,39 +603,11 @@ async def defer_proposal(
         actor=request.actor,
     )
 
-    service = ProposalService()
-
-    try:
-        await service.transition(run_id, proposal_id, ProposalState.deferred)
-    except ProposalNotFoundError:
-        response.status_code = 404
-        return DeferProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[
-                ErrorDetail(
-                    code="proposal_not_found",
-                    message=f"Proposal '{proposal_id}' not found in run '{run_id}'.",
-                )
-            ],
-        )
-    except InvalidTransitionError as exc:
-        response.status_code = 409
-        return DeferProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="transition_failed", message=str(exc))],
-        )
-    except ProposalStorageError as exc:
-        response.status_code = 503
-        return DeferProposalResponse(
-            run_id=run_id,
-            proposal_id=proposal_id,
-            status="error",
-            errors=[ErrorDetail(code="storage_error", message=str(exc))],
-        )
+    err = await _transition_proposal(
+        run_id, proposal_id, ProposalState.deferred, response, DeferProposalResponse,
+    )
+    if err is not None:
+        return err
 
     logger.info(
         "proposal_deferred",

@@ -435,7 +435,7 @@ class TestCacheStatsEndpoint:
     def test_cache_stats_endpoint(self) -> None:
         """Endpoint returns CacheStatsResponse with expected fields from mock Redis."""
         from api.cache.client import get_cache_client
-        from api.routers import monitoring as monitoring_router
+        from api.routers import monitoring_agents as monitoring_router
 
         app = FastAPI()
         app.include_router(monitoring_router.router, prefix="/api/monitoring")
@@ -464,7 +464,7 @@ class TestCacheStatsEndpoint:
 
     def test_cache_stats_redis_unavailable(self) -> None:
         """Endpoint returns zeros when Redis is unreachable (fail-open)."""
-        from api.routers import monitoring as monitoring_router
+        from api.routers import monitoring_agents as monitoring_router
 
         app = FastAPI()
         app.include_router(monitoring_router.router, prefix="/api/monitoring")
@@ -494,7 +494,7 @@ class TestCacheStatsHitRatio:
 
     def test_cache_stats_hit_ratio(self) -> None:
         """Hit ratio = hits / (hits + misses), rounded to 4 decimal places."""
-        from api.routers import monitoring as monitoring_router
+        from api.routers import monitoring_agents as monitoring_router
 
         app = FastAPI()
         app.include_router(monitoring_router.router, prefix="/api/monitoring")
@@ -519,7 +519,7 @@ class TestCacheStatsHitRatio:
 
     def test_cache_stats_hit_ratio_zero_total(self) -> None:
         """Hit ratio must be 0.0 when no cache operations have occurred."""
-        from api.routers import monitoring as monitoring_router
+        from api.routers import monitoring_agents as monitoring_router
 
         app = FastAPI()
         app.include_router(monitoring_router.router, prefix="/api/monitoring")
@@ -539,7 +539,7 @@ class TestCacheStatsHitRatio:
 
     def test_cache_stats_hit_ratio_all_hits(self) -> None:
         """Hit ratio must be 1.0 when all cache operations are hits."""
-        from api.routers import monitoring as monitoring_router
+        from api.routers import monitoring_agents as monitoring_router
 
         app = FastAPI()
         app.include_router(monitoring_router.router, prefix="/api/monitoring")

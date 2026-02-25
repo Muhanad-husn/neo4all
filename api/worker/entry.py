@@ -27,9 +27,9 @@ from __future__ import annotations
 
 from api.graph.client import get_neo4j_client
 from api.observability.logger import configure_logging, get_logger
-from api.worker.jobs import (
+from api.worker.jobs import extraction_job
+from api.worker.jobs_agents import (
     evidence_assembly_job,
-    extraction_job,
     proposal_composition_job,
     retrieval_augmentation_job,
 )
