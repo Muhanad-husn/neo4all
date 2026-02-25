@@ -165,6 +165,14 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     AGENT_CONFIG: AgentConfig = Field(default_factory=AgentConfig)
 
+    # -------------------------------------------------------------------------
+    # Dry-run mode (SPEC-08 S-08.1)
+    # When True, Agent-C skips all graph mutations (Neo4j writes).  Diffs and
+    # proposals are still generated and logged to S3 / structlog so operators
+    # can review what *would* happen without touching the graph.
+    # -------------------------------------------------------------------------
+    DRY_RUN: bool = False
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

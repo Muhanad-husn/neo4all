@@ -33,6 +33,7 @@ ApprovalRecord storage contract:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -42,12 +43,14 @@ from api.audit.models import AuditOutcome, AuditRecord
 from api.audit.writer import AuditWriter
 from api.cache.client import CacheClient, get_cache_client
 from api.cache.keys import CacheKey
+from api.config import get_settings
 from api.diff.models import DiffOperation, DiffPlan, DiffStep
 from api.graph.client import Neo4jClient, get_neo4j_client
 from api.observability.logger import get_logger
 from api.proposals.models import ProposalState
 from api.proposals.service import ProposalService
 from api.schema.service import SchemaService, get_schema_service
+from api.storage.artifacts import ArtifactsService, get_artifacts_service
 
 logger = get_logger(__name__)
 
@@ -289,6 +292,9 @@ class ExecutionAgent:
             AuditRecord with outcome=applied, failed, or rejected.
 
         Log events:
+            dry_run_skipped          INFO    — proposal_id, run_id, diff_id, steps_count, diff_operations
+            dry_run_diff_stored      INFO    — run_id, diff_id, s3_key
+            dry_run_diff_store_failed WARNING — run_id, diff_id, error
             execution_rejected       WARNING — proposal_id, run_id, code
             execution_step_failed    ERROR   — proposal_id, run_id, step_index, operation, error
             execution_invariant_failed ERROR — proposal_id, run_id, step_index, operation, error
@@ -321,7 +327,57 @@ class ExecutionAgent:
             await self._auditor.append(record)
             return record
 
-        # --- 2. Apply DiffSteps in declaration order ---
+        # --- 2. Dry-run guard (SPEC-08 S-08.1) ---
+        if get_settings().DRY_RUN:
+            logger.info(
+                "dry_run_skipped",
+                proposal_id=diff.proposal_id,
+                run_id=diff.run_id,
+                diff_id=diff.diff_id,
+                steps_count=len(diff.steps),
+                diff_operations=[str(s.operation) for s in diff.steps],
+            )
+
+            # Persist the full DiffPlan to S3 so operators can review
+            # exactly what *would* have been applied to the graph.
+            try:
+                artifacts = get_artifacts_service()
+                s3_key = f"{diff.run_id}/dry-run/{diff.diff_id}.json"
+                await artifacts.store_json(
+                    s3_key, diff.model_dump_json().encode("utf-8")
+                )
+                logger.info(
+                    "dry_run_diff_stored",
+                    run_id=diff.run_id,
+                    diff_id=diff.diff_id,
+                    s3_key=s3_key,
+                )
+            except Exception as exc:
+                # Best-effort: S3 failure must not block the dry-run audit
+                # record from being written.
+                logger.warning(
+                    "dry_run_diff_store_failed",
+                    run_id=diff.run_id,
+                    diff_id=diff.diff_id,
+                    error=str(exc),
+                )
+
+            record = AuditRecord.make(
+                run_id=diff.run_id,
+                schema_version=diff.schema_version,
+                candidate_id=diff.candidate_id,
+                proposal_id=diff.proposal_id,
+                diff_id=diff.diff_id,
+                approval_id=approval_id,
+                actor=actor,
+                outcome=AuditOutcome.applied,
+                steps_applied=0,
+                error_detail={"dry_run": True},
+            )
+            await self._auditor.append(record)
+            return record
+
+        # --- 3. Apply DiffSteps in declaration order ---
         steps_applied = 0
         error_detail: dict[str, Any] = {}
         for idx, step in enumerate(diff.steps):
@@ -344,7 +400,7 @@ class ExecutionAgent:
                 }
                 break
 
-        # --- 3. Post-apply invariant checks (only on full-step success) ---
+        # --- 4. Post-apply invariant checks (only on full-step success) ---
         if not error_detail:
             for idx, step in enumerate(diff.steps):
                 try:
@@ -368,11 +424,11 @@ class ExecutionAgent:
 
         outcome = AuditOutcome.applied if not error_detail else AuditOutcome.failed
 
-        # --- 4. Post-execution cache invalidation (SKILL-D R-D10) ---
+        # --- 5. Post-execution cache invalidation (SKILL-D R-D10) ---
         if outcome == AuditOutcome.applied:
             await self._invalidate_run_cache(diff.run_id)
 
-        # --- 5. Write immutable audit record ---
+        # --- 6. Write immutable audit record ---
         record = AuditRecord.make(
             run_id=diff.run_id,
             schema_version=diff.schema_version,

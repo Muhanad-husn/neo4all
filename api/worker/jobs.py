@@ -33,9 +33,16 @@ returns without raising so sibling candidates are unaffected.
 
 Job arguments
 -------------
-Extraction: run_id (str), chunk_id (str), doc_id (str).
+Extraction: run_id (str), chunk_id (str), doc_id (str), correlation_id (str).
 Agent pipeline: run_id (str), candidate_json (str), decision_json (str),
-  evidence_report_json (str — omitted for evidence_assembly_job).
+  evidence_report_json (str — omitted for evidence_assembly_job),
+  correlation_id (str).
+
+All jobs accept an optional ``correlation_id`` parameter (SKILL-D R-D2).
+When non-empty, the ID is bound to structlog's context at job start so
+every log entry within the job carries the same correlation ID as the
+originating HTTP request.  Chained jobs propagate the ID to the next
+``enqueue_job()`` call.
 
 Serialisation: Pydantic model_dump_json() for complex args; deserialised via
 model_validate_json() at the start of each job.
@@ -64,6 +71,7 @@ from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.graph.client import Neo4jClient
 from api.graph.writer import GraphWriter
+from api.observability.correlation import set_correlation_id
 from api.observability.logger import get_logger
 from api.services.extraction import ExtractionError, get_extraction_service
 from api.vector.indexer import get_vector_indexer
@@ -168,17 +176,21 @@ async def extraction_job(
     run_id: str,
     chunk_id: str,
     doc_id: str,
+    correlation_id: str = "",
 ) -> None:
     """Extract entities from one chunk and write them to Neo4j.
 
     Args:
-        ctx:      ARQ worker context dict. Must contain "neo4j_client"
-                  (an open Neo4jClient injected by WorkerSettings.on_startup).
-        run_id:   Governed run identifier. The locked schema for this run must
-                  be in Redis (approved in Phase 1) before enqueuing jobs.
-        chunk_id: Target chunk identifier (Chunk.chunk_id — SHA-256 hex).
-        doc_id:   Parent document identifier; stored in ChunkJobStatus for
-                  per-job monitoring visibility.
+        ctx:            ARQ worker context dict. Must contain "neo4j_client"
+                        (an open Neo4jClient injected by WorkerSettings.on_startup).
+        run_id:         Governed run identifier. The locked schema for this run must
+                        be in Redis (approved in Phase 1) before enqueuing jobs.
+        chunk_id:       Target chunk identifier (Chunk.chunk_id — SHA-256 hex).
+        doc_id:         Parent document identifier; stored in ChunkJobStatus for
+                        per-job monitoring visibility.
+        correlation_id: Propagated from the HTTP request that enqueued this job
+                        (SKILL-D R-D2).  Bound to structlog context so all log
+                        entries within this job carry the same correlation ID.
 
     Returns:
         None. Results are persisted to Neo4j; status is persisted to Redis.
@@ -196,6 +208,10 @@ async def extraction_job(
         graph_write_complete           INFO  — run_id, chunk_id, all write counts
         job_failed                     ERROR — run_id, chunk_id, doc_id, error
     """
+    # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
+    if correlation_id:
+        set_correlation_id(correlation_id)
+
     started_at = datetime.now(UTC).isoformat()
 
     # ------------------------------------------------------------------
@@ -451,6 +467,7 @@ async def evidence_assembly_job(
     run_id: str,
     candidate_json: str,
     decision_json: str,
+    correlation_id: str = "",
 ) -> None:
     """Load candidate, call Agent-A, store EvidenceReport, chain next job.
 
@@ -459,6 +476,7 @@ async def evidence_assembly_job(
         run_id:         Governed run identifier.
         candidate_json: JSON-serialised Candidate (model_dump_json output).
         decision_json:  JSON-serialised OrchestratorDecision.
+        correlation_id: Propagated from the originating HTTP request (SKILL-D R-D2).
 
     Chain logic:
         - evidence sufficient   -> enqueue proposal_composition_job
@@ -467,6 +485,10 @@ async def evidence_assembly_job(
     from api.agents.evidence import EvidenceAssemblyAgent
     from api.agents.orchestrator import OrchestratorDecision
     from api.models.candidate import Candidate
+
+    # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
+    if correlation_id:
+        set_correlation_id(correlation_id)
 
     started_at = datetime.now(UTC).isoformat()
 
@@ -540,6 +562,7 @@ async def evidence_assembly_job(
                 candidate_json=candidate_json,
                 decision_json=decision_json,
                 evidence_report_json=evidence_report_json,
+                correlation_id=correlation_id,
             )
             logger.info(
                 "agent_chain_enqueued",
@@ -554,6 +577,7 @@ async def evidence_assembly_job(
                 candidate_json=candidate_json,
                 decision_json=decision_json,
                 evidence_report_json=evidence_report_json,
+                correlation_id=correlation_id,
             )
             logger.info(
                 "agent_chain_enqueued",
@@ -592,6 +616,7 @@ async def retrieval_augmentation_job(
     candidate_json: str,
     decision_json: str,
     evidence_report_json: str,
+    correlation_id: str = "",
 ) -> None:
     """Call Agent-B to augment insufficient evidence, then chain to proposal.
 
@@ -605,11 +630,16 @@ async def retrieval_augmentation_job(
         candidate_json:        JSON-serialised Candidate.
         decision_json:         JSON-serialised OrchestratorDecision.
         evidence_report_json:  JSON-serialised EvidenceReport from Agent-A.
+        correlation_id:        Propagated from the originating HTTP request (SKILL-D R-D2).
     """
     from api.agents.models import EvidenceReport
     from api.agents.orchestrator import OrchestratorDecision
     from api.agents.retrieval import RetrievalAugmentationAgent
     from api.models.candidate import Candidate
+
+    # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
+    if correlation_id:
+        set_correlation_id(correlation_id)
 
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)
@@ -676,6 +706,7 @@ async def retrieval_augmentation_job(
             candidate_json=candidate_json,
             decision_json=decision_json,
             evidence_report_json=updated_evidence_json,
+            correlation_id=correlation_id,
         )
         logger.info(
             "agent_chain_enqueued",
@@ -713,6 +744,7 @@ async def proposal_composition_job(
     candidate_json: str,
     decision_json: str,
     evidence_report_json: str,
+    correlation_id: str = "",
 ) -> None:
     """Call Agent-P to compose a proposal, submit to governed pipeline.
 
@@ -727,11 +759,16 @@ async def proposal_composition_job(
         decision_json:         JSON-serialised OrchestratorDecision.
         evidence_report_json:  JSON-serialised EvidenceReport (from Agent-A,
                                possibly augmented by Agent-B).
+        correlation_id:        Propagated from the originating HTTP request (SKILL-D R-D2).
     """
     from api.agents.models import EvidenceReport
     from api.agents.orchestrator import OrchestratorDecision
     from api.agents.proposal import ProposalComposerAgent
     from api.models.candidate import Candidate
+
+    # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
+    if correlation_id:
+        set_correlation_id(correlation_id)
 
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)

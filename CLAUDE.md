@@ -14,7 +14,11 @@ A **session-based, AI-assisted web application** that transforms documents into 
 
 ```
 /
+├── .github/
+│   └── workflows/       # CI pipeline (GitHub Actions)
 ├── ui/                  # Streamlit frontend (UI layer only — no business logic)
+│   ├── components/      # Reusable UI widgets (phase indicator, etc.)
+│   └── pages/           # Per-phase page modules
 ├── api/                 # FastAPI backend (all business logic)
 │   ├── routers/         # HTTP route handlers
 │   ├── services/        # Domain services (ingestion, extraction, curation)
@@ -200,6 +204,9 @@ ENABLE_DOCLING             # true/false — enable Docling tier (default true)
 ENABLE_UNSTRUCTURED        # true/false — enable Unstructured tier (default true)
 ENABLE_RAW_FALLBACK        # true/false — enable raw-text fallback tier (default true)
 EMBEDDING_MODEL            # sentence-transformers model name (default all-MiniLM-L6-v2)
+
+# Dry-run mode (SPEC-08)
+DRY_RUN                    # true/false — skip graph mutations, log diffs to S3 (default false)
 ```
 
 ---
@@ -304,7 +311,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 | [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | ✅ Complete |
 | [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | ✅ Complete |
 | [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | ✅ Complete |
-| [SPEC-08](docs/specs/SPEC-08-hardening.md) | 0.8.0 | Pending |
+| [SPEC-08](docs/specs/SPEC-08-hardening.md) | 0.8.0 | ✅ Complete |
 
 Do not begin increment N+1 until increment N passes all acceptance criteria and the SKILL-B governance checklist.
 

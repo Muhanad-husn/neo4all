@@ -61,6 +61,7 @@ from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.graph.client import Neo4jClient, get_neo4j_client
 from api.models.responses import BaseResponse, ErrorDetail
+from api.observability.correlation import get_correlation_id
 from api.observability.logger import get_logger
 from api.schema.models import SchemaVersion
 from api.storage.artifacts import ArtifactsService, StorageError, get_artifacts_service
@@ -375,6 +376,7 @@ async def run_extraction(
                 run_id=request.run_id,
                 chunk_id=chunk_id,
                 doc_id=manifest.doc_id,
+                correlation_id=get_correlation_id(),
             )
             jobs_enqueued += 1
 

@@ -15,7 +15,7 @@ A session-based, AI-assisted web application that transforms documents into a cu
 | SPEC-05   | 0.5.0   | Deterministic candidate generation | ✅ Complete |
 | SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | ✅ Complete |
 | SPEC-07   | 0.7.0   | AI curation agent pipeline | ✅ Complete |
-| SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation | Pending |
+| SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation | ✅ Complete |
 
 ---
 
@@ -108,7 +108,9 @@ FastAPI auto-generates interactive docs at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### Available Endpoints (Increments 1–7)
+### Endpoints
+
+#### Health & Monitoring
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -118,15 +120,38 @@ FastAPI auto-generates interactive docs at:
 | GET | `/api/monitoring/run/{run_id}` | Run-level summary |
 | GET | `/api/monitoring/workers` | ARQ queue depth and active worker count |
 | GET | `/api/monitoring/jobs/{run_id}` | Per-chunk extraction job statuses |
+| GET | `/api/monitoring/metrics` | Aggregated LLM usage per agent type (tokens, cost, invocations) |
+| GET | `/api/monitoring/agents/{run_id}` | Per-candidate agent chain telemetry for a run |
+| GET | `/api/monitoring/cache` | Cache hit/miss ratio, key count, memory usage |
+
+#### Schema (Phase 1)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/api/schema/propose` | Generate candidate schema via LLM for human review |
 | POST | `/api/schema/approve` | Lock the domain schema for a run (immutable after this call) |
 | GET | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query) |
+
+#### Documents (Phase 2)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded PDF or DOCX document |
 | GET | `/api/documents/{run_id}` | List all successfully ingested documents for a run |
 | GET | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
+
+#### Extraction (Phase 3)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/api/extraction/run` | Enqueue extraction jobs for all chunks in a run |
 | GET | `/api/extraction/status/{run_id}` | Aggregated extraction progress for a run |
 | GET | `/api/extraction/results/{run_id}` | Extracted nodes and edges written to Neo4j |
+
+#### Curation (Phase 4)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | POST | `/api/curation/candidates/generate` | Run all five deterministic detectors; cache results with 5-min TTL |
 | GET | `/api/curation/candidates/{run_id}` | Return cached candidates grouped by type and ordered by severity |
 | POST | `/api/curation/propose` | Submit a manual Proposal Packet for a candidate |
@@ -138,12 +163,15 @@ FastAPI auto-generates interactive docs at:
 | POST | `/api/curation/proposals/{id}/confirm` | Phase 2 confirmation for high-risk proposals (merge, delete) |
 | POST | `/api/curation/proposals/{id}/reject` | Reject a proposal (terminal state) |
 | POST | `/api/curation/proposals/{id}/defer` | Defer a proposal for later review |
+
+#### Graph Explorer
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/api/graph/nodes/{run_id}/count` | Total node count by type for a run |
 | GET | `/api/graph/nodes/{run_id}` | Paginated node browser (max 50/page, filterable by node_type) |
 | GET | `/api/graph/edges/{run_id}/count` | Total edge count by type for a run |
 | GET | `/api/graph/edges/{run_id}` | Paginated edge browser (max 50/page, filterable by edge_type) |
-| GET | `/api/monitoring/metrics` | Aggregated LLM usage per agent type (tokens, cost, invocations) |
-| GET | `/api/monitoring/agents/{run_id}` | Per-candidate agent chain telemetry for a run |
 
 ---
 
@@ -271,16 +299,112 @@ prompts/
 
 ---
 
-## Known Limitations (Increment 7)
+## UI Pages
 
-- `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added in a later increment
-- Eleven modules exceed the ~400-line governance limit and are scheduled for refactoring (SKILL-B R-B7): `ui/pages/curation.py` (917), `api/worker/jobs.py` (855), `api/agents/execution.py` (713), `api/services/ingestion.py` (677), `ui/pages/ingestion.py` (687), `api/services/curation/candidates.py` (616), `api/vector/indexer.py` (534), `api/routers/monitoring.py` (526), `api/storage/artifacts.py` (470), `ui/pages/monitoring.py` (470), `api/routers/documents.py` (462), `api/services/chunking.py` (425)
-- ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation into `api/common/arq_pool.py` is a SKILL-B R-B7 item
-- `ui/pages/curation.py` should be split into `curation.py` (Layer 1) + `curation_pipeline.py` (Layer 2); deferred to SPEC-08 refactoring pass
-- `_render_candidates_section()` in `ui/pages/curation.py` is dead code (inlined in `main()`); scheduled for removal in the split refactor
+| Page | Path | Description |
+|------|------|-------------|
+| Dashboard | `ui/pages/dashboard.py` | Run summary, graph statistics, proposal breakdown |
+| Schema | `ui/pages/schema.py` | Phase 1: domain description → AI proposal → edit → lock |
+| Ingestion | `ui/pages/ingestion.py` | Phase 2: upload documents, view chunks and quality flags |
+| Extraction | `ui/pages/extraction.py` | Phase 3: trigger extraction, monitor per-chunk job progress |
+| Curation | `ui/pages/curation.py` | Phase 4: candidate review, evidence, proposals, approval pipeline, agent dispatch |
+| Graph Explorer | `ui/pages/graph_explorer.py` | Paginated node/edge browser with type filter |
+| Monitoring | `ui/pages/monitoring.py` | Health, logs, workers, jobs, cache stats, agent telemetry, alerting |
+
+All pages use `StateManager` for session state (no direct `st.session_state` access) and communicate with the backend exclusively via HTTP.
+
+---
+
+## CI Pipeline
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
+
+| Job | Description |
+|-----|-------------|
+| `lint` | `ruff check .` |
+| `typecheck` | `mypy api/ ui/` (strict mode) |
+| `unit-tests` | `pytest tests/unit/` with Redis service container |
+| `integration-tests` | `pytest tests/integration/` — **skipped** unless `NEO4J_CI_*` secrets are configured |
+| `docker-build` | `docker compose build` |
+
+---
+
+## Dry-Run Mode
+
+Set `DRY_RUN=true` to run the full pipeline without graph mutations. Agent-C skips all Neo4j writes. Diffs and proposals are still generated, logged to S3, and visible in the UI. Useful for:
+- Validating the pipeline end-to-end before committing to graph changes
+- Reviewing what mutations *would* happen on a new dataset
+- CI environments without a live Neo4j instance
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEO4J_DEV_URI` | Yes | — | Neo4j Aura connection URI |
+| `NEO4J_DEV_USER` | Yes | — | Neo4j username |
+| `NEO4J_DEV_PASSWORD` | Yes | — | Neo4j password |
+| `NEO4J_CI_URI` | No | — | CI Neo4j URI (integration tests skip if absent) |
+| `NEO4J_CI_USER` | No | — | CI Neo4j username |
+| `NEO4J_CI_PASSWORD` | No | — | CI Neo4j password |
+| `OPENROUTER_API_KEY` | Yes | — | LLM gateway API key |
+| `S3_ENDPOINT_URL` | Yes | — | Object storage endpoint (`http://localhost:9000` for RustFS) |
+| `S3_ACCESS_KEY_ID` | Yes | — | Object storage access key |
+| `S3_SECRET_ACCESS_KEY` | Yes | — | Object storage secret key |
+| `S3_BUCKET_NAME` | Yes | — | Object storage bucket name |
+| `REDIS_URL` | Yes | — | Redis connection URL |
+| `QDRANT_URL` | No | — | Remote Qdrant instance URL |
+| `LOG_FORMAT` | No | `json` | `json` (production) or `console` (development) |
+| `LOG_LEVEL` | No | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `ENABLE_DOCLING` | No | `true` | Enable Docling parser tier |
+| `ENABLE_UNSTRUCTURED` | No | `true` | Enable Unstructured parser tier |
+| `ENABLE_RAW_FALLBACK` | No | `true` | Enable raw-text fallback parser tier |
+| `EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Sentence-transformers model for chunk embeddings |
+| `DRY_RUN` | No | `false` | Skip graph mutations; log diffs to S3 |
+
+---
+
+## Development Workflow
+
+```bash
+# Install dependencies (local dev)
+uv pip install -e ".[dev]"
+
+# Run linting and type checks
+ruff check .
+mypy api/ ui/
+
+# Run unit tests (no network required)
+pytest tests/unit/ -v
+
+# Run integration tests (requires Neo4j Aura + Redis)
+pytest tests/integration/ -v
+
+# Start all services via Docker
+docker compose up
+```
+
+---
+
+## Architecture Decision Records
+
+| ADR | Decision |
+|-----|----------|
+| [ADR-001](docs/adr/001-parser-fallback-chain.md) | Three-tier parser fallback: Docling → Unstructured → raw text |
+| [ADR-002](docs/adr/002-no-local-neo4j.md) | Neo4j Aura only — no local graph database container |
+| [ADR-003](docs/adr/003-deterministic-ids.md) | SHA-256 content-derived IDs for all governed artifacts |
+
+---
+
+## Known Limitations (v0.8.0)
+
+- `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added
+- Several modules exceed the ~400-line governance limit (SKILL-B R-B7) and are scheduled for refactoring
+- ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation planned
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
-- Qdrant collection (`chunks_{run_id}`) is not cleaned up on run deletion — no lifecycle management until SPEC-08
-- Edge type filter in graph explorer (`GET /api/graph/edges/{run_id}?edge_type=...`) is a Python-side slice on the full cached list; no typed graph reader method for edge type filtering
+- Edge type filter in graph explorer is a Python-side slice on the full cached list; no typed graph reader method for edge type filtering
+- Qdrant collections (`chunks_{run_id}`) are not cleaned up on run deletion
 
 ---
 
@@ -288,7 +412,10 @@ prompts/
 
 ```
 /
+├── .github/workflows/   # CI pipeline (GitHub Actions)
 ├── ui/                  # Streamlit frontend (UI layer only)
+│   ├── components/      # Reusable UI widgets (phase indicator)
+│   └── pages/           # Per-phase page modules
 ├── api/                 # FastAPI backend (all business logic)
 │   ├── routers/         # HTTP route handlers
 │   ├── services/        # Domain services
@@ -304,6 +431,9 @@ prompts/
 │   ├── cache/           # Redis-backed cache abstraction
 │   └── observability/   # Logging, metrics, correlation IDs
 ├── docs/                # Specs, skills, ADRs
+│   ├── specs/           # Increment specifications (SPEC-01 through SPEC-08)
+│   ├── skills/          # Cross-cutting skills (SKILL-A, B, C, D)
+│   └── adr/             # Architecture Decision Records
 ├── prompts/             # Versioned prompt templates
 ├── fixtures/            # Test fixtures
 ├── tests/               # Unit and integration tests

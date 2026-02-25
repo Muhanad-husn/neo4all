@@ -38,11 +38,12 @@ Usage:
 """
 
 from functools import lru_cache
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from api.observability.logger import get_logger
+from api.observability.metrics import get_metrics
 
 logger = get_logger(__name__)
 
@@ -118,8 +119,10 @@ class CacheClient:
             raw: str | None = await client.get(key)
             if raw is None:
                 logger.debug("cache_miss", key=key)
+                get_metrics().increment("cache_misses")
                 return None
             logger.debug("cache_hit", key=key)
+            get_metrics().increment("cache_hits")
             return model.model_validate_json(raw)
         except Exception as exc:
             logger.warning("cache_get_error", key=key, error=str(exc))
@@ -209,6 +212,40 @@ class CacheClient:
         except Exception as exc:
             logger.warning("cache_prefix_error", prefix=prefix, error=str(exc))
             return 0
+
+    async def dbsize(self) -> int:
+        """Return total number of keys in the current Redis database.
+
+        Returns 0 on error (fail-open per SKILL-D R-D9).
+        """
+        try:
+            client = self._get_client()
+            return await client.dbsize()
+        except Exception as exc:
+            logger.warning("cache_dbsize_error", error=str(exc))
+            return 0
+
+    async def info(self, section: str | None = None) -> dict[str, Any] | None:
+        """Return parsed Redis INFO output.
+
+        Args:
+            section: Optional INFO section filter (e.g. "memory", "stats").
+                     None returns all sections.
+
+        Returns:
+            Parsed INFO dict on success, None on error (fail-open).
+
+        Log events:
+            cache_info_error  WARNING — error
+        """
+        try:
+            client = self._get_client()
+            if section:
+                return await client.info(section)  # type: ignore[return-value]
+            return await client.info()  # type: ignore[return-value]
+        except Exception as exc:
+            logger.warning("cache_info_error", error=str(exc))
+            return None
 
     async def ping(self) -> bool:
         """Check Redis connectivity.

@@ -2,10 +2,14 @@
 api/routers/models.py — Pydantic request/response models for health and
 monitoring endpoints (SKILL-A R-A1, R-A2).
 
+SPEC-08 additions: CacheStatsResponse, ResponseTimePercentiles.
+
 Models are co-located in the api/routers/ subdirectory and imported by the
 route handlers in health.py and monitoring.py (SKILL-A R-A5). All models
 extend BaseResponse to carry the standard run_id/status/errors envelope.
 """
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -172,11 +176,12 @@ class AggregatedMetricsResponse(BaseResponse):
     """Response model for GET /api/monitoring/metrics.
 
     Returns aggregated LLM usage across all runs, broken down by agent type,
-    plus a global total of candidates processed.
+    plus a global total of candidates processed and response time percentiles.
     """
 
     agents: list[AgentUsageSummary]
     total_candidates_processed: int
+    response_time: "ResponseTimePercentiles | None" = None
 
 
 class AgentTelemetryOut(BaseModel):
@@ -206,3 +211,48 @@ class AgentTelemetryResponse(BaseResponse):
 
     records: list[AgentTelemetryOut]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Cache stats models — GET /api/monitoring/cache  (SPEC-08 S-08.3)
+# ---------------------------------------------------------------------------
+
+
+class CacheStatsResponse(BaseResponse):
+    """Response model for GET /api/monitoring/cache.
+
+    Combines Redis-level statistics (total keys, memory) with
+    application-level cache hit/miss counters from MetricsCollector.
+
+    Attributes:
+        total_keys:        Number of keys in the current Redis database (DBSIZE).
+        memory_used_bytes: Redis used_memory (bytes).
+        memory_used_human: Redis used_memory_human (human-readable, e.g. "1.5M").
+        hit_count:         Application-level cache hits (CacheClient.get() hits).
+        miss_count:        Application-level cache misses (CacheClient.get() misses).
+        hit_ratio:         hit_count / (hit_count + miss_count), 0.0 when no data.
+    """
+
+    total_keys: int = 0
+    memory_used_bytes: int = 0
+    memory_used_human: str = "0B"
+    hit_count: int = 0
+    miss_count: int = 0
+    hit_ratio: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Response time percentile models — SPEC-08 S-08.3
+# ---------------------------------------------------------------------------
+
+
+class ResponseTimePercentiles(BaseModel):
+    """Response time distribution percentiles (milliseconds).
+
+    Sourced from the in-memory MetricsCollector histogram for
+    ``response_duration_ms``.
+    """
+
+    p50: float = 0.0
+    p95: float = 0.0
+    p99: float = 0.0

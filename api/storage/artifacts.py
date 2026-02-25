@@ -226,6 +226,36 @@ class ArtifactsService:
         return key
 
     # ------------------------------------------------------------------
+    # store_json — generic JSON artifact storage (SPEC-08 S-08.1)
+    # ------------------------------------------------------------------
+
+    async def store_json(self, s3_key: str, data: bytes) -> str:
+        """Store a JSON artifact at an explicit S3 key.
+
+        Used by the dry-run path (SPEC-08 S-08.1) to persist DiffPlan
+        payloads without coupling to a fixed key layout.
+
+        Args:
+            s3_key: Full S3 object key (caller determines path layout).
+            data:   UTF-8 encoded JSON bytes.
+
+        Returns:
+            The S3 key written (for logging / audit linkage).
+
+        Raises:
+            StorageError: On S3 put failure.
+        """
+        await asyncio.to_thread(
+            _sync_put_object,
+            self._client,
+            self._bucket,
+            s3_key,
+            data,
+            "application/json",
+        )
+        return s3_key
+
+    # ------------------------------------------------------------------
     # store_manifest
     # ------------------------------------------------------------------
 

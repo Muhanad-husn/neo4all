@@ -1,5 +1,5 @@
-# CI pipeline — dry-run placeholder (Batch 1: SPEC-08)
-# Will be wired with linting, type checks, and unit tests.
+# CI pipeline (SPEC-08 S-08.2)
+# Lint, type-check, unit tests, integration tests, Docker build.
 
 name: CI
 
@@ -10,9 +10,130 @@ on:
     branches: [main]
 
 jobs:
-  placeholder:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Placeholder
-        run: echo "CI pipeline not yet configured — see Batch 1 issue"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Mypy strict
+        run: mypy api/ ui/
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
+        env:
+          REDIS_URL: redis://localhost:6379
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    if: ${{ env.NEO4J_CI_URI != '' }}
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+        env:
+          REDIS_URL: redis://localhost:6379
+          NEO4J_CI_URI: ${{ secrets.NEO4J_CI_URI }}
+          NEO4J_CI_USER: ${{ secrets.NEO4J_CI_USER }}
+          NEO4J_CI_PASSWORD: ${{ secrets.NEO4J_CI_PASSWORD }}
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker Compose build
+        run: docker compose build

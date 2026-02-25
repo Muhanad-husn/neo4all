@@ -100,6 +100,7 @@ class _Histogram:
                 "min": 0.0,
                 "max": 0.0,
                 "mean": 0.0,
+                "p50": 0.0,
                 "p95": 0.0,
                 "p99": 0.0,
             }
@@ -112,6 +113,7 @@ class _Histogram:
             "max": sv[-1],
             "mean": sum(sv) / n,
             # Index clamped to [0, n-1] so single-element histograms work.
+            "p50": sv[max(0, int(n * 0.50) - 1)],
             "p95": sv[max(0, int(n * 0.95) - 1)],
             "p99": sv[max(0, int(n * 0.99) - 1)],
         }
