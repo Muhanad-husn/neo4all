@@ -98,8 +98,9 @@ async def probe_s3(
     never logged (SKILL-D R-D5). The bucket name is safe to log.
     """
 
-    def _head_bucket() -> None:
+    def _ensure_bucket() -> None:
         import boto3  # type: ignore[import-untyped]
+        from botocore.exceptions import ClientError
 
         client = boto3.client(
             "s3",
@@ -107,11 +108,19 @@ async def probe_s3(
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
         )
-        client.head_bucket(Bucket=bucket_name)
+        try:
+            client.head_bucket(Bucket=bucket_name)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "")
+            if error_code in ("404", "NoSuchBucket"):
+                logger.info("s3_bucket_creating", bucket=bucket_name)
+                client.create_bucket(Bucket=bucket_name)
+            else:
+                raise
 
     t0 = time.perf_counter()
     try:
-        await asyncio.to_thread(_head_bucket)
+        await asyncio.to_thread(_ensure_bucket)
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         logger.debug("probe_s3_ok", latency_ms=latency_ms, bucket=bucket_name)
         return ProbeResult(name="s3", healthy=True, latency_ms=latency_ms)

@@ -79,7 +79,7 @@ def _sync_get_object(client: Any, bucket: str, key: str) -> bytes | None:
         return response["Body"].read()
     except ClientError as exc:
         error_code = exc.response.get("Error", {}).get("Code", "")
-        if error_code in ("NoSuchKey", "404"):
+        if error_code in ("NoSuchKey", "NoSuchBucket", "404"):
             return None
         raise StorageError(
             code="s3_get_failed",

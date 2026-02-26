@@ -314,6 +314,16 @@ class ArtifactsService:
         try:
             keys = await asyncio.to_thread(_sync_list_keys)
         except (BotoCoreError, ClientError) as exc:
+            error_code = ""
+            if isinstance(exc, ClientError):
+                error_code = exc.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchBucket", "404"):
+                logger.debug(
+                    "bucket_not_found_empty_list",
+                    run_id=run_id,
+                    operation="list_manifests_for_run",
+                )
+                return []
             logger.error(
                 "storage_error",
                 run_id=run_id,
