@@ -289,11 +289,8 @@ def main() -> None:
         _render_proposal_queue,
     )
 
-    st.set_page_config(
-        page_title="neo4all — Curation",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    # NOTE: st.set_page_config() is called by app.py before routing here.
+    # Calling it again raises StreamlitAPIException in Streamlit 1.40+.
 
     state = StateManager.get()
 

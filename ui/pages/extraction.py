@@ -276,11 +276,8 @@ def _render_summary_section(
 
 def main() -> None:
     """Extraction page entry point, called by Streamlit on every script rerun."""
-    st.set_page_config(
-        page_title="neo4all — Extraction",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    # NOTE: st.set_page_config() is called by app.py before routing here.
+    # Calling it again raises StreamlitAPIException in Streamlit 1.40+.
 
     # All session state access through StateManager (CLAUDE.md §8).
     state = StateManager.get()

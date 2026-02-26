@@ -13,12 +13,12 @@ Architecture rules enforced here:
   - No direct imports from api/graph/, api/agents/, api/vector/,
     api/diff/, or api/audit/ (SKILL-B R-B3).
 
-Phase routing (SPEC-01 implements Phase 0 only):
+Phase routing:
   Phase.INIT       → Phase 0 credentials form
-  Phase.SCHEMA     → placeholder (SPEC-02)
-  Phase.INGESTION  → placeholder (SPEC-03)
-  Phase.EXTRACTION → placeholder (SPEC-04)
-  Phase.CURATION   → placeholder (SPEC-05+)
+  Phase.SCHEMA     → ui/pages/schema.py
+  Phase.INGESTION  → ui/pages/ingestion.py
+  Phase.EXTRACTION → ui/pages/extraction.py
+  Phase.CURATION   → ui/pages/curation.py
 """
 
 from datetime import UTC, datetime, timedelta
@@ -276,32 +276,6 @@ def _render_phase_init(state: StateManager) -> None:
                 st.error(f"Phase transition error: {exc}")
                 return
             st.rerun()
-
-
-# ---------------------------------------------------------------------------
-# Placeholder screens for phases implemented in later increments
-# ---------------------------------------------------------------------------
-
-
-def _render_phase_placeholder(phase: Phase, spec_ref: str) -> None:
-    """Placeholder rendered for phases not yet implemented in SPEC-01.
-
-    Args:
-        phase:    The Phase being rendered.
-        spec_ref: Reference to the spec that implements this phase.
-    """
-    titles = {
-        Phase.SCHEMA: "Phase 1 — Domain Schema Definition",
-        Phase.INGESTION: "Phase 2 — Document Ingestion & Chunking",
-        Phase.EXTRACTION: "Phase 3 — AI-Assisted Extraction",
-        Phase.CURATION: "Phase 4 — Curation",
-    }
-    st.title(titles.get(phase, f"Phase {phase.value}"))
-    st.info(
-        f"This phase is not yet implemented. "
-        f"It will be available after **{spec_ref}** is complete.",
-        icon="ℹ",
-    )
 
 
 # ---------------------------------------------------------------------------
