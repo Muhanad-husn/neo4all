@@ -13,7 +13,7 @@ Usage:
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -93,10 +93,19 @@ class Settings(BaseSettings):
 
     # -------------------------------------------------------------------------
     # Neo4j Aura — dev instance (required)
+    # Accepts either the project's canonical names (NEO4J_DEV_*) or the names
+    # that Neo4j Aura auto-generates in its downloaded .env files (NEO4J_URI /
+    # NEO4J_USERNAME / NEO4J_PASSWORD) so both work without manual renaming.
     # -------------------------------------------------------------------------
-    NEO4J_DEV_URI: str
-    NEO4J_DEV_USER: str
-    NEO4J_DEV_PASSWORD: str
+    NEO4J_DEV_URI: str = Field(
+        validation_alias=AliasChoices("NEO4J_DEV_URI", "NEO4J_URI")
+    )
+    NEO4J_DEV_USER: str = Field(
+        validation_alias=AliasChoices("NEO4J_DEV_USER", "NEO4J_USERNAME")
+    )
+    NEO4J_DEV_PASSWORD: str = Field(
+        validation_alias=AliasChoices("NEO4J_DEV_PASSWORD", "NEO4J_PASSWORD")
+    )
 
     # -------------------------------------------------------------------------
     # Neo4j connection pool (SPEC-04 S-04.4)
