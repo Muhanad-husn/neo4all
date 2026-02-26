@@ -221,3 +221,23 @@ class ChunksResponse(BaseResponse):
     quality_flags_summary: QualityFlagsSummary = Field(
         default_factory=QualityFlagsSummary
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{run_id}/chunk/{chunk_id}/text
+# ---------------------------------------------------------------------------
+
+
+class ChunkTextResponse(BaseResponse):
+    """Response for GET /api/documents/{run_id}/chunk/{chunk_id}/text.
+
+    Returns the raw chunk text from Qdrant for diagnostic/debugging use.
+    Not intended for bulk listing — use the chunks endpoint for metadata.
+
+    Attributes:
+        chunk_id: 64-char SHA-256 deterministic identifier.
+        text:     Raw chunk text, or empty string if not found.
+    """
+
+    chunk_id: str = ""
+    text: str = ""

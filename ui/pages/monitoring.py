@@ -293,13 +293,14 @@ def _render_worker_panel(data: dict[str, Any] | None) -> None:
         st.caption(":green[Workers idle — all queued jobs are complete.]")
 
 
-def _render_job_tracker(data: dict[str, Any] | None) -> None:
+def _render_job_tracker(data: dict[str, Any] | None, run_id: str = "") -> None:
     """Render per-chunk extraction job statuses for the current run.
 
     Called with data from GET /api/monitoring/jobs/{run_id}. Hidden when data
     is None. Uses st.expander so the tracker is collapsed by default for runs
     with many chunks (> 20). Renders at most 50 rows to avoid overwhelming the
-    UI. No business logic — pure display (SKILL-B R-B3).
+    UI. Failed chunks get expandable detail panels with chunk text retrieval.
+    No business logic — pure display (SKILL-B R-B3).
     """
     total: int = data.get("total", 0) if data else 0
     label = f"Extraction Job Tracker — {total} chunk(s)"
@@ -347,6 +348,25 @@ def _render_job_tracker(data: dict[str, Any] | None) -> None:
             for j in display_jobs
         ]
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        # --- Expandable details for failed chunks ---
+        failed_jobs = [j for j in display_jobs if j.get("status") == "failed"]
+        if failed_jobs:
+            st.caption(f"{len(failed_jobs)} failed chunk(s) — expand to inspect:")
+            for j in failed_jobs:
+                chunk_id = j.get("chunk_id") or "unknown"
+                error_msg = j.get("error") or "No error message"
+                with st.expander(f"Failed: {chunk_id[:16]}… — {error_msg[:60]}"):
+                    st.code(f"Chunk ID: {chunk_id}\nDoc ID:   {j.get('doc_id', '')}\n\nError:\n{error_msg}")
+                    if run_id and chunk_id != "unknown":
+                        text_resp = _fetch(
+                            f"/api/documents/{run_id}/chunk/{chunk_id}/text",
+                        )
+                        if text_resp and text_resp.get("status") == "success":
+                            st.markdown("**Chunk text:**")
+                            st.text(text_resp.get("text", ""))
+                        else:
+                            st.caption(":orange[Chunk text not available.]")
 
 
 # ---------------------------------------------------------------------------
@@ -442,10 +462,10 @@ def main() -> None:
     health_data = _fetch("/api/monitoring/health")
 
     level_param: str | None = None if level_choice == "ALL" else level_choice
-    logs_data = _fetch(
-        "/api/monitoring/logs/recent",
-        params={"level": level_param, "limit": log_limit},
-    )
+    log_params: dict[str, Any] = {"limit": log_limit}
+    if level_param is not None:
+        log_params["level"] = level_param
+    logs_data = _fetch("/api/monitoring/logs/recent", params=log_params)
 
     run_id = state.run_id
     run_summary_data: dict[str, Any] | None = None
@@ -494,7 +514,7 @@ def main() -> None:
     # --- Per-run job tracker (full-width, collapsible) ---
     if run_id:
         st.divider()
-        _render_job_tracker(jobs_data)
+        _render_job_tracker(jobs_data, run_id=run_id)
 
     # --- SPEC-08: Cache dashboard + alerting + metrics ---
     st.divider()

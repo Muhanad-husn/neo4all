@@ -64,9 +64,19 @@ def _ring_buffer_sink(
 
     Runs before the final renderer so the dict still contains all structured
     fields. The monitoring endpoint reads from this buffer.
+
+    Non-serializable structlog metadata (``_record``, ``_from_structlog``)
+    is stripped before storage so that GET /api/monitoring/logs/recent can
+    JSON-encode the entries without hitting serialization errors on foreign
+    stdlib log records.
     """
+    snapshot = dict(event_dict)
+    # _record is a logging.LogRecord (non-serializable) injected by structlog
+    # for foreign stdlib records; _from_structlog is a bool marker.
+    snapshot.pop("_record", None)
+    snapshot.pop("_from_structlog", None)
     with _BUFFER_LOCK:
-        _LOG_BUFFER.appendleft(dict(event_dict))
+        _LOG_BUFFER.appendleft(snapshot)
     return event_dict
 
 

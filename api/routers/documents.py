@@ -1,6 +1,7 @@
 """
 api/routers/documents.py — POST /api/documents/ingest,
-GET /api/documents/{run_id}, GET /api/documents/{run_id}/{doc_id}/chunks
+GET /api/documents/{run_id}, GET /api/documents/{run_id}/{doc_id}/chunks,
+GET /api/documents/{run_id}/chunk/{chunk_id}/text
 (SPEC-03 S-03.6).
 
 Ingestion pipeline (POST /ingest)
@@ -48,6 +49,7 @@ from api.routers.documents_helpers import (
 )
 from api.routers.documents_models import (
     ChunkOut,
+    ChunkTextResponse,
     ChunksResponse,
     DocumentSummary,
     IngestDocumentRequest,
@@ -458,4 +460,50 @@ async def get_document_chunks(
         status="success",
         chunks=chunks,
         quality_flags_summary=summary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{run_id}/chunk/{chunk_id}/text
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{run_id}/chunk/{chunk_id}/text",
+    response_model=ChunkTextResponse,
+    summary="Retrieve raw chunk text for diagnostic inspection",
+    responses={
+        404: {
+            "model": ChunkTextResponse,
+            "description": "Chunk not found in Qdrant",
+        },
+    },
+)
+async def get_chunk_text(
+    run_id: str,
+    chunk_id: str,
+    indexer: VectorIndexer = Depends(get_vector_indexer),
+) -> ChunkTextResponse:
+    """Return raw chunk text from Qdrant for a single chunk.
+
+    Intended for diagnostic use — e.g. inspecting a failed extraction chunk
+    to assess whether the failure is consequential. Not a bulk listing
+    endpoint (SKILL-D R-D5 still governs listing endpoints).
+    """
+    logger.info("get_chunk_text_requested", run_id=run_id, chunk_id=chunk_id)
+
+    text = await indexer.get_chunk_text(run_id, chunk_id)
+    if text is None:
+        return ChunkTextResponse(
+            run_id=run_id,
+            status="error",
+            chunk_id=chunk_id,
+            errors=[ErrorDetail(code="NOT_FOUND", message="Chunk text not found")],
+        )
+
+    return ChunkTextResponse(
+        run_id=run_id,
+        status="success",
+        chunk_id=chunk_id,
+        text=text,
     )
