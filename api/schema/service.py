@@ -38,6 +38,7 @@ response fails validation, propose() raises LLMProposalError (fail-closed).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,11 @@ logger = get_logger(__name__)
 # Prompt template resolution
 # ---------------------------------------------------------------------------
 
-_PROMPTS_ROOT = Path(__file__).resolve().parents[2] / "prompts"
+_PROMPTS_ROOT = (
+    Path(os.environ["PROMPTS_DIR"])
+    if "PROMPTS_DIR" in os.environ
+    else Path(__file__).resolve().parents[2] / "prompts"
+)
 
 
 def _load_prompt_template(job_id: str, template_version: str) -> dict[str, Any]:

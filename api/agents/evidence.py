@@ -12,6 +12,7 @@ chunk text via CacheKey.chunk (30 min).  Fail-closed on malformed LLM output.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,11 @@ logger = get_logger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROMPTS_ROOT: Path = Path(__file__).resolve().parents[2] / "prompts"
+_PROMPTS_ROOT: Path = (
+    Path(os.environ["PROMPTS_DIR"])
+    if "PROMPTS_DIR" in os.environ
+    else Path(__file__).resolve().parents[2] / "prompts"
+)
 _JOB_ID: str = "evidence_assembly"
 _TEMPLATE_VERSION: str = "v1"
 CHUNK_CACHE_TTL: int = 1800  # 30 min (SKILL-D R-D8)

@@ -28,6 +28,7 @@ extraction to api/common/prompts.py per SKILL-B R-B7 (deferred to governance pas
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,11 @@ from api.services.llm import JobConfig, LLMClient
 
 logger = get_logger(__name__)
 
-_PROMPTS_ROOT = Path(__file__).resolve().parents[2] / "prompts"
+_PROMPTS_ROOT = (
+    Path(os.environ["PROMPTS_DIR"])
+    if "PROMPTS_DIR" in os.environ
+    else Path(__file__).resolve().parents[2] / "prompts"
+)
 
 
 # ---------------------------------------------------------------------------
