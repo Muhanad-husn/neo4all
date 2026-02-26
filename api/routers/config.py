@@ -59,7 +59,7 @@ async def reload_config() -> ConfigReloadResponse:
 
     return ConfigReloadResponse(
         run_id="",
-        status="ok",
+        status="success",
         errors=[],
         services=services,
     )
