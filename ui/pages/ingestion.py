@@ -228,6 +228,16 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
     """
     st.divider()
 
+    # Guard: only show the proceed button when the phase is still INGESTION.
+    # Prevents errors if the user navigates here via Streamlit multipage
+    # sidebar after already advancing past Phase 2.
+    if state.phase != Phase.INGESTION:
+        st.info(
+            "You have already proceeded past Phase 2.",
+            icon="✅",
+        )
+        return
+
     if not has_docs:
         st.button(
             "Proceed to Phase 3: AI-Assisted Extraction →",

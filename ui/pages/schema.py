@@ -667,6 +667,16 @@ def _render_locked_view(state: StateManager) -> None:
 
     st.divider()
 
+    # Guard: only show the proceed button when the phase is still SCHEMA.
+    # If the user navigates here via Streamlit multipage sidebar after
+    # already advancing past Phase 1, show a status message instead.
+    if state.phase != Phase.SCHEMA:
+        st.info(
+            "Schema is locked and you have already proceeded past Phase 1.",
+            icon="✅",
+        )
+        return
+
     if st.button(
         "Proceed to Phase 2: Document Ingestion →",
         type="primary",

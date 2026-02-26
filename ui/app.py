@@ -345,9 +345,11 @@ def main() -> None:
         from ui.pages import ingestion as ingestion_page
         ingestion_page.main()
     elif phase == Phase.EXTRACTION:
-        _render_phase_placeholder(phase, "SPEC-04")
+        from ui.pages import extraction as extraction_page
+        extraction_page.main()
     elif phase == Phase.CURATION:
-        _render_phase_placeholder(phase, "SPEC-05 through SPEC-07")
+        from ui.pages import curation as curation_page
+        curation_page.main()
     else:
         st.error(f"Unknown phase: {phase!r}. This is a bug.")
 
