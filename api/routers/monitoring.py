@@ -222,11 +222,18 @@ async def get_worker_status() -> WorkerStatusResponse:
     except Exception as exc:
         logger.warning("worker_queue_depth_failed", error=str(exc))
 
-    # --- Worker count: one health-check key per live worker (with TTL) ---
+    # --- Worker count: ARQ health-check key per live worker (with TTL) ---
+    # ARQ stores health-check under {queue_name}:health-check (a single key
+    # per queue, not per worker).  Check both the queue-scoped pattern and
+    # the legacy arq:health-check:* pattern for compatibility.
     worker_count = 0
     try:
-        async for _ in pool.scan_iter(match="arq:health-check:*", count=100):
+        async for _ in pool.scan_iter(match=f"{QUEUE_NAME}:health-check*", count=100):
             worker_count += 1
+        if worker_count == 0:
+            # Fallback: some ARQ versions use arq:health-check:{worker_id}
+            async for _ in pool.scan_iter(match="arq:health-check:*", count=100):
+                worker_count += 1
     except Exception as exc:
         logger.warning("worker_health_check_scan_failed", error=str(exc))
 

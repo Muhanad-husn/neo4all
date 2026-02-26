@@ -373,11 +373,8 @@ def _fmt_duration(d: timedelta) -> str:
 
 def main() -> None:
     """Monitoring page entry point, called by Streamlit on every script rerun."""
-    st.set_page_config(
-        page_title="neo4all — Monitoring",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    # NOTE: st.set_page_config() is called by app.py before routing here.
+    # Calling it again raises StreamlitAPIException in Streamlit 1.40+.
 
     # All session state access through StateManager (CLAUDE.md §8).
     state = StateManager.get()

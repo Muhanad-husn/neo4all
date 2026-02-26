@@ -80,21 +80,30 @@ def _post(
 
 
 def _is_running(status: dict[str, Any] | None) -> bool:
-    """True when at least one chunk job is unresolved (queued or running)."""
+    """True when extraction has been started and jobs are still in progress.
+
+    Requires ``queued > 0`` — chunks actively enqueued/running in ARQ.
+    Chunks that are merely "pending" (not yet enqueued) do NOT count as
+    running, so the Start Extraction button remains visible until clicked.
+    """
     if status is None:
         return False
-    total: int = status.get("total_chunks", 0)
-    pending: int = status.get("pending", 0)
-    return total > 0 and pending > 0
+    queued: int = status.get("queued", 0)
+    return queued > 0
 
 
 def _is_done(status: dict[str, Any] | None) -> bool:
-    """True when all chunks have been resolved (complete or failed)."""
+    """True when all chunks have been resolved (complete or failed).
+
+    Requires that extraction was started (queued==0, pending==0) and at
+    least one chunk exists.
+    """
     if status is None:
         return False
     total: int = status.get("total_chunks", 0)
     pending: int = status.get("pending", 0)
-    return total > 0 and pending == 0
+    queued: int = status.get("queued", 0)
+    return total > 0 and pending == 0 and queued == 0
 
 
 # ---------------------------------------------------------------------------
@@ -334,9 +343,18 @@ def main() -> None:
         # Offer phase advancement only while still in Phase.EXTRACTION
         if state.phase == Phase.EXTRACTION:
             st.divider()
-            if st.button("Proceed to Curation →", type="primary"):
-                state.advance_phase(Phase.CURATION)
-                st.rerun()
+
+            def _do_advance() -> None:
+                """on_click callback — runs BEFORE the next render cycle."""
+                s = StateManager.get()
+                if s.phase == Phase.EXTRACTION:
+                    s.advance_phase(Phase.CURATION)
+
+            st.button(
+                "Proceed to Curation →",
+                type="primary",
+                on_click=_do_advance,
+            )
 
     # --- Auto-poll while jobs are running (2-second interval) ---
     if _is_running(status):

@@ -199,12 +199,15 @@ class ExtractionStatusResponse(BaseResponse):
                       (derived from DocumentManifest.chunk_ids).
         completed:    Chunks whose job status is "complete" in Redis.
         failed:       Chunks whose job status is "failed" in Redis.
-        pending:      Remaining chunks — queued, running, or not yet enqueued.
+        queued:       Chunks with "queued" or "running" status in Redis
+                      (enqueued but not yet resolved).
+        pending:      Chunks with no Redis entry — not yet enqueued.
     """
 
     total_chunks: int = 0
     completed: int = 0
     failed: int = 0
+    queued: int = 0
     pending: int = 0
 
 
@@ -442,6 +445,7 @@ async def get_extraction_status(
     cache = get_cache_client()
     completed = 0
     failed = 0
+    queued = 0  # chunks with "queued" or "running" status (enqueued, not resolved)
 
     for chunk_id in all_chunk_ids:
         job_status: ChunkJobStatus | None = await cache.get(
@@ -454,9 +458,10 @@ async def get_extraction_status(
             completed += 1
         elif job_status.status == "failed":
             failed += 1
-        # "queued" and "running" fall through to pending
+        else:
+            queued += 1  # "queued" or "running"
 
-    pending = total_chunks - completed - failed
+    pending = total_chunks - completed - failed - queued
 
     logger.info(
         "extraction_status_success",
@@ -464,6 +469,7 @@ async def get_extraction_status(
         total_chunks=total_chunks,
         completed=completed,
         failed=failed,
+        queued=queued,
         pending=pending,
     )
 
@@ -473,6 +479,7 @@ async def get_extraction_status(
         total_chunks=total_chunks,
         completed=completed,
         failed=failed,
+        queued=queued,
         pending=pending,
     )
 

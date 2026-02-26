@@ -247,16 +247,17 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
         st.caption("Ingest at least one document to enable this button.")
         return
 
-    if st.button(
+    def _do_advance() -> None:
+        """on_click callback — runs BEFORE the next render cycle."""
+        s = StateManager.get()
+        if s.phase == Phase.INGESTION:
+            s.advance_phase(Phase.EXTRACTION)
+
+    st.button(
         "Proceed to Phase 3: AI-Assisted Extraction →",
         type="primary",
-    ):
-        try:
-            state.advance_phase(Phase.EXTRACTION)
-        except ValueError as exc:
-            st.error(f"Phase transition error: {exc}")
-            return
-        st.rerun()
+        on_click=_do_advance,
+    )
 
 
 # ---------------------------------------------------------------------------

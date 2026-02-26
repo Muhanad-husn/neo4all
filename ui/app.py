@@ -3,7 +3,7 @@ ui/app.py — Streamlit application entry point.
 
 Responsibilities:
   - Phase 0 screen: collect Neo4j URI/credentials and OpenRouter API key.
-  - Sidebar: display current run state across all phases.
+  - Sidebar: display current run state, phase indicators, and view selector.
   - Route to the correct phase screen based on StateManager.phase.
 
 Architecture rules enforced here:
@@ -13,12 +13,17 @@ Architecture rules enforced here:
   - No direct imports from api/graph/, api/agents/, api/vector/,
     api/diff/, or api/audit/ (SKILL-B R-B3).
 
-Phase routing:
-  Phase.INIT       → Phase 0 credentials form
+Phase routing (simple if/elif — no st.navigation()):
+  Phase.INIT       → Phase 0 credentials form (inline)
   Phase.SCHEMA     → ui/pages/schema.py
   Phase.INGESTION  → ui/pages/ingestion.py
   Phase.EXTRACTION → ui/pages/extraction.py
   Phase.CURATION   → ui/pages/curation.py
+
+Utility views (sidebar selector, available after Phase 0):
+  Dashboard        → ui/pages/dashboard.py
+  Monitoring       → ui/pages/monitoring.py
+  Graph Explorer   → ui/pages/graph_explorer.py  (Phase 4+ only)
 """
 
 from datetime import UTC, datetime, timedelta
@@ -43,6 +48,10 @@ _NEO4J_URI_KEYS = {"NEO4J_URI", "NEO4J_DEV_URI"}
 _NEO4J_USER_KEYS = {"NEO4J_USERNAME", "NEO4J_DEV_USER"}
 _NEO4J_PASSWORD_KEYS = {"NEO4J_PASSWORD", "NEO4J_DEV_PASSWORD"}
 _OPENROUTER_KEY_KEYS = {"OPENROUTER_API_KEY"}
+
+# Session-state key for the sidebar view selector.
+# Prefixed _nav_ to distinguish from _sm_ (StateManager) keys.
+_K_VIEW_OVERRIDE = "_nav_view_override"
 
 
 def _write_env_credentials(
@@ -121,12 +130,17 @@ def _notify_api_reload() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _render_sidebar(state: StateManager) -> None:
-    """Render the persistent run-state sidebar.
+def _render_sidebar(state: StateManager) -> str | None:
+    """Render the persistent run-state sidebar and return the selected view.
 
-    Shows phase progression indicators and a compact run summary. Visible
-    on every page rerun. No state mutations here — read-only presentation.
+    Shows phase progression indicators, a compact run summary, and a view
+    selector for utility pages. Visible on every page rerun.
+
+    Returns:
+        The selected utility view name, or None for the default phase view.
     """
+    view_override: str | None = None
+
     with st.sidebar:
         st.title("neo4all")
         st.caption("AI-Powered Graph Curation")
@@ -152,6 +166,24 @@ def _render_sidebar(state: StateManager) -> None:
             st.markdown(f"{marker} **{p.value}** {phase_labels[p]}")
 
         st.divider()
+
+        # View selector — utility pages accessible once a session exists.
+        if state.run_id:
+            view_options = ["Current Phase", "Dashboard", "Monitoring"]
+            if current_phase.value >= Phase.CURATION.value:
+                view_options.append("Graph Explorer")
+
+            selected_view = st.radio(
+                "View",
+                options=view_options,
+                index=0,
+                key="_nav_view_radio",
+                label_visibility="collapsed",
+            )
+            if selected_view != "Current Phase":
+                view_override = selected_view
+
+            st.divider()
 
         # Compact run summary.
         st.subheader("Run State")
@@ -181,6 +213,8 @@ def _render_sidebar(state: StateManager) -> None:
                 st.write(_fmt_duration(elapsed))
         else:
             st.info("No active run.\nComplete Phase 0 to begin.")
+
+    return view_override
 
 
 # ---------------------------------------------------------------------------
@@ -295,21 +329,14 @@ def _fmt_duration(d: timedelta) -> str:
     return f"{hours}h {minutes}m"
 
 
-def main() -> None:
-    """Application entry point, called by Streamlit on every script rerun."""
-    st.set_page_config(
-        page_title="neo4all",
-        page_icon=None,
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+def _route_phase(state: StateManager) -> None:
+    """Route to the page for the current phase.
 
-    # StateManager.get() seeds defaults on first load and returns a live view.
-    state = StateManager.get()
-
-    _render_sidebar(state)
-
+    Simple if/elif dispatch — deterministic, no widget state to manage.
+    Each phase module's main() handles its own content and phase guards.
+    """
     phase = state.phase
+
     if phase == Phase.INIT:
         _render_phase_init(state)
     elif phase == Phase.SCHEMA:
@@ -326,6 +353,43 @@ def main() -> None:
         curation_page.main()
     else:
         st.error(f"Unknown phase: {phase!r}. This is a bug.")
+
+
+def _route_utility_view(view: str) -> None:
+    """Route to a utility page selected from the sidebar."""
+    if view == "Dashboard":
+        from ui.pages import dashboard as dashboard_page
+        dashboard_page.main()
+    elif view == "Monitoring":
+        from ui.pages import monitoring as monitoring_page
+        monitoring_page.main()
+    elif view == "Graph Explorer":
+        from ui.pages import graph_explorer as graph_explorer_page
+        graph_explorer_page.main()
+    else:
+        st.error(f"Unknown view: {view!r}")
+
+
+def main() -> None:
+    """Application entry point, called by Streamlit on every script rerun."""
+    st.set_page_config(
+        page_title="neo4all",
+        page_icon=None,
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # StateManager.get() seeds defaults on first load and returns a live view.
+    state = StateManager.get()
+
+    # Render sidebar (returns utility view name or None for phase view).
+    view_override = _render_sidebar(state)
+
+    # Route to the selected view.
+    if view_override:
+        _route_utility_view(view_override)
+    else:
+        _route_phase(state)
 
 
 if __name__ == "__main__":

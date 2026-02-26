@@ -8,17 +8,21 @@ RUN pip install --no-cache-dir uv==0.5.21
 # Copy project definition first (layer cache: deps change less than source)
 COPY pyproject.toml README.md ./
 
-# Copy UI source and API package (shared models may be imported)
+# Copy UI source, API package (shared models may be imported), and config
 COPY api/ api/
 COPY ui/ ui/
+COPY streamlit_app.py ./
+COPY .streamlit/ .streamlit/
 
 # Install the package and all dependencies
 RUN uv pip install --system --no-cache .
 
 EXPOSE 8501
 
-# Streamlit does not use a [project.scripts] entry point
-CMD ["streamlit", "run", "ui/app.py", \
+# Streamlit does not use a [project.scripts] entry point.
+# Run from repo root so auto-discovery finds no pages/ directory —
+# st.navigation() in ui/app.py has sole control over routing.
+CMD ["streamlit", "run", "streamlit_app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
      "--server.headless=true"]

@@ -1,0 +1,4 @@
+# Disable auto-discovery of ui/pages/*.py as sidebar nav entries.
+# Page routing is handled by if/elif dispatch in ui/app.py instead.
+[client]
+showSidebarNavigation = false
