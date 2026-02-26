@@ -257,3 +257,18 @@ class ResponseTimePercentiles(BaseModel):
     p50: float = 0.0
     p95: float = 0.0
     p99: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Config reload models — POST /api/config/reload
+# ---------------------------------------------------------------------------
+
+
+class ConfigReloadResponse(BaseResponse):
+    """Response model for POST /api/config/reload.
+
+    Returns the post-reload connectivity status of all backend services
+    so the caller can verify that updated credentials are working.
+    """
+
+    services: list[ServiceStatus]

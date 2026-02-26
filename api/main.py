@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     """
     from api.routers import approvals as approvals_router
     from api.routers import candidates as candidates_router
+    from api.routers import config as config_router
     from api.routers import curation as curation_router
     from api.routers import documents as documents_router
     from api.routers import evidence as evidence_router
@@ -149,6 +150,8 @@ def create_app() -> FastAPI:
     app.include_router(approvals_router.router, prefix="/api/curation")
     # /api/graph/nodes/{run_id}  /api/graph/edges/{run_id}  (+ /count variants)
     app.include_router(graph_explorer_router.router, prefix="/api/graph")
+    # /api/config/reload
+    app.include_router(config_router.router, prefix="/api/config")
 
     return app
 

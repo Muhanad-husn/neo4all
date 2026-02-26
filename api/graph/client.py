@@ -324,3 +324,18 @@ def get_neo4j_client() -> Neo4jClient:
         await client.close()
     """
     return Neo4jClient()
+
+
+async def reset_neo4j_client() -> None:
+    """Close and discard the cached Neo4jClient so the next access re-creates it.
+
+    Used by the config reload endpoint after credentials in ``.env`` have been
+    updated. The next call to ``get_neo4j_client()`` will create a fresh client
+    that reads the new Settings values.
+    """
+    try:
+        client = get_neo4j_client()
+        await client.close()
+    except Exception:
+        pass
+    get_neo4j_client.cache_clear()

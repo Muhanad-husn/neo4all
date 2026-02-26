@@ -22,11 +22,99 @@ Phase routing (SPEC-01 implements Phase 0 only):
 """
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import streamlit as st
 
 from api.models.run import Phase
 from ui.state import StateManager
+
+# ---------------------------------------------------------------------------
+# .env credential bridge (Phase 0 → API)
+# ---------------------------------------------------------------------------
+
+# Base URL for API requests — matches the default uvicorn bind in api/main.py.
+_API_BASE_URL = "http://localhost:8000"
+
+# Mapping from Phase 0 form fields to the env-var key names that may appear in
+# .env. The first match wins during line-by-line replacement; all aliases are
+# checked so both Aura-generated and canonical names are handled.
+_NEO4J_URI_KEYS = {"NEO4J_URI", "NEO4J_DEV_URI"}
+_NEO4J_USER_KEYS = {"NEO4J_USERNAME", "NEO4J_DEV_USER"}
+_NEO4J_PASSWORD_KEYS = {"NEO4J_PASSWORD", "NEO4J_DEV_PASSWORD"}
+_OPENROUTER_KEY_KEYS = {"OPENROUTER_API_KEY"}
+
+
+def _write_env_credentials(
+    neo4j_uri: str,
+    neo4j_user: str,
+    neo4j_password: str,
+    openrouter_api_key: str,
+) -> None:
+    """Update credential values in ``.env``, preserving all other content.
+
+    If ``.env`` does not exist, ``.env.example`` is used as a template.
+    Lines matching known credential key names have their values replaced;
+    all other lines (comments, non-credential variables) pass through
+    unchanged.
+
+    Raises:
+        OSError: If neither ``.env`` nor ``.env.example`` can be read, or if
+                 the file cannot be written.
+    """
+    env_path = Path(".env")
+    if env_path.exists():
+        original = env_path.read_text(encoding="utf-8")
+    else:
+        example_path = Path(".env.example")
+        if example_path.exists():
+            original = example_path.read_text(encoding="utf-8")
+        else:
+            raise OSError("Neither .env nor .env.example found")
+
+    # Build a lookup: env-var key → new value (only for credential keys).
+    replacements: dict[str, str] = {}
+    for key in _NEO4J_URI_KEYS:
+        replacements[key] = neo4j_uri
+    for key in _NEO4J_USER_KEYS:
+        replacements[key] = neo4j_user
+    for key in _NEO4J_PASSWORD_KEYS:
+        replacements[key] = neo4j_password
+    for key in _OPENROUTER_KEY_KEYS:
+        replacements[key] = openrouter_api_key
+
+    output_lines: list[str] = []
+    for line in original.splitlines(keepends=True):
+        stripped = line.lstrip()
+        # Skip comments and blank lines — pass through unchanged.
+        if stripped.startswith("#") or "=" not in stripped:
+            output_lines.append(line)
+            continue
+
+        key = stripped.split("=", 1)[0].strip()
+        if key in replacements:
+            # Preserve the original key name and any leading whitespace.
+            prefix = line[: line.index(key)]
+            output_lines.append(f"{prefix}{key}={replacements[key]}\n")
+        else:
+            output_lines.append(line)
+
+    env_path.write_text("".join(output_lines), encoding="utf-8")
+
+
+def _notify_api_reload() -> bool:
+    """Tell the running API to reload its configuration.
+
+    Fire-and-forget: returns True on success, False on any failure.
+    Failures are expected when the API server is not running.
+    """
+    try:
+        import httpx
+
+        resp = httpx.Client(timeout=5.0).post(f"{_API_BASE_URL}/api/config/reload")
+        return resp.status_code == 200  # noqa: TRY300
+    except Exception:
+        return False
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -110,7 +198,7 @@ def _render_phase_init(state: StateManager) -> None:
     st.title("Phase 0 — Session Initialization")
     st.write(
         "Enter your connection details to start a new extraction and curation session. "
-        "Credentials are held in server-side session memory and never written to disk or logs."
+        "Credentials are saved to the local `.env` file so the API backend can use them."
     )
 
     with st.form("phase_0_init_form"):
@@ -131,7 +219,7 @@ def _render_phase_init(state: StateManager) -> None:
             "Password",
             type="password",
             placeholder="Enter password",
-            help="Neo4j database password. Not stored to disk or logged.",
+            help="Neo4j database password. Saved to `.env`; never logged.",
         )
 
         st.subheader("LLM Gateway")
@@ -139,7 +227,7 @@ def _render_phase_init(state: StateManager) -> None:
             "OpenRouter API Key",
             type="password",
             placeholder="sk-or-…",
-            help="OpenRouter API key for LLM access. Not stored to disk or logged.",
+            help="OpenRouter API key for LLM access. Saved to `.env`; never logged.",
         )
 
         submitted = st.form_submit_button("Initialize Session", type="primary")
@@ -161,6 +249,21 @@ def _render_phase_init(state: StateManager) -> None:
             for msg in errors:
                 st.error(msg)
         else:
+            # Persist credentials to .env so the API backend can read them.
+            try:
+                _write_env_credentials(
+                    neo4j_uri=neo4j_uri.strip(),
+                    neo4j_user=neo4j_user.strip(),
+                    neo4j_password=neo4j_password,
+                    openrouter_api_key=openrouter_api_key,
+                )
+            except OSError as exc:
+                st.warning(f"Could not save credentials to .env: {exc}")
+
+            # Tell the running API to reload its configuration.
+            if _notify_api_reload():
+                st.info("API configuration reloaded with new credentials.")
+
             state.initialize_session(
                 neo4j_uri=neo4j_uri.strip(),
                 neo4j_user=neo4j_user.strip(),

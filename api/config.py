@@ -201,3 +201,16 @@ def get_settings() -> Settings:
     The result is cached so subsequent calls pay no I/O cost.
     """
     return Settings()
+
+
+def reload_settings() -> Settings:
+    """Clear the cached Settings singleton and re-read from environment/.env.
+
+    Used by the config reload endpoint to pick up credential changes written
+    to ``.env`` by the Phase 0 UI form without restarting the process.
+
+    Returns:
+        The freshly-loaded Settings instance.
+    """
+    get_settings.cache_clear()
+    return get_settings()
