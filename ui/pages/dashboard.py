@@ -106,18 +106,18 @@ def _render_graph_stats(
 
     with left:
         st.markdown("**Node Counts by Type**")
-        by_type = node_data.get("by_type", {}) if node_data else {}
+        by_type = node_data.get("by_type", []) if node_data else []
         if by_type:
-            rows = [{"Type": k, "Count": v} for k, v in sorted(by_type.items())]
+            rows = [{"Type": t["type"], "Count": t["count"]} for t in by_type]
             st.dataframe(rows, use_container_width=True, hide_index=True)
         else:
             st.info("No node data.")
 
     with right:
         st.markdown("**Edge Counts by Type**")
-        by_type = edge_data.get("by_type", {}) if edge_data else {}
+        by_type = edge_data.get("by_type", []) if edge_data else []
         if by_type:
-            rows = [{"Type": k, "Count": v} for k, v in sorted(by_type.items())]
+            rows = [{"Type": t["type"], "Count": t["count"]} for t in by_type]
             st.dataframe(rows, use_container_width=True, hide_index=True)
         else:
             st.info("No edge data.")
