@@ -615,7 +615,7 @@ def _render_locked_view(state: StateManager) -> None:
     """
     st.success(
         f"Schema locked — version hash `{state.schema_version}`",
-        icon="✓",
+        icon="✅",
     )
     st.caption(
         "The schema is now immutable for this run. "
