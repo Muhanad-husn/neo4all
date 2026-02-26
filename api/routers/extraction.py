@@ -170,9 +170,16 @@ async def _get_entity_counts(run_id: str, neo4j: Neo4jClient) -> _RunEntityCount
 
 
 class ExtractionRunRequest(BaseModel):
-    """Request body for POST /api/extraction/run."""
+    """Request body for POST /api/extraction/run.
+
+    Attributes:
+        run_id: Governed run identifier.
+        model:  Optional OpenRouter model override.  When None or empty,
+                the server default (openai/gpt-4o-mini) is used.
+    """
 
     run_id: str
+    model: str | None = None
 
 
 class ExtractionRunResponse(BaseResponse):
@@ -338,6 +345,7 @@ async def run_extraction(
                 chunk_id=chunk_id,
                 doc_id=manifest.doc_id,
                 correlation_id=get_correlation_id(),
+                model_override=request.model,
             )
             jobs_enqueued += 1
 

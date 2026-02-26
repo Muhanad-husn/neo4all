@@ -284,6 +284,7 @@ def main() -> None:
     # Lazy import to avoid circular dependency — curation_pipeline imports
     # shared helpers (_fetch, _post, constants) from this module.
     from ui.pages.curation_pipeline import (  # noqa: E402
+        _render_agent_model_config,
         _render_candidate_detail_section,
         _render_proposal_queue,
     )
@@ -327,7 +328,8 @@ def main() -> None:
     st.title("Phase 4: Curation")
     st.caption(
         "Layer 1: Zero-LLM candidate detection.  "
-        "Layer 2: Evidence review, governed proposal pipeline, and execution."
+        "Layer 2: Evidence review, governed proposal pipeline, and execution.  "
+        "Layer 3: AI agent pipeline with per-agent model selection."
     )
 
     # --- Layer 1: Candidate generation trigger ---
@@ -376,6 +378,11 @@ def main() -> None:
 
     # --- Layer 2: Proposal queue ---
     _render_proposal_queue(run_id, actor)
+
+    st.divider()
+
+    # --- Layer 3: AI Agent Pipeline (SPEC-07) ---
+    _render_agent_model_config(run_id)
 
 
 if __name__ == "__main__":

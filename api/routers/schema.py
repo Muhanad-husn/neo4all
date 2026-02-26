@@ -140,6 +140,7 @@ async def propose_schema(
         proposal: SchemaProposal = await service.propose(
             run_id=request.run_id,
             domain_description=request.domain_description,
+            model_override=request.model,
         )
     except SchemaLockedError as exc:
         logger.warning(

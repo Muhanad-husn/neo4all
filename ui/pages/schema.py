@@ -275,7 +275,9 @@ def _reconcile_backend_state(state: StateManager, run_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _handle_propose(state: StateManager, domain_description: str) -> None:
+def _handle_propose(
+    state: StateManager, domain_description: str, model: str | None = None
+) -> None:
     """Handle the Propose Schema button click.
 
     Validates the domain description, calls POST /api/schema/propose, stores
@@ -284,6 +286,7 @@ def _handle_propose(state: StateManager, domain_description: str) -> None:
     Args:
         state:              Live StateManager instance.
         domain_description: The user's free-text domain description.
+        model:              Optional OpenRouter model override for the LLM call.
     """
     word_count = _word_count(domain_description.strip())
     if word_count < _MIN_DOMAIN_WORDS:
@@ -300,6 +303,8 @@ def _handle_propose(state: StateManager, domain_description: str) -> None:
         "run_id": run_id,
         "domain_description": domain_description.strip(),
     }
+    if model and model.strip():
+        payload["model"] = model.strip()
 
     with st.spinner(
         "Calling LLM to generate schema proposal — this may take 10–30 seconds…"
@@ -441,6 +446,15 @@ def _render_propose_section(state: StateManager, *, has_proposal: bool) -> None:
             ),
             label_visibility="collapsed",
         )
+        schema_model: str = st.text_input(
+            "LLM Model (optional)",
+            value="openai/gpt-4o-mini",
+            help=(
+                "OpenRouter model ID for the schema proposal. "
+                "Leave as default or enter any supported model "
+                "(e.g. anthropic/claude-sonnet-4, google/gemini-2.0-flash-001)."
+            ),
+        )
         submitted = st.form_submit_button(
             "Propose Schema",
             type="primary",
@@ -448,7 +462,7 @@ def _render_propose_section(state: StateManager, *, has_proposal: bool) -> None:
         )
 
     if submitted:
-        _handle_propose(state, domain_description)
+        _handle_propose(state, domain_description, model=schema_model)
 
 
 # ---------------------------------------------------------------------------

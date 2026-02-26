@@ -186,6 +186,7 @@ class ExtractionService:
         run_id: str,
         chunk_id: str,
         chunk_text: str,
+        model_override: str | None = None,
     ) -> ExtractionResult:
         """Extract entities and relationships from a single chunk.
 
@@ -225,15 +226,25 @@ class ExtractionService:
             chunk_text=chunk_text,
         )
 
+        # Apply model override if provided.
+        job_config = self._job_config
+        if model_override and model_override.strip():
+            job_config = JobConfig(
+                job_id=self._job_config.job_id,
+                model=model_override.strip(),
+                temperature=self._job_config.temperature,
+                response_format=self._job_config.response_format,
+            )
+
         logger.debug(
             "extraction_llm_start",
             run_id=run_id,
             chunk_id=chunk_id,
             job_id=self._JOB_ID,
-            model=self._job_config.model,
+            model=job_config.model,
         )
         llm_output: _LLMExtractionOutput | None = await self._llm.call(
-            job=self._job_config,
+            job=job_config,
             system_prompt=system_prompt,
             user_message=user_message,
             response_model=_LLMExtractionOutput,

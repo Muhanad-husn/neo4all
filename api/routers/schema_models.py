@@ -143,10 +143,13 @@ class ProposeSchemaRequest(BaseModel):
     Attributes:
         run_id:             Governed run identifier.
         domain_description: Free-text domain description forwarded to the LLM.
+        model:              Optional OpenRouter model override.  When None or
+                            empty, the server default is used.
     """
 
     run_id: str
     domain_description: str
+    model: str | None = None
 
     @field_validator("run_id", "domain_description")
     @classmethod

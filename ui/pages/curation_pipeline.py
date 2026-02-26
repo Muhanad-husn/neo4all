@@ -1,5 +1,5 @@
 """
-ui/pages/curation_pipeline.py — Layer 2/3 Curation Pipeline UI (SPEC-06).
+ui/pages/curation_pipeline.py — Layer 2/3 Curation Pipeline UI (SPEC-06/07).
 
 Evidence panel, proposal form, approval queue, and execution panels
 extracted from curation.py per SKILL-B R-B7 (>400 line split).
@@ -7,6 +7,9 @@ extracted from curation.py per SKILL-B R-B7 (>400 line split).
 Layer 2 (SPEC-06): Full governed mutation pipeline for manual curation.
   propose -> (approve [-> confirm for high-risk]) -> execute -> audit.
   Evidence retrieval from Qdrant to support human decisions.
+
+Layer 3 (SPEC-07): AI agent pipeline with per-agent model selection.
+  Model configuration -> trigger pipeline -> monitor progress.
 
 Architecture rules:
   - No business logic — pure API calls and display (CLAUDE.md §4.1, SKILL-B).
@@ -24,6 +27,9 @@ Backend endpoints consumed:
   POST /api/curation/proposals/{id}/reject
   POST /api/curation/proposals/{id}/defer
   POST /api/curation/proposals/{id}/execute
+  GET  /api/curation/agents/config
+  POST /api/curation/agents/run
+  GET  /api/monitoring/agents/{run_id}
 """
 
 from typing import Any
@@ -568,3 +574,191 @@ def _render_candidate_detail_section(
         "no bypass.  All mutations require approval before execution."
     )
     _render_proposal_form(candidate, run_id, actor)
+
+
+# ===========================================================================
+# Layer 3 — AI Agent Pipeline (SPEC-07)
+# ===========================================================================
+
+
+def _render_agent_model_config(run_id: str) -> None:
+    """Render per-agent model selection and pipeline trigger.
+
+    Fetches current defaults from GET /agents/config, lets the user override
+    models per agent, and triggers the pipeline via POST /agents/run.
+    Shows agent pipeline progress from GET /monitoring/agents/{run_id}.
+    """
+    st.subheader("AI Agent Pipeline")
+    st.caption(
+        "Layer 3: Run the AI curation agent chain (Agent-A -> Agent-B -> Agent-P) "
+        "on detected candidates.  Each agent can use a different LLM model.  "
+        "All AI proposals enter the same governed approval queue as manual proposals."
+    )
+
+    # Fetch current config defaults.
+    config_data = _fetch("/api/curation/agents/config")
+
+    if config_data is None:
+        st.warning("Cannot reach the agent config endpoint — model defaults unavailable.")
+        default_a = "openai/gpt-4o-mini"
+        default_b = "openai/gpt-4o-mini"
+        default_p = "openai/gpt-4o-mini"
+    else:
+        default_a = config_data.get("agent_a", {}).get("model", "openai/gpt-4o-mini")
+        default_b = config_data.get("agent_b", {}).get("model", "openai/gpt-4o-mini")
+        default_p = config_data.get("agent_p", {}).get("model", "openai/gpt-4o-mini")
+
+    st.markdown("**Per-Agent Model Assignment**")
+    st.caption(
+        "Override the OpenRouter model for each agent, or keep the defaults.  "
+        "Changes apply only to this pipeline run — they do not modify the server config."
+    )
+
+    col_a, col_b, col_p = st.columns(3)
+    with col_a:
+        model_a = st.text_input(
+            "Agent-A (Evidence Assembly)",
+            value=default_a,
+            key="agent_model_a",
+            help="LLM model for evidence classification and sufficiency scoring.",
+        )
+    with col_b:
+        model_b = st.text_input(
+            "Agent-B (Retrieval Augmentation)",
+            value=default_b,
+            key="agent_model_b",
+            help="LLM model for targeted retrieval when evidence is insufficient.",
+        )
+    with col_p:
+        model_p = st.text_input(
+            "Agent-P (Proposal Composer)",
+            value=default_p,
+            key="agent_model_p",
+            help="LLM model for composing the Proposal Packet.",
+        )
+
+    # Show token budget info if config available.
+    if config_data is not None:
+        with st.expander("Token budgets & limits", expanded=False):
+            budget_cols = st.columns(3)
+            for i, (label, agent_key) in enumerate([
+                ("Agent-A", "agent_a"),
+                ("Agent-B", "agent_b"),
+                ("Agent-P", "agent_p"),
+            ]):
+                cfg = config_data.get(agent_key, {})
+                budget_cols[i].caption(
+                    f"**{label}**: "
+                    f"{cfg.get('max_input_tokens', 0):,} in / "
+                    f"{cfg.get('max_output_tokens', 0):,} out tokens"
+                )
+            cost_limit = config_data.get("cost_limit_per_candidate", 0.0)
+            max_rounds = config_data.get("max_retrieval_rounds", 0)
+            st.caption(
+                f"Cost limit: ${cost_limit:.2f}/candidate  |  "
+                f"Max retrieval rounds: {max_rounds}"
+            )
+
+    st.markdown("---")
+
+    # Trigger button.
+    if st.button(
+        "Run AI Agent Pipeline",
+        type="primary",
+        key="run_agent_pipeline",
+        help=(
+            "Enqueues all detected candidates for processing by the AI agent chain. "
+            "Progress is shown below and in the Monitoring page."
+        ),
+    ):
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "model_a": model_a.strip() or None,
+            "model_b": model_b.strip() or None,
+            "model_p": model_p.strip() or None,
+        }
+
+        with st.spinner("Enqueuing agent pipeline jobs..."):
+            data, err = _post("/api/curation/agents/run", payload)
+
+        if err or data is None:
+            st.error(f"Pipeline trigger failed: {err or 'No response from API.'}")
+        elif data.get("status") == "error":
+            for e in data.get("errors", []):
+                st.error(f"[{e.get('code')}] {e.get('message')}")
+        else:
+            enqueued = data.get("jobs_enqueued", 0)
+            st.success(
+                f"Pipeline started — {enqueued} job(s) enqueued.  "
+                f"Models: A={data.get('model_a', '?')}, "
+                f"B={data.get('model_b', '?')}, "
+                f"P={data.get('model_p', '?')}"
+            )
+
+    # Agent pipeline progress.
+    _render_agent_pipeline_progress(run_id)
+
+
+def _render_agent_pipeline_progress(run_id: str) -> None:
+    """Fetch and display per-candidate agent pipeline status."""
+    st.markdown("**Agent Pipeline Progress**")
+
+    if st.button("Refresh progress", key="refresh_agent_progress"):
+        st.rerun()
+
+    data = _fetch(f"/api/curation/agents/status/{run_id}")
+
+    if data is None:
+        st.caption("No agent pipeline telemetry available.")
+        return
+
+    if data.get("status") == "error":
+        for e in data.get("errors", []):
+            st.error(f"[{e.get('code')}] {e.get('message')}")
+        return
+
+    jobs: list[dict[str, Any]] = data.get("jobs", [])
+    if not jobs:
+        st.caption("No agent jobs found for this run. Trigger the pipeline above.")
+        return
+
+    # Summary metrics.
+    total = len(jobs)
+    completed = sum(1 for j in jobs if j.get("stage") == "complete")
+    failed = sum(1 for j in jobs if j.get("stage") == "failed")
+    deferred = sum(1 for j in jobs if j.get("stage") == "deferred")
+    running = total - completed - failed - deferred
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total", total)
+    c2.metric("Running", running)
+    c3.metric("Complete", completed)
+    c4.metric("Failed", failed)
+
+    # Stage badge mapping.
+    stage_badge: dict[str, str] = {
+        "queued": ":gray[QUEUED]",
+        "evidence_running": ":blue[EVIDENCE]",
+        "evidence_complete": ":blue[EVIDENCE OK]",
+        "retrieval_running": ":orange[RETRIEVAL]",
+        "retrieval_complete": ":orange[RETRIEVAL OK]",
+        "proposal_running": ":violet[PROPOSAL]",
+        "complete": ":green[COMPLETE]",
+        "failed": ":red[FAILED]",
+        "deferred": ":gray[DEFERRED]",
+    }
+
+    # Job list.
+    rows = [
+        {
+            "Candidate": j.get("candidate_id", "")[:14] + "...",
+            "Stage": stage_badge.get(j.get("stage", ""), j.get("stage", "")),
+            "Evidence": j.get("evidence_items", 0),
+            "Sufficient": "Yes" if j.get("evidence_sufficient") else "No",
+            "Retrieval Rounds": j.get("retrieval_rounds", 0),
+            "Proposal": (j.get("proposal_id") or "")[:14] + ("..." if j.get("proposal_id") else "-"),
+            "Error": j.get("error") or "-",
+        }
+        for j in jobs
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)

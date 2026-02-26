@@ -1,0 +1,530 @@
+"""
+api/routers/agent_pipeline.py — Agent pipeline trigger & config endpoints (SPEC-07 S-07.9).
+
+Layer 3: AI-assisted curation pipeline.
+  POST /agents/run              — Trigger the agent pipeline for candidates with
+                                  optional per-agent model overrides.
+  GET  /agents/config           — Return the current AgentConfig defaults.
+  GET  /agents/status/{run_id}  — Return per-candidate pipeline progress.
+
+Architecture (SKILL-B: thin routers)
+--------------------------------------
+Orchestration logic lives in api/agents/orchestrator.py.
+Worker jobs live in api/worker/jobs_agents.py.
+Route handlers coordinate calls, map errors to HTTP status codes, and
+build response models.  No agent logic in this file.
+
+Error handling
+--------------
+POST /agents/run:
+  409 — no locked schema for this run_id.
+  404 — no cached candidates (run detection first).
+  503 — ARQ enqueue failure.
+GET /agents/config:
+  Always HTTP 200.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Response
+from pydantic import BaseModel
+
+from api.cache.client import get_cache_client
+from api.cache.keys import CacheKey
+from api.config import AgentConfig, AgentModelConfig, get_settings
+from api.models.responses import BaseResponse, ErrorDetail
+from api.observability.correlation import get_correlation_id
+from api.observability.logger import get_logger
+
+logger = get_logger(__name__)
+
+router = APIRouter(tags=["agent-pipeline"])
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models (SKILL-A R-A1, R-A2)
+# ---------------------------------------------------------------------------
+
+
+class RunAgentPipelineRequest(BaseModel):
+    """Request body for POST /agents/run.
+
+    Attributes:
+        run_id:        Governed run to process.
+        candidate_ids: Specific candidate IDs to process.  When empty or None,
+                       all cached candidates for the run are processed.
+        model_a:       Optional OpenRouter model override for Agent-A.
+        model_b:       Optional OpenRouter model override for Agent-B.
+        model_p:       Optional OpenRouter model override for Agent-P.
+    """
+
+    run_id: str
+    candidate_ids: list[str] | None = None
+    model_a: str | None = None
+    model_b: str | None = None
+    model_p: str | None = None
+
+
+class RunAgentPipelineResponse(BaseResponse):
+    """Response for POST /agents/run.
+
+    Attributes:
+        jobs_enqueued: Number of evidence_assembly_job instances enqueued.
+        model_a:       Agent-A model used for this batch.
+        model_b:       Agent-B model used for this batch.
+        model_p:       Agent-P model used for this batch.
+    """
+
+    jobs_enqueued: int = 0
+    model_a: str = ""
+    model_b: str = ""
+    model_p: str = ""
+
+
+class AgentModelConfigOut(BaseModel):
+    """Serializable agent model config for API responses."""
+
+    model: str
+    max_input_tokens: int
+    max_output_tokens: int
+
+
+class AgentConfigResponse(BaseResponse):
+    """Response for GET /agents/config.
+
+    Attributes:
+        agent_a:                  Agent-A model configuration.
+        agent_b:                  Agent-B model configuration.
+        agent_p:                  Agent-P model configuration.
+        cost_limit_per_candidate: USD cost cap per candidate.
+        max_retrieval_rounds:     Agent-B loop guard.
+    """
+
+    agent_a: AgentModelConfigOut = AgentModelConfigOut(
+        model="", max_input_tokens=0, max_output_tokens=0
+    )
+    agent_b: AgentModelConfigOut = AgentModelConfigOut(
+        model="", max_input_tokens=0, max_output_tokens=0
+    )
+    agent_p: AgentModelConfigOut = AgentModelConfigOut(
+        model="", max_input_tokens=0, max_output_tokens=0
+    )
+    cost_limit_per_candidate: float = 0.0
+    max_retrieval_rounds: int = 0
+
+
+class PipelineJobOut(BaseModel):
+    """Per-candidate pipeline status for API responses."""
+
+    candidate_id: str
+    stage: str
+    error: str | None = None
+    proposal_id: str | None = None
+    evidence_items: int = 0
+    evidence_sufficient: bool = False
+    retrieval_rounds: int = 0
+    started_at: str | None = None
+    updated_at: str | None = None
+
+
+class PipelineStatusResponse(BaseResponse):
+    """Response for GET /agents/status/{run_id}.
+
+    Attributes:
+        jobs:  Per-candidate pipeline status entries.
+        total: Total number of jobs found.
+    """
+
+    jobs: list[PipelineJobOut] = []
+    total: int = 0
+
+
+# ---------------------------------------------------------------------------
+# GET /agents/config
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/agents/config",
+    response_model=AgentConfigResponse,
+    summary="Return current per-agent model configuration defaults",
+)
+async def get_agent_config() -> AgentConfigResponse:
+    """Return the current AgentConfig from Settings.
+
+    Always returns HTTP 200.  The UI uses this to pre-populate model
+    selection fields.
+    """
+    settings = get_settings()
+    cfg = settings.AGENT_CONFIG
+
+    return AgentConfigResponse(
+        run_id="",
+        status="success",
+        agent_a=AgentModelConfigOut(
+            model=cfg.agent_a.model,
+            max_input_tokens=cfg.agent_a.max_input_tokens,
+            max_output_tokens=cfg.agent_a.max_output_tokens,
+        ),
+        agent_b=AgentModelConfigOut(
+            model=cfg.agent_b.model,
+            max_input_tokens=cfg.agent_b.max_input_tokens,
+            max_output_tokens=cfg.agent_b.max_output_tokens,
+        ),
+        agent_p=AgentModelConfigOut(
+            model=cfg.agent_p.model,
+            max_input_tokens=cfg.agent_p.max_input_tokens,
+            max_output_tokens=cfg.agent_p.max_output_tokens,
+        ),
+        cost_limit_per_candidate=cfg.cost_limit_per_candidate,
+        max_retrieval_rounds=cfg.max_retrieval_rounds,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /agents/status/{run_id}
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/agents/status/{run_id}",
+    response_model=PipelineStatusResponse,
+    summary="Return per-candidate agent pipeline status for a run",
+)
+async def get_pipeline_status(run_id: str) -> PipelineStatusResponse:
+    """Return the pipeline status for all candidates in a run.
+
+    Reads per-candidate status from Redis (``CacheKey.agent_job``).  First
+    loads the candidate list from cache to know which candidates to query,
+    then reads each candidate's pipeline status.
+
+    Always returns HTTP 200.  Returns an empty list when no pipeline jobs
+    exist for this run (fail-open per SKILL-D R-D13).
+    """
+    import hashlib
+
+    from api.schema.models import SchemaVersion
+    from api.worker.jobs_agents import AgentPipelineJobStatus
+
+    cache = get_cache_client()
+
+    # Resolve schema to find the candidate cache key.
+    schema: SchemaVersion | None = await cache.get(
+        CacheKey.schema(run_id=run_id), model=SchemaVersion
+    )
+    if schema is None:
+        return PipelineStatusResponse(run_id=run_id, status="success")
+
+    dhash_payload = f"{schema.version_hash}:all_detectors_v1"
+    dhash = hashlib.sha256(dhash_payload.encode("utf-8")).hexdigest()[:32]
+    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+
+    from pydantic import BaseModel as _BM
+
+    class _CandidateListCache(_BM):
+        candidates: list[dict[str, Any]]
+        schema_version: str
+
+    cached: _CandidateListCache | None = await cache.get(
+        cache_key, model=_CandidateListCache
+    )
+    if cached is None or not cached.candidates:
+        return PipelineStatusResponse(run_id=run_id, status="success")
+
+    # Read pipeline status for each candidate.
+    jobs: list[PipelineJobOut] = []
+    for c in cached.candidates:
+        cid = c.get("candidate_id", "")
+        if not cid:
+            continue
+        status: AgentPipelineJobStatus | None = await cache.get(
+            CacheKey.agent_job(run_id=run_id, candidate_id=cid),
+            model=AgentPipelineJobStatus,
+        )
+        if status is not None:
+            jobs.append(PipelineJobOut(
+                candidate_id=status.candidate_id,
+                stage=status.stage,
+                error=status.error,
+                proposal_id=status.proposal_id,
+                evidence_items=status.evidence_items,
+                evidence_sufficient=status.evidence_sufficient,
+                retrieval_rounds=status.retrieval_rounds,
+                started_at=status.started_at,
+                updated_at=status.updated_at,
+            ))
+
+    return PipelineStatusResponse(
+        run_id=run_id,
+        status="success",
+        jobs=jobs,
+        total=len(jobs),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /agents/run
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/agents/run",
+    response_model=RunAgentPipelineResponse,
+    summary="Trigger the AI agent pipeline for candidates with optional model overrides",
+    responses={
+        409: {
+            "model": RunAgentPipelineResponse,
+            "description": "Schema not locked — approve Phase 1 first",
+        },
+        404: {
+            "model": RunAgentPipelineResponse,
+            "description": "No cached candidates — run detection first",
+        },
+        503: {
+            "model": RunAgentPipelineResponse,
+            "description": "ARQ enqueue failure",
+        },
+    },
+)
+async def run_agent_pipeline(
+    request: RunAgentPipelineRequest,
+    response: Response,
+) -> RunAgentPipelineResponse:
+    """Trigger the AI agent pipeline for all or selected candidates.
+
+    Orchestrates candidates, applies optional per-agent model overrides,
+    and enqueues ``evidence_assembly_job`` for each candidate via ARQ.
+
+    **Flow**:
+    1. Verify schema is locked.
+    2. Load cached candidates (from POST /candidates/generate).
+    3. Build AgentConfig with any model overrides.
+    4. Run Orchestrator to produce OrchestratorDecisions.
+    5. Enqueue evidence_assembly_job per candidate.
+
+    **Errors**:
+    - ``409 Conflict`` — no locked schema for this run_id.
+    - ``404 Not Found`` — no cached candidates (run detection first).
+    - ``503 Service Unavailable`` — ARQ/Redis enqueue failure.
+    """
+    import hashlib
+
+    from api.agents.orchestrator import Orchestrator, OrchestratorError
+    from api.common.arq_pool import get_arq_pool
+    from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
+    from api.schema.models import SchemaVersion
+
+    run_id = request.run_id
+    logger.info(
+        "agent_pipeline_run_requested",
+        run_id=run_id,
+        candidate_count=len(request.candidate_ids) if request.candidate_ids else "all",
+        model_a_override=request.model_a or "(default)",
+        model_b_override=request.model_b or "(default)",
+        model_p_override=request.model_p or "(default)",
+    )
+
+    cache = get_cache_client()
+
+    # 1. Verify schema is locked.
+    schema: SchemaVersion | None = await cache.get(
+        CacheKey.schema(run_id=run_id), model=SchemaVersion
+    )
+    if schema is None:
+        logger.warning("agent_pipeline_schema_not_locked", run_id=run_id)
+        response.status_code = 409
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="schema_not_locked",
+                    message=(
+                        f"No locked schema found for run '{run_id}'. "
+                        "Complete Phase 1 (approve the domain schema) first."
+                    ),
+                )
+            ],
+        )
+
+    # 2. Load cached candidates.
+    dhash_payload = f"{schema.version_hash}:all_detectors_v1"
+    dhash = hashlib.sha256(dhash_payload.encode("utf-8")).hexdigest()[:32]
+    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+
+    # Use a minimal model to read the cache (same shape as candidates router).
+    from pydantic import BaseModel as _BM
+
+    class _CandidateListCache(_BM):
+        candidates: list[dict[str, Any]]
+        schema_version: str
+
+    cached: _CandidateListCache | None = await cache.get(
+        cache_key, model=_CandidateListCache
+    )
+    if cached is None or not cached.candidates:
+        logger.warning("agent_pipeline_no_candidates", run_id=run_id)
+        response.status_code = 404
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="no_candidates",
+                    message=(
+                        f"No cached candidates found for run '{run_id}'. "
+                        "Run candidate detection first (POST /candidates/generate)."
+                    ),
+                )
+            ],
+        )
+
+    # Filter to requested candidate IDs if specified.
+    raw_candidates = cached.candidates
+    if request.candidate_ids:
+        requested = set(request.candidate_ids)
+        raw_candidates = [c for c in raw_candidates if c.get("candidate_id") in requested]
+
+    if not raw_candidates:
+        response.status_code = 404
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="no_matching_candidates",
+                    message="None of the specified candidate_ids were found in the cache.",
+                )
+            ],
+        )
+
+    # Reconstruct Candidate models from cached dicts.
+    candidates: list[Candidate] = []
+    for c in raw_candidates:
+        try:
+            candidates.append(
+                Candidate(
+                    run_id=c["run_id"],
+                    schema_version=c["schema_version"],
+                    candidate_type=CandidateType(c["candidate_type"]),
+                    candidate_lane=CandidateLane(c["candidate_lane"]),
+                    involved_element_refs=tuple(c.get("involved_element_refs", [])),
+                    severity=Severity(c["severity"]),
+                    detection_method=c.get("detection_method", ""),
+                    collision_context=c.get("collision_context", {}),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "agent_pipeline_candidate_skip",
+                candidate_id=c.get("candidate_id", "?"),
+                error=str(exc),
+            )
+
+    if not candidates:
+        response.status_code = 404
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="no_valid_candidates",
+                    message="All candidates failed reconstruction from cache.",
+                )
+            ],
+        )
+
+    # 3. Build AgentConfig with optional model overrides.
+    settings = get_settings()
+    base_cfg = settings.AGENT_CONFIG
+
+    agent_a_cfg = AgentModelConfig(
+        model=request.model_a or base_cfg.agent_a.model,
+        max_input_tokens=base_cfg.agent_a.max_input_tokens,
+        max_output_tokens=base_cfg.agent_a.max_output_tokens,
+    )
+    agent_b_cfg = AgentModelConfig(
+        model=request.model_b or base_cfg.agent_b.model,
+        max_input_tokens=base_cfg.agent_b.max_input_tokens,
+        max_output_tokens=base_cfg.agent_b.max_output_tokens,
+    )
+    agent_p_cfg = AgentModelConfig(
+        model=request.model_p or base_cfg.agent_p.model,
+        max_input_tokens=base_cfg.agent_p.max_input_tokens,
+        max_output_tokens=base_cfg.agent_p.max_output_tokens,
+    )
+
+    agent_config = AgentConfig(
+        agent_a=agent_a_cfg,
+        agent_b=agent_b_cfg,
+        agent_p=agent_p_cfg,
+        cost_limit_per_candidate=base_cfg.cost_limit_per_candidate,
+        max_retrieval_rounds=base_cfg.max_retrieval_rounds,
+        reranking_top_n=base_cfg.reranking_top_n,
+    )
+
+    # 4. Orchestrate.
+    try:
+        orchestrator = Orchestrator(config=agent_config)
+        decisions = orchestrator.orchestrate(candidates)
+    except OrchestratorError as exc:
+        logger.error("agent_pipeline_orchestration_error", run_id=run_id, error=str(exc))
+        response.status_code = 503
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code="orchestration_error", message=str(exc))],
+        )
+
+    # 5. Enqueue evidence_assembly_job for each candidate.
+    correlation_id = get_correlation_id()
+    try:
+        arq_pool = await get_arq_pool()
+    except Exception as exc:
+        logger.error("agent_pipeline_arq_error", run_id=run_id, error=str(exc))
+        response.status_code = 503
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code="arq_unavailable", message=str(exc))],
+        )
+
+    enqueued = 0
+    for candidate, decision in zip(candidates, decisions):
+        try:
+            await arq_pool.enqueue_job(
+                "evidence_assembly_job",
+                run_id=run_id,
+                candidate_json=candidate.model_dump_json(),
+                decision_json=decision.model_dump_json(),
+                correlation_id=correlation_id,
+            )
+            enqueued += 1
+        except Exception as exc:
+            logger.error(
+                "agent_pipeline_enqueue_failed",
+                run_id=run_id,
+                candidate_id=candidate.candidate_id,
+                error=str(exc),
+            )
+
+    logger.info(
+        "agent_pipeline_run_complete",
+        run_id=run_id,
+        enqueued=enqueued,
+        total_candidates=len(candidates),
+        model_a=agent_config.agent_a.model,
+        model_b=agent_config.agent_b.model,
+        model_p=agent_config.agent_p.model,
+    )
+
+    return RunAgentPipelineResponse(
+        run_id=run_id,
+        status="success",
+        jobs_enqueued=enqueued,
+        model_a=agent_config.agent_a.model,
+        model_b=agent_config.agent_b.model,
+        model_p=agent_config.agent_p.model,
+    )

@@ -141,6 +141,7 @@ async def extraction_job(
     chunk_id: str,
     doc_id: str,
     correlation_id: str = "",
+    model_override: str | None = None,
 ) -> None:
     """Extract entities from one chunk and write them to Neo4j.
 
@@ -155,6 +156,8 @@ async def extraction_job(
         correlation_id: Propagated from the HTTP request that enqueued this job
                         (SKILL-D R-D2).  Bound to structlog context so all log
                         entries within this job carry the same correlation ID.
+        model_override: Optional OpenRouter model ID.  When provided, overrides
+                        the default extraction model for this job only.
 
     Returns:
         None. Results are persisted to Neo4j; status is persisted to Redis.
@@ -246,6 +249,7 @@ async def extraction_job(
             run_id=run_id,
             chunk_id=chunk_id,
             chunk_text=chunk_text,  # never logged (SKILL-D R-D5)
+            model_override=model_override,
         )
         logger.info(
             "extraction_complete",

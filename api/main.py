@@ -90,6 +90,7 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance ready to serve requests.
     """
+    from api.routers import agent_pipeline as agent_pipeline_router
     from api.routers import approvals as approvals_router
     from api.routers import candidates as candidates_router
     from api.routers import config as config_router
@@ -148,6 +149,9 @@ def create_app() -> FastAPI:
     app.include_router(evidence_router.router, prefix="/api/curation")
     # /api/curation/proposals/{id}/approve  /reject  /defer  /confirm
     app.include_router(approvals_router.router, prefix="/api/curation")
+    # /api/curation/agents/config  /api/curation/agents/run
+    # /api/curation/agents/status/{run_id}
+    app.include_router(agent_pipeline_router.router, prefix="/api/curation")
     # /api/graph/nodes/{run_id}  /api/graph/edges/{run_id}  (+ /count variants)
     app.include_router(graph_explorer_router.router, prefix="/api/graph")
     # /api/config/reload

@@ -130,9 +130,22 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
             "Requires the domain schema to be locked (Phase 1)."
         )
 
+    extraction_model = st.text_input(
+        "LLM Model (optional)",
+        value="openai/gpt-4o-mini",
+        help=(
+            "OpenRouter model ID for extraction. Leave as default or enter "
+            "a different model (e.g. openai/gpt-4o, anthropic/claude-3.5-sonnet)."
+        ),
+        key="extraction_model",
+    )
+
     if st.button(label, type="primary", help=help_text):
+        payload: dict[str, Any] = {"run_id": run_id}
+        if extraction_model and extraction_model.strip():
+            payload["model"] = extraction_model.strip()
         with st.spinner("Enqueueing extraction jobs…"):
-            data, err = _post("/api/extraction/run", {"run_id": run_id})
+            data, err = _post("/api/extraction/run", payload)
 
         if err or data is None:
             st.error(f"Failed to start extraction: {err or 'No response from API.'}")

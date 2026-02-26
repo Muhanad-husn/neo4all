@@ -197,6 +197,7 @@ class SchemaService:
         self,
         run_id: str,
         domain_description: str,
+        model_override: str | None = None,
     ) -> SchemaProposal:
         """Generate a candidate schema by calling the LLM.
 
@@ -210,6 +211,8 @@ class SchemaService:
         Args:
             run_id:             Governed run identifier.
             domain_description: Free-text description of the user's domain.
+            model_override:     Optional OpenRouter model ID.  When provided,
+                                overrides the default model for this call only.
 
         Returns:
             A validated SchemaProposal (not yet a locked SchemaVersion).
@@ -227,16 +230,26 @@ class SchemaService:
             domain_description=domain_description,
         )
 
+        # Apply model override if provided.
+        job_config = self._job_config
+        if model_override and model_override.strip():
+            job_config = JobConfig(
+                job_id=self._job_config.job_id,
+                model=model_override.strip(),
+                temperature=self._job_config.temperature,
+                response_format=self._job_config.response_format,
+            )
+
         logger.info(
             "schema_propose_start",
             run_id=run_id,
             job_id=self._JOB_ID,
-            model=self._job_config.model,
+            model=job_config.model,
             domain_length=len(domain_description),
         )
 
         result: SchemaProposal | None = await self._llm.call(
-            job=self._job_config,
+            job=job_config,
             system_prompt=system_prompt,
             user_message=user_message,
             response_model=SchemaProposal,
