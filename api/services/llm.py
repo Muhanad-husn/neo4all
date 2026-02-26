@@ -141,10 +141,11 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def _resolve_api_key(self) -> str:
-        if self._api_key:
-            return self._api_key
         from api.config import get_settings
-        return get_settings().OPENROUTER_API_KEY
+        key = self._api_key or get_settings().OPENROUTER_API_KEY
+        if not key.strip():
+            raise RuntimeError("OPENROUTER_API_KEY is not configured")
+        return key
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:

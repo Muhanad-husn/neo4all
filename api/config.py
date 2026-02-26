@@ -13,7 +13,7 @@ Usage:
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     # LLM gateway
     # -------------------------------------------------------------------------
     OPENROUTER_API_KEY: str
+
+    @field_validator("OPENROUTER_API_KEY")
+    @classmethod
+    def _openrouter_key_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("OPENROUTER_API_KEY must not be empty")
+        return v
 
     # -------------------------------------------------------------------------
     # Object storage — RustFS (local) / S3 (prod)
