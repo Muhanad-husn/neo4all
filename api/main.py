@@ -103,6 +103,7 @@ def create_app() -> FastAPI:
     from api.routers import monitoring as monitoring_router
     from api.routers import monitoring_agents as monitoring_agents_router
     from api.routers import schema as schema_router
+    from api.routers import session as session_router
 
     app = FastAPI(
         title="neo4all API",
@@ -156,6 +157,8 @@ def create_app() -> FastAPI:
     app.include_router(graph_explorer_router.router, prefix="/api/graph")
     # /api/config/reload
     app.include_router(config_router.router, prefix="/api/config")
+    # /api/session/save  /api/session/{user_hash}
+    app.include_router(session_router.router, prefix="/api/session")
 
     return app
 

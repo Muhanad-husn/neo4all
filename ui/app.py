@@ -26,6 +26,7 @@ Utility views (sidebar selector, available after Phase 0):
   Graph Explorer   → ui/pages/graph_explorer.py  (Phase 4+ only)
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -111,6 +112,67 @@ def _write_env_credentials(
     env_path.write_text("".join(output_lines), encoding="utf-8")
 
 
+def _read_env_credentials() -> dict[str, str]:
+    """Read credential values from the ``.env`` file.
+
+    Inverse of ``_write_env_credentials()``.  Used on startup to pre-fill
+    the Phase 0 form and to provide the user namespace for session restore.
+
+    Returns:
+        Dict with keys ``neo4j_uri``, ``neo4j_user``, ``neo4j_password``,
+        ``openrouter_api_key``.  Missing values are empty strings.
+        Never raises.
+    """
+    empty: dict[str, str] = {
+        "neo4j_uri": "",
+        "neo4j_user": "",
+        "neo4j_password": "",
+        "openrouter_api_key": "",
+    }
+    env_path = Path(".env")
+    if not env_path.exists():
+        return empty
+
+    try:
+        content = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return empty
+
+    parsed: dict[str, str] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        parsed[key.strip()] = value.strip()
+
+    return {
+        "neo4j_uri": next(
+            (parsed[k] for k in _NEO4J_URI_KEYS if k in parsed), ""
+        ),
+        "neo4j_user": next(
+            (parsed[k] for k in _NEO4J_USER_KEYS if k in parsed), ""
+        ),
+        "neo4j_password": next(
+            (parsed[k] for k in _NEO4J_PASSWORD_KEYS if k in parsed), ""
+        ),
+        "openrouter_api_key": next(
+            (parsed[k] for k in _OPENROUTER_KEY_KEYS if k in parsed), ""
+        ),
+    }
+
+
+def _derive_user_hash(neo4j_uri: str, neo4j_user: str) -> str:
+    """Derive a deterministic user_hash for session key scoping.
+
+    Uses SHA-256(neo4j_uri + NUL + neo4j_user) to prevent collisions
+    between users with the same name on different Aura instances.
+    Follows the project's null-byte separator convention (CLAUDE.md §5).
+    """
+    raw = f"{neo4j_uri}\x00{neo4j_user}".encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _notify_api_reload() -> bool:
     """Tell the running API to reload its configuration.
 
@@ -124,6 +186,114 @@ def _notify_api_reload() -> bool:
         return resp.status_code == 200  # noqa: TRY300
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Session persistence (restore / save / new-session)
+# ---------------------------------------------------------------------------
+
+
+def _try_restore_session(state: StateManager) -> bool:
+    """Attempt to restore a previously saved session from Redis via the API.
+
+    Called once per Streamlit process when ``phase == INIT`` and
+    ``run_id is None`` (i.e., a completely fresh bootstrap).
+
+    Returns True if a session was successfully restored, False otherwise.
+    Fails silently (returns False) on any error — Phase 0 will be shown.
+    """
+    try:
+        import httpx
+
+        creds = _read_env_credentials()
+        neo4j_uri = creds["neo4j_uri"]
+        neo4j_user = creds["neo4j_user"]
+        neo4j_password = creds["neo4j_password"]
+        openrouter_api_key = creds["openrouter_api_key"]
+
+        # Cannot restore without at least URI and user.
+        if not neo4j_uri or not neo4j_user:
+            return False
+
+        user_hash = _derive_user_hash(neo4j_uri, neo4j_user)
+
+        resp = httpx.Client(timeout=3.0).get(
+            f"{_API_BASE_URL}/api/session/{user_hash}"
+        )
+        if resp.status_code != 200:
+            return False
+
+        data = resp.json()
+        if not data.get("found") or data.get("record") is None:
+            return False
+
+        record = data["record"]
+
+        state.restore_session(
+            run_id=record["run_id"],
+            timestamp_seed=record["timestamp_seed"],
+            phase=record["phase"],
+            schema_version=record.get("schema_version"),
+            neo4j_uri=record["neo4j_uri"],
+            neo4j_user=record["neo4j_user"],
+            neo4j_password=neo4j_password,
+            openrouter_api_key=openrouter_api_key,
+        )
+
+        # Ensure API has current credentials loaded.
+        _notify_api_reload()
+
+        return True
+    except Exception:
+        return False
+
+
+def _save_session(state: StateManager) -> None:
+    """Persist current session state to Redis via the API (fire-and-forget).
+
+    Only saves when the session state has actually changed since the last
+    save (dirty-check via snapshot hash comparison).  Called on every
+    Streamlit rerun when a run_id exists.
+    """
+    if not state.run_id or not state.neo4j_uri or not state.neo4j_user:
+        return
+
+    try:
+        import httpx
+
+        # Build a snapshot hash to detect changes.
+        snapshot = (
+            f"{state.run_id}|{state.phase.value}|"
+            f"{state.schema_version or ''}|{state.neo4j_uri}|{state.neo4j_user}"
+        )
+        snapshot_hash = hashlib.sha256(snapshot.encode()).hexdigest()[:16]
+
+        if state.last_saved_hash == snapshot_hash:
+            return  # No change since last save.
+
+        user_hash = _derive_user_hash(state.neo4j_uri, state.neo4j_user)
+
+        payload = {
+            "user_hash": user_hash,
+            "record": {
+                "run_id": state.run_id,
+                "timestamp_seed": state.timestamp_seed,
+                "phase": state.phase.value,
+                "schema_version": state.schema_version,
+                "neo4j_uri": state.neo4j_uri,
+                "neo4j_user": state.neo4j_user,
+            },
+        }
+
+        httpx.Client(timeout=2.0).post(
+            f"{_API_BASE_URL}/api/session/save",
+            json=payload,
+        )
+
+        state.set_last_saved_hash(snapshot_hash)
+    except Exception:
+        pass  # Fire-and-forget — never block the UI.
+
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -214,6 +384,26 @@ def _render_sidebar(state: StateManager) -> str | None:
         else:
             st.info("No active run.\nComplete Phase 0 to begin.")
 
+        # "New Session" — only shown when there is an active run.
+        if state.run_id:
+            st.divider()
+            if st.button("New Session", type="secondary", key="_nav_new_session"):
+                # Best-effort cleanup of persisted session in Redis.
+                try:
+                    import httpx
+
+                    user_hash = _derive_user_hash(
+                        state.neo4j_uri or "", state.neo4j_user or ""
+                    )
+                    httpx.Client(timeout=2.0).delete(
+                        f"{_API_BASE_URL}/api/session/{user_hash}"
+                    )
+                except Exception:
+                    pass
+
+                state.reset()
+                st.rerun()
+
     return view_override
 
 
@@ -235,23 +425,27 @@ def _render_phase_init(state: StateManager) -> None:
         "Credentials are saved to the local `.env` file so the API backend can use them."
     )
 
+    # Pre-fill form fields from .env when available (dev convenience).
+    env_creds = _read_env_credentials()
+
     with st.form("phase_0_init_form"):
         st.subheader("Neo4j Aura")
         neo4j_uri = st.text_input(
             "URI",
-            value=state.neo4j_uri or "",
+            value=state.neo4j_uri or env_creds["neo4j_uri"],
             placeholder="neo4j+s://xxxxxxxx.databases.neo4j.io",
             help="Your Neo4j Aura connection URI (starts with neo4j+s://).",
         )
         neo4j_user = st.text_input(
             "Username",
-            value=state.neo4j_user or "",
+            value=state.neo4j_user or env_creds["neo4j_user"],
             placeholder="neo4j",
             help="Neo4j database username.",
         )
         neo4j_password = st.text_input(
             "Password",
             type="password",
+            value=env_creds["neo4j_password"],
             placeholder="Enter password",
             help="Neo4j database password. Saved to `.env`; never logged.",
         )
@@ -260,6 +454,7 @@ def _render_phase_init(state: StateManager) -> None:
         openrouter_api_key = st.text_input(
             "OpenRouter API Key",
             type="password",
+            value=env_creds["openrouter_api_key"],
             placeholder="sk-or-…",
             help="OpenRouter API key for LLM access. Saved to `.env`; never logged.",
         )
@@ -381,6 +576,17 @@ def main() -> None:
 
     # StateManager.get() seeds defaults on first load and returns a live view.
     state = StateManager.get()
+
+    # --- Session restore (runs once: phase==INIT and run_id==None) ----------
+    # On a completely fresh bootstrap, attempt to recover the previous session
+    # from Redis + .env.  After restore both conditions become False, so this
+    # block is skipped on all subsequent reruns (no infinite loop).
+    if state.phase == Phase.INIT and state.run_id is None:
+        if _try_restore_session(state):
+            st.rerun()
+
+    # --- Session save (fire-and-forget, dirty-check gated) -----------------
+    _save_session(state)
 
     # Render sidebar (returns utility view name or None for phase view).
     view_override = _render_sidebar(state)

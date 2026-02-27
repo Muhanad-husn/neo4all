@@ -165,6 +165,20 @@ class CacheKey:
         return f"agent_job:{run_id}:{candidate_id}"
 
     @staticmethod
+    def session(user_hash: str) -> str:
+        """Key for a user's persisted session record (no TTL — lives until explicit delete).
+
+        Pattern: session:{user_hash}
+
+        user_hash is SHA-256(neo4j_uri + NUL + neo4j_user) — scoped per
+        connection target to prevent collisions between users with the same
+        name on different Aura instances.  Never stores raw credentials.
+        Written by POST /api/session/save; read by GET /api/session/{user_hash};
+        deleted by DELETE /api/session/{user_hash} or "New Session" in UI.
+        """
+        return f"session:{user_hash}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 

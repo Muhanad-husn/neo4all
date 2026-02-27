@@ -64,6 +64,8 @@ _K_PHASE_START_TIMES = "_sm_phase_start_times"
 _K_PROPOSED_NODES = "_sm_proposed_nodes"      # list[dict] | None
 _K_PROPOSED_EDGES = "_sm_proposed_edges"      # list[dict] | None
 _K_PROPOSAL_VERSION = "_sm_proposal_version"  # int; incremented on each propose
+# Session persistence — dirty-check hash to avoid redundant API saves.
+_K_LAST_SAVED_HASH = "_sm_last_saved_hash"    # str | None
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -118,6 +120,7 @@ class StateManager:
             _K_PROPOSED_NODES: None,
             _K_PROPOSED_EDGES: None,
             _K_PROPOSAL_VERSION: 0,
+            _K_LAST_SAVED_HASH: None,
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -190,6 +193,11 @@ class StateManager:
         data_editor widget (prevents stale edits carrying over to a new proposal).
         """
         return st.session_state[_K_PROPOSAL_VERSION]  # type: ignore[return-value]
+
+    @property
+    def last_saved_hash(self) -> str | None:
+        """Hash of the last successfully saved session snapshot, or None."""
+        return st.session_state[_K_LAST_SAVED_HASH]
 
     # ------------------------------------------------------------------
     # Panel mode tracking
@@ -329,3 +337,77 @@ class StateManager:
         """
         st.session_state[_K_PROPOSED_NODES] = None
         st.session_state[_K_PROPOSED_EDGES] = None
+
+    def set_last_saved_hash(self, h: str) -> None:
+        """Record the hash of the most recently saved session snapshot."""
+        st.session_state[_K_LAST_SAVED_HASH] = h
+
+    # ------------------------------------------------------------------
+    # Session persistence
+    # ------------------------------------------------------------------
+
+    def restore_session(
+        self,
+        *,
+        run_id: str,
+        timestamp_seed: str,
+        phase: int,
+        schema_version: str | None,
+        neo4j_uri: str,
+        neo4j_user: str,
+        neo4j_password: str,
+        openrouter_api_key: str,
+    ) -> None:
+        """Restore a previously persisted session, bypassing advance_phase() ordering.
+
+        This is NOT a phase transition — it reconstitutes a known-valid state
+        snapshot saved to Redis during a prior run.  The phase value is
+        validated as a legal Phase member but the incremental ordering
+        constraint is deliberately not enforced.
+
+        Args:
+            run_id:             Previously derived run_id.
+            timestamp_seed:     ISO timestamp that produced run_id.
+            phase:              Phase integer from the persisted record.
+            schema_version:     Locked schema version or None.
+            neo4j_uri:          Neo4j connection URI.
+            neo4j_user:         Neo4j username.
+            neo4j_password:     Neo4j password (from .env, not from Redis).
+            openrouter_api_key: OpenRouter API key (from .env, not from Redis).
+
+        Raises:
+            ValueError: If phase is not a valid Phase member.
+        """
+        target_phase = Phase(phase)  # raises ValueError if invalid
+
+        st.session_state[_K_RUN_ID] = run_id
+        st.session_state[_K_TIMESTAMP_SEED] = timestamp_seed
+        st.session_state[_K_PHASE] = target_phase
+        st.session_state[_K_SCHEMA_VERSION] = schema_version
+        st.session_state[_K_NEO4J_URI] = neo4j_uri
+        st.session_state[_K_NEO4J_USER] = neo4j_user
+        st.session_state[_K_NEO4J_PASSWORD] = neo4j_password
+        st.session_state[_K_OPENROUTER_API_KEY] = openrouter_api_key
+
+    def reset(self) -> None:
+        """Reset all session state to defaults (for "New Session").
+
+        Clears every _sm_* key back to its bootstrap default.  Does NOT
+        clear widget keys (_nav_*) — those are managed by Streamlit's
+        widget lifecycle.
+        """
+        init_time = datetime.now(UTC).isoformat()
+        st.session_state[_K_PHASE] = Phase.INIT
+        st.session_state[_K_RUN_ID] = None
+        st.session_state[_K_TIMESTAMP_SEED] = None
+        st.session_state[_K_SCHEMA_VERSION] = None
+        st.session_state[_K_NEO4J_URI] = None
+        st.session_state[_K_NEO4J_USER] = None
+        st.session_state[_K_NEO4J_PASSWORD] = None
+        st.session_state[_K_OPENROUTER_API_KEY] = None
+        st.session_state[_K_PANEL_MODES] = {}
+        st.session_state[_K_PHASE_START_TIMES] = {Phase.INIT.value: init_time}
+        st.session_state[_K_PROPOSED_NODES] = None
+        st.session_state[_K_PROPOSED_EDGES] = None
+        st.session_state[_K_PROPOSAL_VERSION] = 0
+        st.session_state[_K_LAST_SAVED_HASH] = None
