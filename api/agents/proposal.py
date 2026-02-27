@@ -367,7 +367,7 @@ class ProposalComposerAgent:
             return []
 
         rules: list[dict[str, Any]] = []
-        for node_type in schema.node_types:
+        for node_type in schema.nodes:
             rules.append({
                 "rule_type": "node_type",
                 "rule_id": f"node:{node_type.type}",
@@ -376,7 +376,7 @@ class ProposalComposerAgent:
                 "primary_property": node_type.primary_property,
                 "additional_properties": list(node_type.additional_properties),
             })
-        for edge_type in schema.edge_types:
+        for edge_type in schema.edges:
             rules.append({
                 "rule_type": "edge_type",
                 "rule_id": f"edge:{edge_type.type}",
