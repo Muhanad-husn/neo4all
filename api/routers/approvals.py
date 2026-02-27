@@ -246,7 +246,28 @@ async def approve_proposal(
             ],
         )
 
-    # Validate the transition is permitted.
+    # Idempotent return for already-approved proposals: re-derive the
+    # deterministic approval_id and return it without attempting a transition.
+    # This supports one-click execute flows that call /approve to retrieve
+    # the token before calling /execute.
+    if proposal.state == ProposalState.approved:
+        approval_id = _derive_approval_id(proposal_id, actor)
+        logger.info(
+            "proposal_approve_idempotent",
+            proposal_id=proposal_id,
+            run_id=run_id,
+            actor=actor,
+        )
+        return ApproveProposalResponse(
+            run_id=run_id,
+            proposal_id=proposal_id,
+            status="success",
+            approval_id=approval_id,
+            confirmation_required=False,
+        )
+
+    # Validate the transition is permitted (rejects genuinely invalid
+    # transitions like rejected → approved).
     if not proposal.can_transition_to(ProposalState.approved):
         logger.warning(
             "proposal_approve_invalid_state",

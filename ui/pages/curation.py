@@ -36,7 +36,7 @@ from ui.state import StateManager
 # ---------------------------------------------------------------------------
 
 _API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
-_REQUEST_TIMEOUT: float = 15.0
+_REQUEST_TIMEOUT: float = 30.0
 
 # ---------------------------------------------------------------------------
 # Display constants

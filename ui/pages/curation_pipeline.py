@@ -298,103 +298,100 @@ def _render_pending_actions(
                     # No st.rerun() — keep approval_id visible.
 
 
+def _execute_proposal(
+    pid: str, run_id: str, actor: str
+) -> dict[str, Any] | None:
+    """Approve (idempotent) + execute a single proposal.  Returns execute data or None.
+
+    Both API calls still happen — governance is preserved.  The approve call
+    retrieves the deterministic approval_id, and the execute call applies the
+    diff via Agent-C.
+    """
+    # Step 1: Retrieve approval_id (idempotent — already-approved returns the same ID).
+    approve_data, approve_err = _post(
+        f"/api/curation/proposals/{pid}/approve",
+        {"run_id": run_id, "actor": actor},
+    )
+    if approve_err or approve_data is None:
+        st.error(f"Could not retrieve approval ID: {approve_err or 'No response from API.'}")
+        return None
+    if approve_data.get("status") == "error":
+        for e in approve_data.get("errors", []):
+            st.error(f"[{e.get('code')}] {e.get('message')}")
+        return None
+    if approve_data.get("confirmation_required"):
+        st.warning(
+            "High-risk action — Phase 2 confirmation required before execution. "
+            "Complete the confirm step first."
+        )
+        return None
+
+    approval_id = approve_data.get("approval_id", "")
+    if not approval_id:
+        st.error("Approve succeeded but returned no approval_id.")
+        return None
+
+    # Step 2: Execute with the approval_id.
+    exec_data, exec_err = _post(
+        f"/api/curation/proposals/{pid}/execute",
+        {"run_id": run_id, "approval_id": approval_id, "actor": actor},
+    )
+    if exec_err or exec_data is None:
+        st.error(f"Execution failed: {exec_err or 'No response from API.'}")
+        return None
+    return exec_data
+
+
 def _render_execute_panel(
     proposal: dict[str, Any], run_id: str, actor: str
 ) -> None:
-    """Render the execute panel for an approved proposal.
+    """Render the one-click execute panel for an approved proposal.
 
-    Two-step flow:
-    1. 'Show Approval ID' calls POST /approve (idempotent — same inputs →
-       same deterministic approval_id) and displays the token.
-    2. User pastes the approval_id into the Execute form and submits.
-
-    The execute outcome and diff_id form the inline audit trail entry.
+    Clicking Execute internally calls POST /approve (idempotent) to retrieve
+    the deterministic approval_id, then immediately calls POST /execute.
+    Both API calls happen — governance is fully preserved.
     """
     pid = proposal["proposal_id"]
 
     st.markdown("**Execute Approved Proposal**")
     st.caption(
-        "Step 1: Click 'Show Approval ID' to retrieve the approval token. "
-        "Step 2: Paste it below and click Execute."
+        "Click Execute to apply this proposal.  The approval token is "
+        "retrieved automatically (idempotent) before execution."
     )
 
-    # Step 1: Retrieve approval_id (idempotent approve call).
-    if st.button(
-        "Show Approval ID",
-        key=f"get_approval_{pid}",
-        help="Calls the approve endpoint again (idempotent) to display the approval token.",
-    ):
-        data, err = _post(
-            f"/api/curation/proposals/{pid}/approve",
-            {"run_id": run_id, "actor": actor},
-        )
-        if err or data is None:
-            st.error(f"Could not retrieve approval ID: {err or 'No response from API.'}")
-        elif data.get("status") == "error":
+    if st.button("Execute", key=f"btn_execute_{pid}", type="primary"):
+        with st.spinner("Executing…"):
+            data = _execute_proposal(pid, run_id, actor)
+
+        if data is None:
+            return
+
+        if data.get("status") == "error":
             for e in data.get("errors", []):
-                # 409 means already approved — that's fine, still show the key.
-                if e.get("code") == "already_approved":
-                    st.info("Proposal is already approved. Re-derive approval ID:")
-                else:
-                    st.error(f"[{e.get('code')}] {e.get('message')}")
-        elif data.get("confirmation_required"):
-            st.warning(
-                "Proposal still awaiting Phase 2 confirmation — "
-                "complete the confirm step first."
+                st.error(f"[{e.get('code')}] {e.get('message')}")
+            return
+
+        outcome = data.get("outcome", "")
+        steps = data.get("steps_applied", 0)
+        diff_id = data.get("diff_id", "")
+        if outcome == "applied":
+            st.success(
+                f"Executed — {steps} step(s) applied.  "
+                f"diff_id: `{diff_id[:16]}…`"
             )
+        elif outcome == "failed":
+            st.error(
+                f"Execution failed — {steps} step(s) applied before failure.  "
+                f"diff_id: `{diff_id[:16]}…`"
+            )
+            err_detail = data.get("error_detail", {})
+            if err_detail:
+                st.json(err_detail)
         else:
-            st.info("Approval ID (copy this):")
-            st.code(data.get("approval_id", ""), language=None)
-
-    # Step 2: Execute form.
-    with st.form(key=f"execute_form_{pid}"):
-        approval_id_input = st.text_input(
-            "Approval ID",
-            placeholder="Paste the approval ID from Step 1 above",
-        )
-        actor_input = st.text_input("Actor", value=actor)
-        submitted = st.form_submit_button("Execute", type="primary")
-
-    if submitted:
-        if not approval_id_input.strip():
-            st.error("Approval ID is required.")
-        else:
-            with st.spinner("Executing…"):
-                data, err = _post(
-                    f"/api/curation/proposals/{pid}/execute",
-                    {
-                        "run_id": run_id,
-                        "approval_id": approval_id_input.strip(),
-                        "actor": actor_input or actor,
-                    },
-                )
-            if err or data is None:
-                st.error(f"Execution failed: {err or 'No response from API.'}")
-            elif data.get("status") == "error":
-                for e in data.get("errors", []):
-                    st.error(f"[{e.get('code')}] {e.get('message')}")
-            else:
-                outcome = data.get("outcome", "")
-                steps = data.get("steps_applied", 0)
-                diff_id = data.get("diff_id", "")
-                if outcome == "applied":
-                    st.success(
-                        f"Executed — {steps} step(s) applied.  "
-                        f"diff_id: `{diff_id[:16]}…`"
-                    )
-                elif outcome == "failed":
-                    st.error(
-                        f"Execution failed — {steps} step(s) applied before failure.  "
-                        f"diff_id: `{diff_id[:16]}…`"
-                    )
-                    err_detail = data.get("error_detail", {})
-                    if err_detail:
-                        st.json(err_detail)
-                else:
-                    st.warning(
-                        f"Outcome: {outcome} — check approval_id and proposal state."
-                    )
-                st.rerun()
+            st.warning(
+                f"Outcome: {outcome} — check approval_id and proposal state."
+            )
+        st.rerun()
 
 
 def _render_proposal_expander(
@@ -457,6 +454,139 @@ def _render_proposal_expander(
             st.caption(f"No actions available — proposal is {state}.")
 
 
+def _do_batch_approve(
+    proposals: list[dict[str, Any]], run_id: str, actor: str
+) -> None:
+    """Approve all low-risk pending proposals.  High-risk (merge/delete) are skipped."""
+    pending = [p for p in proposals if p["state"] == "pending"]
+    low_risk = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
+    high_risk_count = len(pending) - len(low_risk)
+
+    if not low_risk:
+        st.info("No low-risk pending proposals to approve.")
+        return
+
+    if high_risk_count > 0:
+        st.warning(
+            f"Skipping {high_risk_count} high-risk proposal(s) (merge/delete) — "
+            "these require manual two-phase confirmation."
+        )
+
+    progress = st.progress(0.0, text="Approving proposals…")
+    approved_count = 0
+    failed_ids: list[str] = []
+
+    for i, p in enumerate(low_risk):
+        pid = p["proposal_id"]
+        data, err = _post(
+            f"/api/curation/proposals/{pid}/approve",
+            {"run_id": run_id, "actor": actor},
+        )
+        if err or data is None or data.get("status") == "error":
+            failed_ids.append(pid[:12])
+        else:
+            approved_count += 1
+        progress.progress((i + 1) / len(low_risk), text=f"Approved {approved_count}/{len(low_risk)}")
+
+    progress.empty()
+
+    if approved_count > 0:
+        st.success(f"Approved {approved_count} proposal(s).")
+    if failed_ids:
+        st.error(f"Failed to approve {len(failed_ids)} proposal(s): {', '.join(failed_ids)}…")
+
+    st.rerun()
+
+
+def _do_batch_execute(
+    proposals: list[dict[str, Any]], run_id: str, actor: str
+) -> None:
+    """Execute all approved proposals (one-click: approve-idempotent + execute)."""
+    approved = [p for p in proposals if p["state"] == "approved"]
+
+    if not approved:
+        st.info("No approved proposals to execute.")
+        return
+
+    progress = st.progress(0.0, text="Executing proposals…")
+    applied = 0
+    failed = 0
+    skipped = 0
+
+    for i, p in enumerate(approved):
+        pid = p["proposal_id"]
+        data = _execute_proposal(pid, run_id, actor)
+
+        if data is None:
+            failed += 1
+        elif data.get("status") == "error":
+            failed += 1
+        elif data.get("outcome") == "applied":
+            applied += 1
+        elif data.get("outcome") == "failed":
+            failed += 1
+        else:
+            skipped += 1
+
+        progress.progress(
+            (i + 1) / len(approved),
+            text=f"Executed {i + 1}/{len(approved)} — {applied} applied, {failed} failed",
+        )
+
+    progress.empty()
+
+    parts: list[str] = []
+    if applied:
+        parts.append(f"{applied} applied")
+    if failed:
+        parts.append(f"{failed} failed")
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    summary = ", ".join(parts) or "no proposals processed"
+
+    if failed == 0 and applied > 0:
+        st.success(f"Batch execution complete: {summary}.")
+    elif applied > 0:
+        st.warning(f"Batch execution complete (partial): {summary}.")
+    else:
+        st.error(f"Batch execution failed: {summary}.")
+
+    st.rerun()
+
+
+def _render_batch_actions(
+    proposals: list[dict[str, Any]], run_id: str, actor: str
+) -> None:
+    """Render batch approve/execute buttons above the proposal list."""
+    pending = [p for p in proposals if p["state"] == "pending"]
+    approved = [p for p in proposals if p["state"] == "approved"]
+
+    low_risk_pending = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
+
+    col_approve, col_execute = st.columns(2)
+
+    with col_approve:
+        label = f"Approve All Pending ({len(low_risk_pending)})"
+        if st.button(
+            label,
+            key="batch_approve",
+            disabled=(len(low_risk_pending) == 0),
+            help="Approves all low-risk pending proposals. High-risk (merge/delete) are skipped.",
+        ):
+            _do_batch_approve(proposals, run_id, actor)
+
+    with col_execute:
+        label = f"Execute All Approved ({len(approved)})"
+        if st.button(
+            label,
+            key="batch_execute",
+            disabled=(len(approved) == 0),
+            type="primary",
+            help="Executes all approved proposals via Agent-C. Shows progress.",
+        ):
+            _do_batch_execute(proposals, run_id, actor)
+
+
 def _render_proposal_queue(run_id: str, actor: str) -> None:
     """Fetch and display all proposals for a run with per-proposal action panels."""
     st.subheader("Proposal Queue")
@@ -495,6 +625,9 @@ def _render_proposal_queue(run_id: str, actor: str) -> None:
     c1.metric("Total", total)
     c2.metric("Pending", pending)
     c3.metric("Approved", approved)
+
+    # Batch actions — approve all pending / execute all approved.
+    _render_batch_actions(proposals, run_id, actor)
 
     st.divider()
 
