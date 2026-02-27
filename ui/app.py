@@ -116,52 +116,49 @@ def _write_env_credentials(
 
 
 def _read_env_credentials() -> dict[str, str]:
-    """Read credential values from the ``.env`` file.
+    """Read credential values from the ``.env`` file or ``os.environ``.
 
-    Inverse of ``_write_env_credentials()``.  Used on startup to pre-fill
-    the Phase 0 form and to provide the user namespace for session restore.
+    Tries the ``.env`` file first (local development).  If the file does not
+    exist (Docker: credentials are injected as env vars via ``env_file``),
+    falls back to ``os.environ``.
 
     Returns:
         Dict with keys ``neo4j_uri``, ``neo4j_user``, ``neo4j_password``,
         ``openrouter_api_key``.  Missing values are empty strings.
         Never raises.
     """
-    empty: dict[str, str] = {
-        "neo4j_uri": "",
-        "neo4j_user": "",
-        "neo4j_password": "",
-        "openrouter_api_key": "",
-    }
-    env_path = Path(".env")
-    if not env_path.exists():
-        return empty
-
-    try:
-        content = env_path.read_text(encoding="utf-8")
-    except OSError:
-        return empty
-
+    # Try .env file first (local dev).
     parsed: dict[str, str] = {}
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, _, value = stripped.partition("=")
-        parsed[key.strip()] = value.strip()
+    env_path = Path(".env")
+    if env_path.exists():
+        try:
+            content = env_path.read_text(encoding="utf-8")
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, _, value = stripped.partition("=")
+                parsed[key.strip()] = value.strip()
+        except OSError:
+            pass
+
+    # Fall back to os.environ for any keys not found in .env (Docker).
+    def _first_match(key_set: set[str]) -> str:
+        # Check parsed .env first, then os.environ.
+        for k in key_set:
+            if k in parsed and parsed[k]:
+                return parsed[k]
+        for k in key_set:
+            val = os.environ.get(k, "")
+            if val:
+                return val
+        return ""
 
     return {
-        "neo4j_uri": next(
-            (parsed[k] for k in _NEO4J_URI_KEYS if k in parsed), ""
-        ),
-        "neo4j_user": next(
-            (parsed[k] for k in _NEO4J_USER_KEYS if k in parsed), ""
-        ),
-        "neo4j_password": next(
-            (parsed[k] for k in _NEO4J_PASSWORD_KEYS if k in parsed), ""
-        ),
-        "openrouter_api_key": next(
-            (parsed[k] for k in _OPENROUTER_KEY_KEYS if k in parsed), ""
-        ),
+        "neo4j_uri": _first_match(_NEO4J_URI_KEYS),
+        "neo4j_user": _first_match(_NEO4J_USER_KEYS),
+        "neo4j_password": _first_match(_NEO4J_PASSWORD_KEYS),
+        "openrouter_api_key": _first_match(_OPENROUTER_KEY_KEYS),
     }
 
 
