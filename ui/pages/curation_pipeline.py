@@ -739,6 +739,12 @@ def _render_agent_model_config(run_id: str) -> None:
         "on detected candidates.  Each agent can use a different LLM model.  "
         "All AI proposals enter the same governed approval queue as manual proposals."
     )
+    st.info(
+        "**Minimum context window: 128k tokens.** "
+        "The agent pipeline works best with frontier models that support at least "
+        "128k token context windows (e.g. GPT-4o, Claude 3.5+, Gemini 1.5 Pro).",
+        icon="\u2139\ufe0f",
+    )
 
     # Fetch current config defaults.
     config_data = _fetch("/api/curation/agents/config")

@@ -32,8 +32,10 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 # Maximum candidates the orchestrator will process in a single batch.
+# The orchestrator is non-LLM (O(n) deterministic), so this is a
+# defensive upper bound, not a context-window constraint.
 # Callers MUST slice inputs before calling orchestrate().
-MAX_CANDIDATES_PER_BATCH: int = 50
+MAX_CANDIDATES_PER_BATCH: int = 500
 
 # Per-candidate wall-clock budget in seconds.  The agent chain must
 # complete within this window or the candidate is auto-deferred.
