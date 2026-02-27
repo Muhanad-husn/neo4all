@@ -60,6 +60,7 @@ _TYPE_LABELS: dict[str, str] = {
 _STATE_BADGE: dict[str, str] = {
     "pending": ":blue[PENDING]",
     "approved": ":green[APPROVED]",
+    "executed": ":violet[EXECUTED]",
     "rejected": ":red[REJECTED]",
     "deferred": ":gray[DEFERRED]",
 }

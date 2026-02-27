@@ -45,6 +45,7 @@ from ui.pages.curation import (
     _STATE_BADGE,
     _TYPE_LABELS,
 )
+from ui.state import StateManager
 
 # ===========================================================================
 # Layer 2 — Evidence, Proposals, Approval Gate, Execution (SPEC-06)
@@ -450,6 +451,11 @@ def _render_proposal_expander(
             _render_pending_actions(proposal, run_id, actor)
         elif state == "approved":
             _render_execute_panel(proposal, run_id, actor)
+        elif state == "executed":
+            st.success("This proposal has been executed — diff applied to the graph.")
+            if st.button("Dismiss", key=f"btn_dismiss_{pid}"):
+                StateManager.get().dismiss_proposal(pid)
+                st.rerun()
         else:
             st.caption(f"No actions available — proposal is {state}.")
 
@@ -557,13 +563,14 @@ def _do_batch_execute(
 def _render_batch_actions(
     proposals: list[dict[str, Any]], run_id: str, actor: str
 ) -> None:
-    """Render batch approve/execute buttons above the proposal list."""
+    """Render batch approve/execute/dismiss buttons above the proposal list."""
     pending = [p for p in proposals if p["state"] == "pending"]
     approved = [p for p in proposals if p["state"] == "approved"]
+    executed = [p for p in proposals if p["state"] == "executed"]
 
     low_risk_pending = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
 
-    col_approve, col_execute = st.columns(2)
+    col_approve, col_execute, col_dismiss = st.columns(3)
 
     with col_approve:
         label = f"Approve All Pending ({len(low_risk_pending)})"
@@ -585,6 +592,19 @@ def _render_batch_actions(
             help="Executes all approved proposals via Agent-C. Shows progress.",
         ):
             _do_batch_execute(proposals, run_id, actor)
+
+    with col_dismiss:
+        label = f"Dismiss All Executed ({len(executed)})"
+        if st.button(
+            label,
+            key="batch_dismiss",
+            disabled=(len(executed) == 0),
+            help="Hides all executed proposals from the queue. Audit trail is preserved.",
+        ):
+            sm = StateManager.get()
+            for p in executed:
+                sm.dismiss_proposal(p["proposal_id"])
+            st.rerun()
 
 
 def _render_proposal_queue(run_id: str, actor: str) -> None:
@@ -618,20 +638,38 @@ def _render_proposal_queue(run_id: str, actor: str) -> None:
         )
         return
 
-    pending = sum(1 for p in proposals if p["state"] == "pending")
-    approved = sum(1 for p in proposals if p["state"] == "approved")
+    # Filter out dismissed proposals.
+    sm = StateManager.get()
+    dismissed = sm.dismissed_proposals
+    hidden_count = sum(1 for p in proposals if p["proposal_id"] in dismissed)
+    visible = [p for p in proposals if p["proposal_id"] not in dismissed]
 
-    c1, c2, c3 = st.columns(3)
+    pending = sum(1 for p in visible if p["state"] == "pending")
+    approved = sum(1 for p in visible if p["state"] == "approved")
+    executed = sum(1 for p in visible if p["state"] == "executed")
+
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total", total)
     c2.metric("Pending", pending)
     c3.metric("Approved", approved)
+    c4.metric("Executed", executed)
 
-    # Batch actions — approve all pending / execute all approved.
-    _render_batch_actions(proposals, run_id, actor)
+    # Batch actions — approve all pending / execute all approved / dismiss executed.
+    _render_batch_actions(visible, run_id, actor)
+
+    # Show hidden count and "Show all" button.
+    if hidden_count > 0:
+        col_hidden, col_show = st.columns([3, 1])
+        col_hidden.caption(f"{hidden_count} dismissed proposal(s) hidden.")
+        with col_show:
+            if st.button("Show all", key="show_all_dismissed"):
+                for p in proposals:
+                    sm.undismiss_proposal(p["proposal_id"])
+                st.rerun()
 
     st.divider()
 
-    for proposal in proposals:
+    for proposal in visible:
         _render_proposal_expander(proposal, run_id, actor)
 
 

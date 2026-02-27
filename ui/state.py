@@ -66,6 +66,8 @@ _K_PROPOSED_EDGES = "_sm_proposed_edges"      # list[dict] | None
 _K_PROPOSAL_VERSION = "_sm_proposal_version"  # int; incremented on each propose
 # Session persistence — dirty-check hash to avoid redundant API saves.
 _K_LAST_SAVED_HASH = "_sm_last_saved_hash"    # str | None
+# Dismissed proposals — hidden from the UI queue but preserved for governance.
+_K_DISMISSED_PROPOSALS = "_sm_dismissed_proposals"  # set[str]
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -121,6 +123,7 @@ class StateManager:
             _K_PROPOSED_EDGES: None,
             _K_PROPOSAL_VERSION: 0,
             _K_LAST_SAVED_HASH: None,
+            _K_DISMISSED_PROPOSALS: set(),
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -198,6 +201,11 @@ class StateManager:
     def last_saved_hash(self) -> str | None:
         """Hash of the last successfully saved session snapshot, or None."""
         return st.session_state[_K_LAST_SAVED_HASH]
+
+    @property
+    def dismissed_proposals(self) -> set[str]:
+        """Set of proposal IDs dismissed from the UI queue."""
+        return st.session_state[_K_DISMISSED_PROPOSALS]
 
     # ------------------------------------------------------------------
     # Panel mode tracking
@@ -342,6 +350,18 @@ class StateManager:
         """Record the hash of the most recently saved session snapshot."""
         st.session_state[_K_LAST_SAVED_HASH] = h
 
+    def dismiss_proposal(self, proposal_id: str) -> None:
+        """Hide a proposal from the UI queue (governance/audit trail preserved)."""
+        dismissed = set(st.session_state[_K_DISMISSED_PROPOSALS])
+        dismissed.add(proposal_id)
+        st.session_state[_K_DISMISSED_PROPOSALS] = dismissed
+
+    def undismiss_proposal(self, proposal_id: str) -> None:
+        """Restore a dismissed proposal to the UI queue."""
+        dismissed = set(st.session_state[_K_DISMISSED_PROPOSALS])
+        dismissed.discard(proposal_id)
+        st.session_state[_K_DISMISSED_PROPOSALS] = dismissed
+
     # ------------------------------------------------------------------
     # Session persistence
     # ------------------------------------------------------------------
@@ -411,3 +431,4 @@ class StateManager:
         st.session_state[_K_PROPOSED_EDGES] = None
         st.session_state[_K_PROPOSAL_VERSION] = 0
         st.session_state[_K_LAST_SAVED_HASH] = None
+        st.session_state[_K_DISMISSED_PROPOSALS] = set()

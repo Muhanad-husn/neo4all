@@ -19,10 +19,12 @@ computed value is stable for the model's lifetime.
 
 State machine:
     pending → approved | rejected | deferred
+    approved → executed
 
-Only a Proposal in "pending" state may transition.  The transition is performed
-by ProposalService (api/proposals/service.py) — models are immutable (frozen)
-so transitions return new model instances.
+Only a Proposal in "pending" state may transition to approved/rejected/deferred.
+An approved proposal may transition to "executed" after Agent-C applies the diff.
+The transition is performed by ProposalService (api/proposals/service.py) — models
+are immutable (frozen) so transitions return new model instances.
 """
 
 from __future__ import annotations
@@ -74,12 +76,14 @@ class ProposalState(StrEnum):
 
     pending:  Initial state.  Awaiting human approval.
     approved: Approved by an authorised human actor.  Diff may now be applied.
+    executed: Diff has been applied by Agent-C.  Terminal — no further transitions.
     rejected: Explicitly rejected.  No further transitions permitted.
     deferred: Acknowledged but set aside.  Can be re-opened (pending) later.
     """
 
     pending = "pending"
     approved = "approved"
+    executed = "executed"
     rejected = "rejected"
     deferred = "deferred"
 
@@ -89,7 +93,8 @@ _VALID_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
     ProposalState.pending: frozenset(
         {ProposalState.approved, ProposalState.rejected, ProposalState.deferred}
     ),
-    ProposalState.approved: frozenset(),   # terminal
+    ProposalState.approved: frozenset({ProposalState.executed}),
+    ProposalState.executed: frozenset(),   # terminal
     ProposalState.rejected: frozenset(),   # terminal
     ProposalState.deferred: frozenset({ProposalState.pending}),  # re-openable
 }

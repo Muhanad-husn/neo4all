@@ -236,12 +236,14 @@ def test_rejected_proposal_cannot_be_approved() -> None:
     assert not _make_packet(state=ProposalState.rejected).can_transition_to(ProposalState.approved)
 
 
-def test_approved_is_terminal_no_outgoing_transitions() -> None:
-    """An approved proposal has no valid outgoing transitions."""
+def test_approved_can_only_transition_to_executed() -> None:
+    """An approved proposal can only transition to executed."""
     packet = _make_packet(state=ProposalState.approved)
-    assert allowed_transitions(ProposalState.approved) == frozenset()
+    assert allowed_transitions(ProposalState.approved) == frozenset({ProposalState.executed})
+    assert packet.can_transition_to(ProposalState.executed) is True
     for state in ProposalState:
-        assert not packet.can_transition_to(state)
+        if state != ProposalState.executed:
+            assert not packet.can_transition_to(state)
 
 
 def test_rejected_is_terminal_no_outgoing_transitions() -> None:

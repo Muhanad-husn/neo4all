@@ -239,9 +239,18 @@ def test_pending_can_transition_to_all_non_pending(target_state: ProposalState) 
     assert packet.can_transition_to(target_state) is True
 
 
-def test_approved_has_no_valid_transitions() -> None:
-    """An approved proposal cannot transition to any state (terminal)."""
+def test_approved_can_only_transition_to_executed() -> None:
+    """An approved proposal can only transition to executed."""
     packet = _make_packet(state=ProposalState.approved)
+    assert packet.can_transition_to(ProposalState.executed) is True
+    for state in ProposalState:
+        if state != ProposalState.executed:
+            assert packet.can_transition_to(state) is False
+
+
+def test_executed_has_no_valid_transitions() -> None:
+    """An executed proposal cannot transition to any state (terminal)."""
+    packet = _make_packet(state=ProposalState.executed)
     for state in ProposalState:
         assert packet.can_transition_to(state) is False
 
@@ -267,6 +276,20 @@ def test_allowed_transitions_from_pending() -> None:
     assert ProposalState.rejected in targets
     assert ProposalState.deferred in targets
     assert ProposalState.pending not in targets
+
+
+def test_allowed_transitions_from_approved() -> None:
+    """allowed_transitions(approved) returns only {executed}."""
+    targets = allowed_transitions(ProposalState.approved)
+    assert targets == frozenset({ProposalState.executed})
+    assert len(targets) == 1
+
+
+def test_allowed_transitions_from_executed() -> None:
+    """allowed_transitions(executed) returns empty set (terminal)."""
+    targets = allowed_transitions(ProposalState.executed)
+    assert targets == frozenset()
+    assert len(targets) == 0
 
 
 def test_invalid_transition_error_carries_states() -> None:

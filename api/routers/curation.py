@@ -549,6 +549,20 @@ async def execute_proposal(
     agent = ExecutionAgent()
     audit_record = await agent.execute(diff=diff, approval_id=approval_id, actor=actor)
 
+    # 5. Best-effort: mark proposal as executed after successful application.
+    #    A failure here must not mask a successful graph mutation — the audit
+    #    record is already written and is the source of truth.
+    if str(audit_record.outcome) == "applied":
+        try:
+            await service.transition(run_id, proposal_id, ProposalState.executed)
+        except Exception:
+            logger.warning(
+                "curation_execute_transition_failed",
+                proposal_id=proposal_id,
+                run_id=run_id,
+                detail="Could not mark proposal as executed after successful apply",
+            )
+
     logger.info(
         "curation_execute_complete",
         proposal_id=proposal_id,
