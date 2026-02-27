@@ -107,6 +107,7 @@ AI agents compose proposals but never: execute mutations, generate Cypher, acces
 | `rel_dedupe_key` | `(RelType, start_key, end_key, schema_version)` |
 | `proposal_id` | `(run_id, candidate_id, proposal_class)` |
 | `diff_id` | hash of diff content |
+| `user_hash` | `SHA-256(neo4j_uri + NUL + neo4j_user)` — session key scope |
 
 **Never use `uuid4()` for governed artifact IDs.**
 

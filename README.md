@@ -110,6 +110,14 @@ FastAPI auto-generates interactive docs at:
 
 ### Endpoints
 
+#### Session (Phase 0)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/session/{user_hash}` | Retrieve persisted session record |
+| POST | `/api/session/save` | Persist session state to Redis |
+| DELETE | `/api/session/{user_hash}` | Clear persisted session ("New Session") |
+
 #### Health & Monitoring
 
 | Method | Path | Description |
@@ -172,6 +180,19 @@ FastAPI auto-generates interactive docs at:
 | GET | `/api/graph/nodes/{run_id}` | Paginated node browser (max 50/page, filterable by node_type) |
 | GET | `/api/graph/edges/{run_id}/count` | Total edge count by type for a run |
 | GET | `/api/graph/edges/{run_id}` | Paginated edge browser (max 50/page, filterable by edge_type) |
+
+---
+
+## Phase 0: Session Initialization & Persistence
+
+On startup, Phase 0 collects Neo4j Aura credentials and the OpenRouter API key. These are written to `.env` for the API backend and stored in Streamlit session state via `StateManager`.
+
+**Session memory**: Session metadata (run_id, phase, schema_version, timestamp_seed, neo4j_uri, neo4j_user) is persisted to Redis so the user can resume where they left off after closing the browser. On app startup, the UI automatically restores the previous session if one exists. A "New Session" sidebar button clears the saved session and returns to Phase 0.
+
+- Session key: `session:{user_hash}` where `user_hash = SHA-256(neo4j_uri + NUL + neo4j_user)`
+- No credentials (passwords, API keys) are stored in Redis — only in `.env` / env vars
+- Session save is fire-and-forget on every Streamlit rerun (dirty-check gated)
+- Session restore fails open — if Redis is down, Phase 0 is shown normally
 
 ---
 
