@@ -60,7 +60,7 @@ from api.routers.evidence_models import (
     _to_chunk_out,
 )
 from api.schema.models import SchemaVersion
-from api.vector.retriever import EvidenceChunk, EvidenceRetriever
+from api.vector.retriever import EvidenceChunk, get_evidence_retriever
 
 logger = get_logger(__name__)
 
@@ -165,9 +165,43 @@ async def get_evidence_for_candidate(
             message=f"Candidate '{candidate_id}' not found in cache for run '{run_id}'.",
         )
 
-    # 3. Retrieve evidence for each involved element (graceful on Qdrant errors).
+    # 3. Check Qdrant collection exists before searching.
     dedupe_keys = candidate.involved_element_refs
-    retriever = EvidenceRetriever()
+    retriever = get_evidence_retriever()
+
+    collection_info = await retriever.check_collection(run_id)
+    if not collection_info["exists"]:
+        qdrant_error = collection_info.get("error")
+        if qdrant_error:
+            logger.error(
+                "evidence_qdrant_error",
+                run_id=run_id,
+                candidate_id=candidate_id,
+                error=qdrant_error,
+            )
+            return EvidenceCandidateResponse(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                status="success",
+                chunks=[],
+                dedupe_keys=list(dedupe_keys),
+                qdrant_status=f"error: {qdrant_error}",
+            )
+        logger.warning(
+            "evidence_collection_not_found",
+            run_id=run_id,
+            candidate_id=candidate_id,
+        )
+        return EvidenceCandidateResponse(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            status="success",
+            chunks=[],
+            dedupe_keys=list(dedupe_keys),
+            qdrant_status="collection_not_found",
+        )
+
+    # 4. Retrieve evidence for each involved element (graceful on Qdrant errors).
     chunk_lists: list[list[EvidenceChunk]] = []
     for dk in dedupe_keys:
         chunks = await retriever.by_dedupe_key(
@@ -183,6 +217,7 @@ async def get_evidence_for_candidate(
         candidate_id=candidate_id,
         dedupe_key_count=len(dedupe_keys),
         chunk_count=len(merged),
+        qdrant_point_count=collection_info["point_count"],
     )
 
     return EvidenceCandidateResponse(
@@ -191,6 +226,7 @@ async def get_evidence_for_candidate(
         status="success",
         chunks=merged,
         dedupe_keys=list(dedupe_keys),
+        qdrant_status=f"ok ({collection_info['point_count']} points)",
     )
 
 
@@ -255,7 +291,7 @@ async def query_evidence(
             ],
         )
 
-    retriever = EvidenceRetriever()
+    retriever = get_evidence_retriever()
     chunks: list[EvidenceChunk] = []
 
     if mode == "dedupe_key":

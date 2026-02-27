@@ -292,6 +292,7 @@ class EvidenceRetriever:
             return []
 
         # Search Qdrant — filter to this run to prevent cross-run leakage.
+        # Uses query_points() (qdrant-client >= 1.12 removed the deprecated search()).
         try:
             from qdrant_client.models import FieldCondition, Filter, MatchValue  # type: ignore[import-untyped]
 
@@ -299,14 +300,15 @@ class EvidenceRetriever:
                 must=[FieldCondition(key="run_id", match=MatchValue(value=run_id))]
             )
             client = self._get_qdrant_client()
-            hits = await client.search(
+            result = await client.query_points(
                 collection_name=collection,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=run_filter,
                 limit=top_k,
                 with_payload=True,
                 with_vectors=False,
             )
+            hits = result.points
         except Exception as exc:
             logger.error(
                 "evidence_retrieval_error",
@@ -330,6 +332,34 @@ class EvidenceRetriever:
             count=len(chunks),
         )
         return chunks  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Public: collection diagnostics
+    # ------------------------------------------------------------------
+
+    async def check_collection(self, run_id: str) -> dict[str, Any]:
+        """Check if the Qdrant collection for a run exists and return point count.
+
+        Returns a diagnostic dict:
+            {"exists": bool, "point_count": int, "error": str | None}
+
+        Never raises — returns error detail in the dict.
+        """
+        collection = f"chunks_{run_id}"
+        try:
+            client = self._get_qdrant_client()
+            info = await client.get_collection(collection_name=collection)
+            return {
+                "exists": True,
+                "point_count": info.points_count or 0,
+                "error": None,
+            }
+        except Exception as exc:
+            error_str = str(exc)
+            # Qdrant returns specific errors for missing collections
+            if "not found" in error_str.lower() or "doesn't exist" in error_str.lower():
+                return {"exists": False, "point_count": 0, "error": None}
+            return {"exists": False, "point_count": 0, "error": error_str}
 
     # ------------------------------------------------------------------
     # Internal: Qdrant client
@@ -448,3 +478,23 @@ def _parse_primary_value(dedupe_key: str) -> str:
     if len(parts) >= 2:
         return parts[1]
     return dedupe_key
+
+
+# ---------------------------------------------------------------------------
+# Process-level singleton factory
+# ---------------------------------------------------------------------------
+
+_retriever_instance: EvidenceRetriever | None = None
+
+
+def get_evidence_retriever() -> EvidenceRetriever:
+    """Return the process-level EvidenceRetriever singleton.
+
+    Created on first call (lazy).  Reuses the same Qdrant client and
+    embedding model across requests — consistent with VectorIndexer's
+    get_vector_indexer() pattern.
+    """
+    global _retriever_instance
+    if _retriever_instance is None:
+        _retriever_instance = EvidenceRetriever()
+    return _retriever_instance

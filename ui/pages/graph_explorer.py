@@ -67,6 +67,18 @@ def _fetch(
 # ---------------------------------------------------------------------------
 
 
+def _parse_primary_value(dedupe_key: str) -> str:
+    """Extract the primary value from a pipe-delimited dedupe key.
+
+    Node dedupe keys follow the format ``NodeType|primary_value|schema_version``.
+    Returns the middle segment, or the truncated key if no pipes are present.
+    """
+    parts = dedupe_key.split("|")
+    if len(parts) >= 3:
+        return parts[1]
+    return dedupe_key[:40]
+
+
 def _show_api_error(data: dict[str, Any]) -> None:
     """Render structured API error details."""
     for e in data.get("errors", []):
@@ -198,6 +210,7 @@ def _render_node_browser(run_id: str) -> None:
         {
             "Node type": item.get("node_type", ""),
             "Dedupe key": item.get("dedupe_key", "")[:50],
+            "Primary value": item.get("properties", {}).get("_primary_value", ""),
             "Schema version": item.get("schema_version", "")[:12] + "…",
             "Properties (preview)": str(item.get("properties", {}))[:80],
         }
@@ -298,8 +311,8 @@ def _render_edge_browser(run_id: str) -> None:
     rows = [
         {
             "Rel type": item.get("rel_type", ""),
-            "Start node": item.get("start_dedupe_key", "")[:40],
-            "End node": item.get("end_dedupe_key", "")[:40],
+            "Start node": _parse_primary_value(item.get("start_dedupe_key", "")),
+            "End node": _parse_primary_value(item.get("end_dedupe_key", "")),
             "Schema version": item.get("schema_version", "")[:12] + "…",
             "Properties (preview)": str(item.get("properties", {}))[:60],
         }

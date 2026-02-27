@@ -69,14 +69,18 @@ class EvidenceCandidateResponse(BaseResponse):
     """Response for GET /evidence/{candidate_id}.
 
     Attributes:
-        candidate_id:  The candidate whose evidence was retrieved.
-        chunks:        Evidence chunks sorted by descending relevance_score.
-        dedupe_keys:   The element dedupe_keys that were queried.
+        candidate_id:   The candidate whose evidence was retrieved.
+        chunks:         Evidence chunks sorted by descending relevance_score.
+        dedupe_keys:    The element dedupe_keys that were queried.
+        qdrant_status:  Diagnostic: Qdrant collection state for this run.
+                        "ok (N points)" on success, "collection_not_found" if the
+                        collection does not exist, or "error: ..." on Qdrant failure.
     """
 
     candidate_id: str = ""
     chunks: list[EvidenceChunkOut] = []
     dedupe_keys: list[str] = []
+    qdrant_status: str = ""
 
 
 class EvidenceQueryRequest(BaseModel):

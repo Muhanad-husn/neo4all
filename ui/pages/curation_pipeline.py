@@ -76,12 +76,24 @@ def _render_evidence_panel(candidate_id: str, run_id: str) -> None:
 
     chunks: list[dict[str, Any]] = data.get("chunks", [])
     dedupe_keys: list[str] = data.get("dedupe_keys", [])
+    qdrant_status: str = data.get("qdrant_status", "")
 
     if dedupe_keys:
         st.caption(f"Queried {len(dedupe_keys)} element key(s) from Qdrant.")
 
+    if qdrant_status:
+        st.caption(f"Qdrant: {qdrant_status}")
+
     if not chunks:
-        st.info("No evidence chunks found. Qdrant may not have been indexed for this run.")
+        if "collection_not_found" in qdrant_status:
+            st.warning(
+                "Qdrant collection not found for this run. "
+                "Chunks may not have been indexed — try re-ingesting the document."
+            )
+        elif qdrant_status.startswith("error:"):
+            st.error(f"Qdrant error: {qdrant_status}")
+        else:
+            st.info("No evidence chunks found for this candidate's elements.")
         return
 
     st.caption(f"{len(chunks)} chunk(s) retrieved — top 5 shown:")

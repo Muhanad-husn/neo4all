@@ -77,8 +77,18 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 
 def _primary_value(node: GraphNodeRecord, prop: str) -> str:
-    """Primary property value as lower-cased, stripped string (empty if absent)."""
+    """Primary property value as lower-cased, stripped string (empty if absent).
+
+    Checks the schema-defined property name first (e.g. ``"name"``), then
+    falls back to the ``_primary_value`` governance property that the graph
+    writer always sets during extraction.  This handles the common case where
+    the LLM extraction stores the entity name as ``ExtractedNode.primary_value``
+    (written to Neo4j as ``_primary_value``) rather than duplicating it inside
+    the ``properties`` dict under the schema key.
+    """
     raw = node.properties.get(prop)
+    if raw is None:
+        raw = node.properties.get("_primary_value")
     return str(raw).lower().strip() if raw is not None else ""
 
 
