@@ -27,6 +27,7 @@ Utility views (sidebar selector, available after Phase 0):
 """
 
 import hashlib
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -39,8 +40,10 @@ from ui.state import StateManager
 # .env credential bridge (Phase 0 → API)
 # ---------------------------------------------------------------------------
 
-# Base URL for API requests — matches the default uvicorn bind in api/main.py.
-_API_BASE_URL = "http://localhost:8000"
+# Base URL for API requests. In Docker the UI container reaches the API via
+# the service name (API_BASE_URL=http://api:8000); locally falls back to
+# localhost.
+_API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 # Mapping from Phase 0 form fields to the env-var key names that may appear in
 # .env. The first match wins during line-by-line replacement; all aliases are
