@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/dark-mode-logo.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/light-mode-logo.png">
+  <img alt="neo4all" src="docs/light-mode-logo.png" width="180">
+</picture>
+
 # neo4all — AI-Powered Graph Extraction & Curation Platform
 
 A session-based, AI-assisted web application that transforms documents into a curated knowledge graph in Neo4j. Every graph mutation flows through a governed pipeline: `Proposal → Human Approval → Deterministic Diff → Execution → Audit`.

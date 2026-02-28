@@ -32,9 +32,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
+from PIL import Image
 
 from api.models.run import Phase
 from ui.state import StateManager
+
+# ---------------------------------------------------------------------------
+# Logo paths (resolved relative to this file so they work regardless of cwd)
+# ---------------------------------------------------------------------------
+_DOCS_DIR = Path(__file__).parent.parent / "docs"
+_LOGO_DARK = _DOCS_DIR / "dark-mode-logo.png"
+_LOGO_LIGHT = _DOCS_DIR / "light-mode-logo.png"
 
 # ---------------------------------------------------------------------------
 # .env credential bridge (Phase 0 → API)
@@ -312,7 +320,7 @@ def _render_sidebar(state: StateManager) -> str | None:
     view_override: str | None = None
 
     with st.sidebar:
-        st.title("neo4all")
+        st.image(str(_LOGO_DARK), width=160)
         st.caption("AI-Powered Graph Curation")
         st.divider()
 
@@ -419,7 +427,12 @@ def _render_phase_init(state: StateManager) -> None:
     made here — credentials are stored in StateManager for use by later
     phases when constructing API requests (SKILL-B).
     """
-    st.title("Phase 0 — Session Initialization")
+    col_logo, col_title = st.columns([1, 4])
+    with col_logo:
+        st.image(str(_LOGO_DARK), width=120)
+    with col_title:
+        st.title("neo4all")
+        st.caption("Phase 0 — Session Initialization")
     st.write(
         "Enter your connection details to start a new extraction and curation session. "
         "Credentials are saved to the local `.env` file so the API backend can use them."
@@ -569,7 +582,7 @@ def main() -> None:
     """Application entry point, called by Streamlit on every script rerun."""
     st.set_page_config(
         page_title="neo4all",
-        page_icon=None,
+        page_icon=Image.open(_LOGO_LIGHT),
         layout="wide",
         initial_sidebar_state="expanded",
     )
