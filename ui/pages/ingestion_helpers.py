@@ -30,7 +30,12 @@ _API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
 _REQUEST_TIMEOUT_FAST: float = 5.0
 _REQUEST_TIMEOUT_SLOW: float = 120.0  # document parsing via Docling can be slow
 
-_ACCEPTED_EXTENSIONS: list[str] = ["pdf", "docx"]
+_ACCEPTED_EXTENSIONS: list[str] = [
+    "pdf", "docx", "pptx", "xlsx", "csv", "tsv",
+    "html", "htm", "txt", "md", "rst", "rtf",
+    "odt", "msg", "eml", "epub",
+    "png", "jpg", "jpeg", "tiff", "bmp",
+]
 
 # Quality flag display — presentation constants only, not business rules.
 _FLAG_LABELS: dict[str, str] = {
@@ -271,7 +276,7 @@ def _handle_ingest(
     if not file_bytes:
         st.error(
             f"The file '{filename}' appears to be empty. "
-            "Please select a non-empty PDF or DOCX document."
+            "Please select a non-empty document."
         )
         return
 

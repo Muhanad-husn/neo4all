@@ -7,7 +7,7 @@ These are the three-tier parser implementations for the IngestorService:
   - _detect_file_type:       Extension + magic-byte file type detection.
   - _parse_with_docling:     Tier 1 — Docling full-fidelity Markdown export.
   - _parse_with_unstructured: Tier 2 — Unstructured auto-partition.
-  - _parse_with_raw_text:    Tier 3 — PyPDF2 / python-docx flat text.
+  - _parse_with_raw_text:    Tier 3 — PyPDF2 / python-docx / plain text.
 
 All functions are synchronous and stateless.  IngestorService runs them
 via asyncio.to_thread() in the fallback chain.
@@ -43,26 +43,76 @@ def _derive_doc_id(run_id: str, source_identity: str, content_hash: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Format category constants
+# ---------------------------------------------------------------------------
+
+_TEXT_EXTENSIONS: frozenset[str] = frozenset({
+    ".txt", ".md", ".rst", ".csv", ".tsv",
+    ".html", ".htm", ".xml", ".json", ".log",
+})
+
+_ZIP_OFFICE_EXTENSIONS: frozenset[str] = frozenset({
+    ".docx", ".pptx", ".xlsx", ".odt", ".epub",
+})
+
+
+# ---------------------------------------------------------------------------
 # Internal: file type detection
 # ---------------------------------------------------------------------------
 
 def _detect_file_type(source_identity: str, file_bytes: bytes) -> str:
-    """Return 'pdf', 'docx', or 'unknown'.
+    """Return ``'pdf'``, ``'docx'``, ``'text'``, or ``'unknown'``.
 
-    Checks the filename extension first (fast path), then falls back to
-    magic-byte detection for files whose extension is absent or non-standard.
+    Detection priority:
+      1. Filename extension (fast path).
+      2. Magic-byte heuristic for extensionless or ambiguous files.
+
+    Extension mapping:
+      - ``.pdf``                               → ``'pdf'``
+      - ``.docx``                              → ``'docx'``
+      - ``.txt .md .rst .csv .tsv .html .htm
+         .xml .json .log``                     → ``'text'``
+      - ``.pptx .xlsx .odt .epub`` (and other
+        ZIP-based Office formats)              → ``'unknown'``
+      - Any other recognised extension         → ``'unknown'``
+
+    Magic-byte fallback (no matching extension):
+      - ``%PDF``                               → ``'pdf'``
+      - ``PK\\x03\\x04``  (ZIP header)         → ``'docx'``
+      - Valid UTF-8 content                    → ``'text'``
+      - Anything else                          → ``'unknown'``
     """
     suffix = Path(source_identity).suffix.lower()
+
+    # Extension-based fast path
     if suffix == ".pdf":
         return "pdf"
     if suffix == ".docx":
         return "docx"
-    # Magic bytes
+    if suffix in _TEXT_EXTENSIONS:
+        return "text"
+    if suffix in _ZIP_OFFICE_EXTENSIONS:
+        # Non-DOCX ZIP-based formats — Tier 1/2 may handle them,
+        # but raw-text fallback cannot.
+        return "unknown"
+    if suffix:
+        # Known extension but not in our categories
+        return "unknown"
+
+    # No recognised extension — fall back to magic bytes
     if file_bytes[:4] == b"%PDF":
         return "pdf"
     if file_bytes[:4] == b"PK\x03\x04":
         # ZIP-based Office format — best-effort guess is DOCX
         return "docx"
+
+    # UTF-8 heuristic for extensionless files
+    try:
+        file_bytes.decode("utf-8")
+        return "text"
+    except UnicodeDecodeError:
+        pass
+
     return "unknown"
 
 
@@ -150,7 +200,8 @@ def _parse_with_unstructured(file_bytes: bytes, source_identity: str) -> str:
 
 
 def _parse_with_raw_text(file_bytes: bytes, source_identity: str) -> str:
-    """Tier 3: extract flat text with PyPDF2 (PDF) or python-docx (DOCX).
+    """Tier 3: extract flat text with PyPDF2 (PDF), python-docx (DOCX), or
+    direct decode (plain-text formats).
 
     This tier produces no structural metadata.  Every chunk derived from
     its output must carry ChunkQualityFlag.raw_fallback — that flag is set
@@ -188,10 +239,16 @@ def _parse_with_raw_text(file_bytes: bytes, source_identity: str) -> str:
             para.text for para in doc.paragraphs if para.text.strip()
         )
 
+    elif file_type == "text":
+        try:
+            text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("latin-1")
+
     else:
         raise ValueError(
             f"unsupported file type for raw fallback: {source_identity!r}. "
-            "Expected a .pdf or .docx file."
+            "Expected a PDF, DOCX, or text-based file."
         )
 
     if not text.strip():

@@ -14,8 +14,10 @@ IngestorService parses uploaded documents using a cascading strategy:
 
   Tier 3 — Raw text (tertiary):
     Activated when Unstructured also fails.  PyPDF2 for PDF files; python-docx
-    for DOCX files.  Flat text only — no structural metadata.  Every chunk
-    produced from a raw-fallback parse carries ChunkQualityFlag.raw_fallback.
+    for DOCX files; direct UTF-8/Latin-1 decode for plain-text formats
+    (.txt, .md, .csv, .html, etc.).  Flat text only — no structural metadata.
+    Every chunk produced from a raw-fallback parse carries
+    ChunkQualityFlag.raw_fallback.
 
   Hard reject:
     If all enabled tiers fail, IngestorService raises IngestionError.

@@ -1,12 +1,13 @@
 """
 ui/pages/ingestion.py — Phase 2: Document Ingestion & Chunking (SPEC-03 S-03.7).
 
-Users upload PDF or DOCX documents. Each upload is forwarded to
+Users upload documents in a wide range of formats (PDF, DOCX, PPTX, XLSX,
+CSV, HTML, TXT, Markdown, images, and more). Each upload is forwarded to
 POST /api/documents/ingest, which runs the three-tier parser chain
 (Docling → Unstructured → raw text) and indexes resulting chunks in Qdrant.
 
 The page renders four sequential steps:
-  1. Upload panel — st.file_uploader accepting PDF/DOCX + Ingest button.
+  1. Upload panel — st.file_uploader accepting many document formats + Ingest button.
   2. Document list — read-only st.dataframe of all ingested documents for
      this run, fetched fresh from GET /api/documents/{run_id} each render.
   3. Chunk manifest viewer — per-document expandable chunk metadata table
@@ -59,17 +60,18 @@ from ui.state import StateManager
 def _render_upload_section(state: StateManager) -> None:
     """Render the file uploader and Ingest Document button.
 
-    Accepts PDF and DOCX files (enforced by Streamlit's type= filter).
-    The Ingest button is disabled until a file is selected. No parsing or
-    chunking logic exists here — all domain processing is on the backend
-    (SKILL-B). Displays file name and size when a file is selected.
+    Accepts a wide range of document formats (enforced by Streamlit's
+    type= filter). The Ingest button is disabled until a file is selected.
+    No parsing or chunking logic exists here — all domain processing is on
+    the backend (SKILL-B). Displays file name and size when a file is selected.
 
     Args:
         state: Live StateManager instance.
     """
     st.subheader("Step 1: Upload a Document")
     st.write(
-        "Select a PDF or DOCX file to ingest. "
+        "Select a file to ingest. Supported formats include PDF, DOCX, PPTX, "
+        "XLSX, CSV, HTML, TXT, Markdown, images, and more. "
         "The backend parses, chunks, and indexes it automatically. "
         "Upload multiple documents one at a time."
     )
@@ -77,7 +79,10 @@ def _render_upload_section(state: StateManager) -> None:
     uploaded_file = st.file_uploader(
         "Choose a file",
         type=_ACCEPTED_EXTENSIONS,
-        help="Accepted formats: PDF, DOCX.",
+        help=(
+            "Accepted formats: PDF, DOCX, PPTX, XLSX, CSV, TSV, HTML, TXT, "
+            "MD, RST, RTF, ODT, MSG, EML, EPUB, PNG, JPG, TIFF, BMP."
+        ),
         label_visibility="collapsed",
     )
 
@@ -90,7 +95,7 @@ def _render_upload_section(state: StateManager) -> None:
     else:
         # Render a disabled button with explanatory caption when no file is chosen.
         st.button("Ingest Document", type="primary", disabled=True)
-        st.caption("Select a PDF or DOCX file above to enable ingestion.")
+        st.caption("Select a file above to enable ingestion.")
 
 
 # ---------------------------------------------------------------------------

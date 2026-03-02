@@ -150,7 +150,7 @@ FastAPI auto-generates interactive docs at:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded PDF or DOCX document |
+| POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded document |
 | GET | `/api/documents/{run_id}` | List all successfully ingested documents for a run |
 | GET | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
 
@@ -229,11 +229,11 @@ No prompt strings are inlined in service code. Templates are immutable once used
 
 Once a schema is locked, source documents can be uploaded and indexed. The workflow is:
 
-1. **Upload a document** — select a PDF or DOCX file in the Phase 2 UI. Multiple documents can be uploaded one at a time.
+1. **Upload a document** — select a file in the Phase 2 UI. Supported formats include PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT, Markdown, images, and more. Multiple documents can be uploaded one at a time.
 2. **Three-tier parser fallback** — the backend attempts each enabled parser in order and uses the first that succeeds:
-   - **Docling** (primary) — full structural parsing: titles, paragraphs, tables, images, captions. Exports Markdown for high-fidelity chunking.
+   - **Docling** (primary) — full structural parsing: titles, paragraphs, tables, images, captions. Exports Markdown for high-fidelity chunking. Natively handles PDF, DOCX, PPTX, XLSX, HTML, images, and more.
    - **Unstructured** (secondary) — broad format support; activated automatically when Docling raises an exception or returns empty output.
-   - **Raw text** (tertiary) — PyPDF2 (PDF) or python-docx (DOCX) flat extraction. No structural metadata. All chunks from this tier carry the `raw_fallback` quality flag.
+   - **Raw text** (tertiary) — PyPDF2 (PDF), python-docx (DOCX), or direct UTF-8/Latin-1 decode (plain-text formats: TXT, MD, CSV, HTML, JSON, etc.). No structural metadata. All chunks from this tier carry the `raw_fallback` quality flag.
    - If all enabled tiers fail → hard reject with a structured error response.
 3. **Semantic chunking** — extracted text is segmented respecting headings (chunk boundaries), table isolation (always standalone), and configurable character/token limits. `chunk_id = SHA-256(doc_id + start_page + chunk_index)` — fully deterministic.
 4. **Quality flags** — soft signals attached per chunk at ingestion time (processing continues):

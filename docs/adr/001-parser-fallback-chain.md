@@ -8,7 +8,7 @@
 
 ## Context
 
-The platform ingests heterogeneous documents (PDF, DOCX) into a knowledge graph pipeline. Documents vary widely in quality: some are well-structured with headings, tables, and captions; others are scanned images with OCR artifacts; others are malformed or use non-standard encodings.
+The platform ingests heterogeneous documents (PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT, Markdown, images, and more) into a knowledge graph pipeline. Documents vary widely in quality: some are well-structured with headings, tables, and captions; others are scanned images with OCR artifacts; others are malformed or use non-standard encodings.
 
 A single parser cannot reliably handle this diversity. Docling provides the richest structural output but fails on certain file formats and edge cases. Unstructured covers a broader range but produces less granular metadata. Raw text extraction (PyPDF2/python-docx) always succeeds on valid files but loses all structural information.
 
@@ -20,7 +20,7 @@ Implement a three-tier parser fallback chain in `api/services/ingestion.py` (`In
 
 1. **Tier 1 — Docling** (primary): Full structural parsing producing titles, paragraphs, tables, images, and captions as typed elements. Preferred when available.
 2. **Tier 2 — Unstructured** (secondary): Activated when Docling raises an exception or returns empty/null output. Produces structural elements with less granularity than Docling.
-3. **Tier 3 — Raw text** (tertiary): PyPDF2 for PDF, python-docx for DOCX. Flat text extraction with no structural metadata. All chunks produced from this tier are stamped with `quality_flag: "raw_fallback"`.
+3. **Tier 3 — Raw text** (tertiary): PyPDF2 for PDF, python-docx for DOCX, direct UTF-8/Latin-1 decode for plain-text formats (.txt, .md, .csv, .html, etc.). Flat text extraction with no structural metadata. All chunks produced from this tier are stamped with `quality_flag: "raw_fallback"`.
 
 Rules:
 - Each tier transition is logged as a structured event (`parser_failed` WARNING + `fallback_triggered` WARNING) with `from_parser` and `to_parser` fields per SKILL-D.

@@ -98,7 +98,7 @@ async def ingest_document(
             "parser configuration are unchanged."
         ),
     ),
-    file: UploadFile = File(..., description="Document to ingest (PDF or DOCX)"),
+    file: UploadFile = File(..., description="Document to ingest"),
     ingestor: IngestorService = Depends(get_ingestor_service),
     artifacts: ArtifactsService = Depends(get_artifacts_service),
     chunker: ChunkingService = Depends(get_chunking_service),
@@ -156,7 +156,7 @@ async def ingest_document(
             errors=[
                 ErrorDetail(
                     code="empty_file",
-                    message="Uploaded file is empty. A non-empty PDF or DOCX file is required.",
+                    message="Uploaded file is empty. A non-empty document is required.",
                 )
             ],
         )

@@ -54,9 +54,10 @@ class ChunkQualityFlag(StrEnum):
                              threshold.  Typically indicates a scanned image or
                              a near-blank page.
         raw_fallback:        Chunk was produced by the tertiary raw-text parser
-                             (PyPDF2 / python-docx) after both Docling and
-                             Unstructured failed.  No structural metadata is
-                             present; quality cannot be assessed.
+                             (PyPDF2 / python-docx / plain-text decode) after
+                             both Docling and Unstructured failed.  No
+                             structural metadata is present; quality cannot be
+                             assessed.
     """
 
     low_ocr_confidence = "low_ocr_confidence"

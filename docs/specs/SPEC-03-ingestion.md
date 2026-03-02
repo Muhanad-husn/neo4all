@@ -17,7 +17,7 @@ Implement Phase 2: users upload documents, the system parses and chunks them wit
 Create `api/services/ingestion.py` — `IngestorService` with three-tier parsing:
 1. **Primary — Docling**: Full structural parsing (titles, paragraphs, tables, images, captions).
 2. **Secondary — Unstructured**: Activated if Docling raises an exception or returns empty/null.
-3. **Tertiary — Raw text**: PyPDF2 (PDF) or python-docx (DOCX). Flat text, no structural metadata. All chunks get `quality_flag: "raw_fallback"`.
+3. **Tertiary — Raw text**: PyPDF2 (PDF), python-docx (DOCX), or direct UTF-8/Latin-1 decode (plain-text formats: .txt, .md, .csv, .html, etc.). Flat text, no structural metadata. All chunks get `quality_flag: "raw_fallback"`.
 
 Each fallback transition logged as structured event with reason (SKILL-D). `parser_used` recorded in manifest. All three fail → hard-reject with structured error. Parsers individually toggleable via `api/config.py`.
 
