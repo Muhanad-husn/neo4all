@@ -1,16 +1,89 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/dark-mode-logo.png">
-  <source media="(prefers-color-scheme: light)" srcset="docs/light-mode-logo.png">
-  <img alt="neo4all" src="docs/light-mode-logo.png" width="180">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/dark-mode-logo.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/light-mode-logo.png">
+    <img alt="neo4all" src="docs/light-mode-logo.png" width="220">
+  </picture>
+</p>
 
-# neo4all — AI-Powered Graph Extraction & Curation Platform
+<h1 align="center">neo4all</h1>
 
-A session-based, AI-assisted web application that transforms documents into a curated knowledge graph in Neo4j. Every graph mutation flows through a governed pipeline: `Proposal → Human Approval → Deterministic Diff → Execution → Audit`.
+<p align="center">
+  <strong>Turn any document into a governed knowledge graph. No Cypher. No guesswork. Full audit trail.</strong>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#how-it-works">How It Works</a> &middot;
+  <a href="#api">API Reference</a> &middot;
+  <a href="https://github.com/Muhanad-husn/neo4all/issues">Issues</a>
+</p>
 
 ---
 
-## Current Status
+## What is neo4all?
+
+Most knowledge graph tools ask you to write Cypher, wrangle ETL pipelines, and hope the AI didn't hallucinate bad relationships into your data. **neo4all takes a different approach.**
+
+Drop in your documents — PDFs, DOCX, spreadsheets, HTML, images, whatever you have — and neo4all's AI extracts entities and relationships into Neo4j, then **surfaces every data quality issue for you to review before anything touches the graph.** Merges, deduplication, canonical fixes: every mutation flows through a governed pipeline with human approval and a permanent audit trail.
+
+**This is knowledge graph construction you can actually trust.**
+
+### Why neo4all?
+
+- **AI does the heavy lifting, humans keep control.** AI proposes schema, extracts entities, and suggests fixes — but nothing changes in your graph without explicit approval.
+- **20+ file formats out of the box.** Three-tier parser fallback (Docling → Unstructured → raw text) means nearly anything you throw at it just works.
+- **Deterministic by design.** Same input always produces the same IDs, same diffs, same candidates. No `uuid4()` randomness. Every artifact is reproducible.
+- **Five zero-LLM quality detectors** catch exact duplicates, probable duplicates (Jaro-Winkler), schema violations, orphan nodes, and structural anomalies — before any AI curation runs.
+- **Full governed pipeline**: `Proposal → Approval → Diff → Execution → Audit`. Two-phase confirmation for dangerous operations (merge, delete). Dry-run mode for zero-risk validation.
+- **Open source. Run it locally with Docker, or deploy to AWS.** Your data never leaves your infrastructure.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/Muhanad-husn/neo4all.git
+cd neo4all
+cp .env.example .env   # fill in your Neo4j Aura + OpenRouter credentials
+
+# 2. Launch everything
+docker compose up
+
+# 3. Open the app
+open http://localhost:8501
+```
+
+That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), and you're ready to build a knowledge graph.
+
+---
+
+## How It Works
+
+```
+  Documents          AI Extraction        Quality Detection       Governed Curation
+ ┌──────────┐      ┌──────────────┐      ┌─────────────────┐    ┌──────────────────┐
+ │ PDF,DOCX │      │  LLM extracts│      │ 5 deterministic │    │ Proposal → Diff  │
+ │ HTML,CSV │ ───► │  nodes/edges │ ───► │ detectors find  │ ──►│ → Approval →     │
+ │ images.. │      │  per chunk   │      │ issues & dups   │    │ Execution → Audit│
+ └──────────┘      └──────────────┘      └─────────────────┘    └──────────────────┘
+     Phase 2            Phase 3              Phase 4 L1           Phase 4 L2/L3
+```
+
+| Phase | What happens |
+|-------|-------------|
+| **0 — Connect** | Enter Neo4j Aura credentials + OpenRouter API key. Session persists across browser restarts. |
+| **1 — Define Schema** | Describe your domain in plain language. AI proposes node/edge types. You edit and lock. |
+| **2 — Ingest Documents** | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant. |
+| **3 — Extract Knowledge** | One ARQ job per chunk. LLM extracts entities and relationships. Validated. Written to Neo4j. |
+| **4 — Curate** | Detectors surface issues. Review evidence. Propose fixes manually or let the AI agent pipeline handle batches. Every graph mutation is approved, diffed, executed, and audited. |
+
+---
+
+## Increment Status
+
+All 8 increments are complete. The platform is fully functional end-to-end.
 
 | Increment | Version | Description | Status |
 |-----------|---------|-------------|--------|
@@ -44,9 +117,10 @@ A session-based, AI-assisted web application that transforms documents into a cu
 
 ## Prerequisites
 
-- Docker & Docker Compose
-- A provisioned [Neo4j Aura](https://console.neo4j.io) instance (the app refuses to start without credentials)
-- [uv](https://docs.astral.sh/uv/) for local development
+- **Docker & Docker Compose** — one command brings up the full stack
+- **[Neo4j Aura](https://console.neo4j.io) instance** — free tier works great for getting started
+- **[OpenRouter](https://openrouter.ai/) API key** — LLM gateway for extraction and curation agents
+- **[uv](https://docs.astral.sh/uv/)** — for local development without Docker
 
 ---
 
@@ -54,57 +128,48 @@ A session-based, AI-assisted web application that transforms documents into a cu
 
 ### 1. Configure environment variables
 
-Copy the example env file and fill in your credentials:
-
 ```bash
 cp .env.example .env
 ```
 
-Required variables:
+Fill in your credentials:
 
 ```bash
-# Neo4j Aura (dev)
 NEO4J_DEV_URI=neo4j+s://xxxx.databases.neo4j.io
 NEO4J_DEV_USER=neo4j
 NEO4J_DEV_PASSWORD=<your-password>
-
-# OpenRouter
 OPENROUTER_API_KEY=sk-or-...
 
-# Object storage (RustFS in local, S3 in prod)
+# These are pre-configured for local Docker — only change if needed
 S3_ENDPOINT_URL=http://localhost:9000
 S3_ACCESS_KEY_ID=<key>
 S3_SECRET_ACCESS_KEY=<secret>
 S3_BUCKET_NAME=neo4all
-
-# Redis (set automatically by docker-compose)
 REDIS_URL=redis://localhost:6379
-
-# Observability
-LOG_FORMAT=console   # json (production) | console (development)
-LOG_LEVEL=INFO
 ```
 
-### 2. Start local services
+### 2. Launch
 
 ```bash
 docker compose up
 ```
 
-This starts: FastAPI (`:8000`), Streamlit (`:8501`), Redis (`:6379`), RustFS (`:9000`), Qdrant (`:6333`).
+Five services come up: **FastAPI** (`:8000`), **Streamlit** (`:8501`), **Redis** (`:6379`), **RustFS** (`:9000`), **Qdrant** (`:6333`). Neo4j runs on Aura — no local container needed.
 
-**Note**: Neo4j runs on Aura — no local Neo4j container.
+### 3. Open the app
 
-### 3. Local development (without Docker)
+Head to **http://localhost:8501** and start building your knowledge graph.
+
+### Local development (without Docker)
 
 ```bash
 uv pip install -e ".[dev]"
-api-server        # starts FastAPI on :8000
-streamlit run ui/app.py   # starts Streamlit on :8501
-arq-worker        # starts ARQ worker (api.worker.entry:WorkerSettings)
+api-server                  # FastAPI on :8000
+streamlit run ui/app.py     # Streamlit on :8501
+arq-worker                  # ARQ worker for extraction + agent jobs
 ```
 
-> **Note (SPEC-04):** The ARQ worker must be running for Phase 3 extraction jobs to execute. The worker requires the same environment variables as the API server, plus a locked domain schema (Phase 1 complete) before extraction can be triggered.
+> The ARQ worker must be running for extraction (Phase 3) and agent pipeline (Phase 4 L3) jobs.
 
 ---
 
@@ -189,140 +254,65 @@ FastAPI auto-generates interactive docs at:
 
 ---
 
-## Phase 0: Session Initialization & Persistence
+## Deep Dive: The Pipeline
 
-On startup, Phase 0 collects Neo4j Aura credentials and the OpenRouter API key. These are written to `.env` for the API backend and stored in Streamlit session state via `StateManager`.
+### Phase 0: Session Initialization
 
-**Session memory**: Session metadata (run_id, phase, schema_version, timestamp_seed, neo4j_uri, neo4j_user) is persisted to Redis so the user can resume where they left off after closing the browser. On app startup, the UI automatically restores the previous session if one exists. A "New Session" sidebar button clears the saved session and returns to Phase 0.
-
-- Session key: `session:{user_hash}` where `user_hash = SHA-256(neo4j_uri + NUL + neo4j_user)`
-- No credentials (passwords, API keys) are stored in Redis — only in `.env` / env vars
-- Session save is fire-and-forget on every Streamlit rerun (dirty-check gated)
-- Session restore fails open — if Redis is down, Phase 0 is shown normally
+Connect to your Neo4j Aura instance and provide your OpenRouter API key. That's your session. Close the browser, come back later — your session is automatically restored from Redis. No credentials are stored in Redis, only session metadata.
 
 ---
 
-## Phase 1: Domain Schema Definition
+### Phase 1: Domain Schema Definition
 
-Before any documents can be ingested, a domain schema must be defined and locked for the run. The workflow is:
-
-1. **Describe the domain** — enter a plain-language description of the domain (e.g. "scientific papers on climate change").
-2. **AI proposes a schema** — `POST /api/schema/propose` sends the description to the LLM (via OpenRouter) and returns typed candidate node and edge types for review.
-3. **Review and edit** — the UI presents the proposal in editable node and edge type tables. Any type, primary property, or qualifier can be adjusted before approval.
-4. **Approve to lock** — `POST /api/schema/approve` freezes the schema for the run. A deterministic `version_hash` is computed from the canonical sorted representation. The locked schema is cached in Redis indefinitely (no TTL) and cannot be modified for the lifetime of the run.
-
-### Prompt Template System
-
-LLM prompts are stored as versioned YAML templates under `prompts/`, keyed by `job_id` and `template_version`:
-
-```
-prompts/
-└── schema_propose/
-    └── v1.yaml     # job_id=schema_propose, template_version=v1
-```
-
-No prompt strings are inlined in service code. Templates are immutable once used in a run. Each template carries a `system` prompt and a `user` template with named placeholders (e.g. `{domain_description}`).
+Tell neo4all what your domain is about — *"scientific papers on climate change"*, *"supply chain logistics for automotive parts"*, whatever — and the AI proposes a typed schema of node and edge types. Edit anything you want, then lock it. The schema is frozen for the entire run: deterministic `version_hash`, cached indefinitely, immutable. This is your contract with the graph.
 
 ---
 
-## Phase 2: Document Ingestion & Chunking
+### Phase 2: Document Ingestion & Chunking
 
-Once a schema is locked, source documents can be uploaded and indexed. The workflow is:
+Drop in your documents. PDFs, DOCX, PPTX, XLSX, CSV, HTML, Markdown, images — **20+ formats supported** through a three-tier parser fallback chain:
 
-1. **Upload a document** — select a file in the Phase 2 UI. Supported formats include PDF, DOCX, PPTX, XLSX, CSV, HTML, TXT, Markdown, images, and more. Multiple documents can be uploaded one at a time.
-2. **Three-tier parser fallback** — the backend attempts each enabled parser in order and uses the first that succeeds:
-   - **Docling** (primary) — full structural parsing: titles, paragraphs, tables, images, captions. Exports Markdown for high-fidelity chunking. Natively handles PDF, DOCX, PPTX, XLSX, HTML, images, and more.
-   - **Unstructured** (secondary) — broad format support; activated automatically when Docling raises an exception or returns empty output.
-   - **Raw text** (tertiary) — PyPDF2 (PDF), python-docx (DOCX), or direct UTF-8/Latin-1 decode (plain-text formats: TXT, MD, CSV, HTML, JSON, etc.). No structural metadata. All chunks from this tier carry the `raw_fallback` quality flag.
-   - If all enabled tiers fail → hard reject with a structured error response.
-3. **Semantic chunking** — extracted text is segmented respecting headings (chunk boundaries), table isolation (always standalone), and configurable character/token limits. `chunk_id = SHA-256(doc_id + start_page + chunk_index)` — fully deterministic.
-4. **Quality flags** — soft signals attached per chunk at ingestion time (processing continues):
-   - `raw_fallback` — tertiary raw-text parser was used; no structural metadata present
-   - `low_ocr_confidence` — OCR confidence score below threshold (0.7)
-   - `low_text_density` — fewer than 20 characters in the chunk
-5. **Qdrant indexing** — chunks are embedded via sentence-transformers and upserted to a run-scoped collection (`chunks_{run_id}`) for evidence retrieval in Phase 3. Qdrant is evidence-only and never authoritative.
-6. **Manifest persistence** — a `DocumentManifest` (doc_id, chunk_ids, content_hash, parser_config_hash) is stored in S3 and cached in Redis. On re-upload of an unchanged file with the same parser configuration, the parse step is skipped entirely (incremental reruns).
+1. **Docling** — structural parsing with tables, headings, captions
+2. **Unstructured** — broad format coverage as fallback
+3. **Raw text** — PyPDF2/python-docx/UTF-8 decode as last resort
 
-Parser tiers are individually toggleable via `ENABLE_DOCLING`, `ENABLE_UNSTRUCTURED`, `ENABLE_RAW_FALLBACK` environment variables — useful in CI environments where parser libraries may not be installed.
+Each document is semantically chunked (respecting headings and table boundaries), embedded via sentence-transformers, and indexed in Qdrant. Quality flags (`raw_fallback`, `low_ocr_confidence`, `low_text_density`) surface potential issues without blocking the pipeline. Re-uploading the same file skips parsing entirely — incremental by design.
 
 ---
 
-## Phase 3: AI-Assisted Extraction
+### Phase 3: AI-Assisted Extraction
 
-Once documents are ingested, extraction enqueues one ARQ job per chunk. Each job sends the chunk text and locked schema to the LLM (via OpenRouter), validates the response, and writes MERGE operations to Neo4j.
-
-**Prerequisites**: Domain schema must be locked (Phase 1 complete). The ARQ worker must be running.
-
-1. **Trigger extraction** — `POST /api/extraction/run` enqueues one `extraction_job` per chunk in the run. Returns immediately; jobs execute in the background ARQ worker.
-2. **LLM extraction** — Each job loads the chunk text from S3, retrieves the locked schema from the Redis cache (`CacheKey.schema(run_id)`), and sends both to OpenRouter using `prompts/extraction/v1.yaml`. Output is validated against `ExtractionResult` (fail-closed: malformed LLM output is blocked and logged, never silently accepted).
-3. **Graph writes** — Valid extracted nodes and edges are written to Neo4j via `MERGE` on `node_dedupe_key` / `rel_dedupe_key`. Rerunning the same chunk always produces the same graph state (idempotent).
-4. **Per-job status tracking** — Each job writes a `ChunkJobStatus` record to Redis (`job:{run_id}:{chunk_id}`). `GET /api/monitoring/jobs/{run_id}` scans these keys for real-time progress. Status values: `queued → running → complete | failed`.
-5. **Worker monitoring** — `GET /api/monitoring/workers` returns queue depth, active job count, and live worker count directly from Redis (no database queries).
-
-### Prompt Template: Extraction
-
-```
-prompts/
-├── schema_propose/
-│   └── v1.yaml     # job_id=schema_propose, template_version=v1
-└── extraction/
-    └── v1.yaml     # job_id=extraction, template_version=v1
-```
+Hit "Extract" and neo4all fans out one ARQ job per chunk. Each job sends chunk text + your locked schema to the LLM, validates the response (fail-closed — malformed output is blocked, not silently accepted), and writes entities to Neo4j via idempotent `MERGE`. Real-time progress tracking in the UI shows you every chunk's status as it flows through.
 
 ---
 
-## Phase 4: Curation — Layer 1 (Candidate Generation)
+### Phase 4: Curation — The Heart of neo4all
 
-Once extraction is complete, deterministic pre-curation detects data quality issues in the graph before any AI or human curation decisions are made.
+This is where neo4all really shines. Curation runs in three layers:
 
-1. **Trigger generation** — `POST /api/curation/candidates/generate` runs all five detectors against the Neo4j graph for a run. Results are cached with a 5-minute TTL.
-2. **Five detectors (zero-LLM)**:
-   - **Exact node duplicate** — same `NodeType` + `dedupe_key` appears under different IDs.
-   - **Exact relationship duplicate** — same rel type + same start/end `dedupe_key` appears more than once.
-   - **Probable duplicate** — same-type node pairs with Jaro-Winkler similarity ≥ 0.90 + shared context score (pure Python, no external library).
-   - **Canonical/inverse violation** — edge direction or inverse-mapping rules defined in the locked schema are violated.
-   - **Structural anomaly** — orphan nodes, degree outliers (3σ), missing provenance fields, or qualifier gaps.
-3. **View candidates** — `GET /api/curation/candidates/{run_id}` returns candidates grouped by type and ordered by severity (critical → high → medium → low).
-4. **Deterministic IDs** — `candidate_id = SHA-256(run_id + schema_version + candidate_type + sorted(involved_element_refs) + detection_method)`. Same graph situation always produces the same `candidate_id`, enabling idempotent re-runs.
+**Layer 1 — Deterministic Detection (zero LLM cost)**
 
----
+Five detectors scan your graph and surface every issue they find:
+- Exact node & relationship duplicates
+- Probable duplicates (Jaro-Winkler >= 0.90)
+- Schema/canonical violations
+- Structural anomalies (orphans, degree outliers, missing provenance)
 
-## Phase 4: Curation — Layer 2 (Manual Curation & Proposal Pipeline)
+Every candidate gets a deterministic ID — rerun detection and you get the same results.
 
-Once candidates are generated, each can be actioned through the governed mutation pipeline.
+**Layer 2 — Manual Curation**
 
-1. **Review evidence** — `GET /api/curation/evidence/{candidate_id}` retrieves ranked Qdrant evidence chunks (text, source doc, page locator, relevance score) for a candidate. `POST /api/curation/evidence/query` supports ad-hoc lookup by dedupe_key, doc, or semantic similarity.
-2. **Submit a proposal** — `POST /api/curation/propose` creates a `ProposalPacket` with intent (canonicalize, normalize, rename, merge, delete, defer), evidence references, governance rule IDs, rationale, and confidence score. `proposal_id` is deterministic: `SHA-256(run_id + candidate_id + proposal_class)`.
-3. **Approval gate** — Low-risk proposals (canonicalize, normalize, rename, defer): single-step `POST .../approve` issues an `approval_id`. High-risk proposals (merge, delete): two-phase — phase 1 returns a `confirmation_token`; phase 2 `POST .../confirm` validates the token and issues the `approval_id`. `POST .../reject` or `POST .../defer` terminates the proposal.
-4. **Diff build + execution** — `POST /api/curation/proposals/{id}/execute` feeds the approved `ProposalPacket` to the deterministic `DiffBuilder` (no LLM) producing a `DiffPlan` with a stable `diff_id = SHA-256(diff_content)`. Agent-C validates the `approval_id`, applies typed graph mutations, runs post-apply invariant checks, and appends an immutable `AuditRecord` to S3.
-5. **Cache invalidation** — After every Agent-C mutation, all `gq:{run_id}:*` (graph query) and `candidates:{run_id}:*` (detection) cache keys are invalidated.
-6. **Graph explorer** — `GET /api/graph/nodes/{run_id}` and `GET /api/graph/edges/{run_id}` provide paginated (max 50/page), type-filterable read-only browsing of the current graph state. Available in the **Graph Explorer** Streamlit page.
+Review evidence from Qdrant, submit proposals (canonicalize, normalize, rename, merge, delete, defer), and approve them through the governed pipeline. High-risk operations (merge, delete) require two-phase confirmation. Every mutation produces an immutable audit record in S3.
 
----
+**Layer 3 — AI Agent Pipeline**
 
-## Phase 4: Curation — Layer 3 (AI Agent Pipeline)
+For batch processing, the multi-agent chain handles it:
+- **Orchestrator** (non-LLM) assigns risk class and token budget
+- **Agent-A** assembles and classifies evidence
+- **Agent-B** augments retrieval when evidence is insufficient
+- **Agent-P** composes a governed proposal — with regex safety guards that reject any Cypher or executable code
 
-Once candidates are generated and evidence is available, the AI curation agent pipeline can process candidates in batch through a governed multi-agent chain.
-
-1. **Orchestrator (non-LLM)** — assigns a risk class (low/medium/high) and tool budget (token limits, cost cap, retrieval rounds) to each candidate. Deterministic: same candidate + config always produces the same decision. Batch size capped at 50.
-2. **Agent-A: Evidence Assembly (LLM)** — retrieves graph context and Qdrant chunks for a candidate, classifies evidence (supporting/corroborating/conflicting) via LLM, computes a sufficiency score. Output: typed `EvidenceReport`. Does not decide actions.
-3. **Agent-B: Retrieval Augmentation (LLM)** — triggered only when Agent-A flags insufficient evidence. Performs loop-guarded retrieval rounds (max N per budget) to gather additional evidence. Terminates on: threshold met, max rounds, budget exhausted, or voluntary empty query.
-4. **Agent-P: Proposal Composer (LLM)** — receives candidate + evidence report, selects proposal class, cites rule IDs and evidence, writes rationale. Outputs governed `ProposalPacket` — never Cypher, never executable instructions. A regex safety guard rejects any output containing Cypher query syntax or executable code patterns.
-5. **Pipeline execution** — all three agent jobs run as chained ARQ worker tasks: `evidence_assembly_job → retrieval_augmentation_job (conditional) → proposal_composition_job`. AI proposals enter the same governed pipeline as manual curation (propose → diff → approval → execution).
-6. **Batch processing** — the curation UI supports selecting multiple candidates and dispatching them through the agent pipeline in parallel. Progress is tracked per-candidate in real time.
-7. **Agent telemetry** — per-agent metrics (tokens in/out, cost estimate, execution time, evidence score) are recorded per `(run_id, candidate_id, agent_name)` and surfaced via `GET /api/monitoring/metrics` (aggregated) and `GET /api/monitoring/agents/{run_id}` (per-candidate). The monitoring UI displays agent pipeline panels with budget consumption gauges.
-
-### Prompt Templates: Agent Pipeline
-
-```
-prompts/
-├── evidence_assembly/
-│   └── v1.yaml     # job_id=evidence_assembly, template_version=v1
-├── retrieval_augmentation/
-│   └── v1.yaml     # job_id=retrieval_augmentation, template_version=v1
-└── proposal_composer/
-    └── v1.yaml     # job_id=proposal_composer, template_version=v1
-```
+AI proposals flow through the exact same approval pipeline as manual ones. No shortcuts. Full telemetry (tokens, cost, execution time) is tracked per agent per candidate.
 
 ---
 
@@ -426,43 +416,71 @@ docker compose up
 
 ## Known Limitations (v0.8.0)
 
-- `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added
-- Several modules exceed the ~400-line governance limit (SKILL-B R-B7) and are scheduled for refactoring
-- ARQ `_get_arq_pool()` is duplicated in `api/routers/extraction.py` and `api/routers/monitoring.py`; consolidation planned
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
-- Edge type filter in graph explorer is a Python-side slice on the full cached list; no typed graph reader method for edge type filtering
+- Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)
 - Qdrant collections (`chunks_{run_id}`) are not cleaned up on run deletion
+- `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added
 
 ---
 
 ## Project Structure
 
 ```
-/
-├── .github/workflows/   # CI pipeline (GitHub Actions)
-├── ui/                  # Streamlit frontend (UI layer only)
-│   ├── components/      # Reusable UI widgets (phase indicator)
-│   └── pages/           # Per-phase page modules
-├── api/                 # FastAPI backend (all business logic)
-│   ├── routers/         # HTTP route handlers
-│   ├── services/        # Domain services
-│   ├── agents/          # Agent components
-│   ├── graph/           # Neo4j interaction
-│   ├── vector/          # Qdrant retrieval
-│   ├── storage/         # Artifact storage
-│   ├── worker/          # ARQ worker entry point
-│   ├── schema/          # Domain schema definitions
-│   ├── proposals/       # Proposal Packet models
-│   ├── diff/            # Deterministic diff builder
-│   ├── audit/           # Immutable audit log writers
-│   ├── cache/           # Redis-backed cache abstraction
-│   └── observability/   # Logging, metrics, correlation IDs
-├── docs/                # Specs, skills, ADRs
-│   ├── specs/           # Increment specifications (SPEC-01 through SPEC-08)
-│   ├── skills/          # Cross-cutting skills (SKILL-A, B, C, D)
-│   └── adr/             # Architecture Decision Records
-├── prompts/             # Versioned prompt templates
-├── fixtures/            # Test fixtures
-├── tests/               # Unit and integration tests
-└── infra/               # IaC files (read-only reference)
+neo4all/
+├── api/                    # FastAPI backend — all business logic lives here
+│   ├── agents/             #   Agent-A, B, P, C + orchestrator
+│   ├── graph/              #   Neo4j reads/writes (sole write authority)
+│   ├── vector/             #   Qdrant evidence retrieval
+│   ├── services/           #   Ingestion, chunking, extraction, curation
+│   ├── proposals/          #   Proposal Packet models + S3 storage
+│   ├── diff/               #   Deterministic diff builder
+│   ├── audit/              #   Immutable audit log
+│   ├── cache/              #   Redis abstraction (keys, client)
+│   ├── routers/            #   HTTP endpoints
+│   ├── worker/             #   ARQ worker jobs
+│   ├── schema/             #   Domain schema models + service
+│   ├── storage/            #   S3/RustFS artifact storage
+│   └── observability/      #   structlog, metrics, correlation IDs
+├── ui/                     # Streamlit frontend — UI only, no business logic
+│   ├── pages/              #   One module per phase + explorer + monitoring
+│   └── components/         #   Reusable widgets
+├── prompts/                # Versioned YAML prompt templates
+├── tests/                  # Unit (deterministic) + integration (Neo4j Aura)
+├── fixtures/               # Test fixtures
+├── docs/                   # Specs (SPEC-01–08), skills (A–D), ADRs
+└── infra/                  # IaC (read-only reference)
 ```
+
+---
+
+## Contributing
+
+neo4all is open source and we'd love your help. Whether it's a bug report, a feature idea, or a pull request — all contributions are welcome.
+
+```bash
+# Fork, clone, and set up
+git clone https://github.com/Muhanad-husn/neo4all.git
+cd neo4all
+uv pip install -e ".[dev]"
+
+# Make sure tests pass
+pytest tests/unit/ -v
+ruff check .
+mypy api/ ui/
+
+# Open a PR
+```
+
+Check out the [specs](docs/specs/) and [skills](docs/skills/) docs to understand the architecture before diving in. The governance model in CLAUDE.md is the source of truth.
+
+---
+
+## License
+
+MIT
+
+---
+
+<p align="center">
+  <strong>Built with care. Governed by design. Open for everyone.</strong>
+</p>
