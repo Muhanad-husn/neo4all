@@ -4,8 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neo4all"
-version = "0.8.0"
+version = "1.0.0"
 description = "AI-Powered Graph Extraction & Curation Platform"
+license = "PolyForm-Noncommercial-1.0.0"
+readme = "README.md"
+authors = [
+    { name = "Muhanad Husn" },
+]
 requires-python = ">=3.12"
 dependencies = [
     # FastAPI backend
@@ -42,6 +47,12 @@ dependencies = [
     # File upload support for FastAPI Form/File endpoints (SPEC-03)
     "python-multipart>=0.0.10,<1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Muhanad-husn/neo4all"
+Repository = "https://github.com/Muhanad-husn/neo4all"
+Issues = "https://github.com/Muhanad-husn/neo4all/issues"
+Documentation = "https://github.com/Muhanad-husn/neo4all#readme"
 
 [project.scripts]
 api-server = "api.main:run"

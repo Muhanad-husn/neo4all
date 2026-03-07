@@ -414,7 +414,7 @@ docker compose up
 
 ---
 
-## Known Limitations (v0.8.0)
+## Known Limitations (v1.0.0)
 
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)
@@ -477,7 +477,7 @@ Check out the [specs](docs/specs/) and [skills](docs/skills/) docs to understand
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](LICENSE.md)
 
 ---
 
