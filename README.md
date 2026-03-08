@@ -57,6 +57,18 @@ open http://localhost:8501
 
 That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), and you're ready to build a knowledge graph.
 
+### Using pre-built images from Docker Hub
+
+Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
+
+```bash
+docker pull muhanaddocker/neo4all-api:1.0.0
+docker pull muhanaddocker/neo4all-worker:1.0.0
+docker pull muhanaddocker/neo4all-ui:1.0.0
+```
+
+All three images are also tagged `latest`.
+
 ---
 
 ## How It Works
@@ -329,6 +341,28 @@ AI proposals flow through the exact same approval pipeline as manual ones. No sh
 | Monitoring | `ui/pages/monitoring.py` | Health, logs, workers, jobs, cache stats, agent telemetry, alerting |
 
 All pages use `StateManager` for session state (no direct `st.session_state` access) and communicate with the backend exclusively via HTTP.
+
+---
+
+## Docker Images
+
+Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhanaddocker):
+
+| Image | Dockerfile | Description |
+|-------|------------|-------------|
+| [`muhanaddocker/neo4all-api`](https://hub.docker.com/r/muhanaddocker/neo4all-api) | `Dockerfile.api` | FastAPI backend (all business logic, graph writes, validation) |
+| [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs) |
+| [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui) | `Dockerfile.ui` | Streamlit frontend (UI only) |
+
+**Tags:** `1.0.0`, `latest`
+
+To build locally instead of pulling:
+
+```bash
+docker build -f Dockerfile.api    -t muhanaddocker/neo4all-api:1.0.0    .
+docker build -f Dockerfile.worker -t muhanaddocker/neo4all-worker:1.0.0 .
+docker build -f Dockerfile.ui     -t muhanaddocker/neo4all-ui:1.0.0     .
+```
 
 ---
 
