@@ -1,0 +1,23 @@
+version: "3.9"
+
+# Development override — builds from local source instead of pulling images.
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+services:
+  api:
+    image: muhanaddocker/neo4all-api:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+
+  worker:
+    image: muhanaddocker/neo4all-worker:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+
+  ui:
+    image: muhanaddocker/neo4all-ui:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
