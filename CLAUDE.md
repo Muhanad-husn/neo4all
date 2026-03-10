@@ -194,7 +194,7 @@ Runs: FastAPI, Streamlit, Redis, RustFS, Qdrant
 docker compose up -d --build api ui
 ```
 
-Dockerfiles use a two-stage `COPY` pattern: dependencies install in a cached layer, source code is copied last. This means even full rebuilds skip package installation when only code changed.
+Dockerfiles use a two-stage `COPY` pattern: dependencies install in a cached layer, source code is copied last. This means even full rebuilds skip package installation when only code changed. All images pre-install CPU-only PyTorch (`--index-url https://download.pytorch.org/whl/cpu`) to avoid pulling CUDA libraries (~3 GB vs ~13 GB).
 
 ### Neo4j — Aura Only (No Local Container)
 Requires provisioned Aura instance. App refuses to start without credentials.

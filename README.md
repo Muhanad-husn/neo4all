@@ -361,6 +361,8 @@ Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhan
 
 **Tags:** `1.0.0`, `latest`
 
+All images use CPU-only PyTorch (~3 GB each) instead of the default CUDA build (~13 GB). The embedding model (`all-MiniLM-L6-v2`) runs identically on CPU.
+
 To build locally instead of pulling:
 
 ```bash
