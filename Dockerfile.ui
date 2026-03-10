@@ -11,6 +11,10 @@ COPY pyproject.toml README.md ./
 # Stub packages so `uv pip install .` resolves without source code
 RUN mkdir -p api ui && touch api/__init__.py ui/__init__.py
 
+# Install CPU-only PyTorch first (saves ~2 GB vs default CUDA build)
+RUN uv pip install --system --no-cache \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
 # Install dependencies (cached unless pyproject.toml changes)
 RUN uv pip install --system --no-cache .
 

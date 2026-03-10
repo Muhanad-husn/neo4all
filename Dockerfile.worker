@@ -12,6 +12,10 @@ COPY pyproject.toml README.md ./
 COPY api/ api/
 COPY prompts/ prompts/
 
+# Install CPU-only PyTorch first (saves ~2 GB vs default CUDA build)
+RUN uv pip install --system --no-cache \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
 # Install the package and all dependencies
 RUN uv pip install --system --no-cache .
 
