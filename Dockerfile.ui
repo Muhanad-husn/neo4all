@@ -13,6 +13,7 @@ COPY api/ api/
 COPY ui/ ui/
 COPY streamlit_app.py ./
 COPY .streamlit/ .streamlit/
+COPY docs/light-mode-logo.png docs/dark-mode-logo.png docs/
 
 # Install the package and all dependencies
 RUN uv pip install --system --no-cache .
