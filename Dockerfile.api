@@ -8,12 +8,15 @@ RUN pip install --no-cache-dir uv==0.5.21
 # Copy project definition first (layer cache: deps change less than source)
 COPY pyproject.toml README.md ./
 
-# Copy API source and prompt templates
+# Stub packages so `uv pip install .` resolves without source code
+RUN mkdir -p api && touch api/__init__.py
+
+# Install dependencies (cached unless pyproject.toml changes)
+RUN uv pip install --system --no-cache .
+
+# NOW copy actual source code (cheap layer, no reinstall)
 COPY api/ api/
 COPY prompts/ prompts/
-
-# Install the package and all dependencies
-RUN uv pip install --system --no-cache .
 
 EXPOSE 8000
 

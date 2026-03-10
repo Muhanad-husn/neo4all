@@ -177,6 +177,25 @@ docker compose up
 ```
 Runs: FastAPI, Streamlit, Redis, RustFS, Qdrant
 
+### Docker Rebuild Policy
+
+**Hotpatch first, rebuild only when necessary.**
+
+- **Code-only changes** (Python files in `api/`, `ui/`, `prompts/`): use `./hotpatch.sh` to copy files into running containers and restart. No image rebuild needed.
+- **Dependency changes** (`pyproject.toml`): full rebuild required — `docker compose up -d --build`.
+- **Dockerfile changes**: full rebuild required.
+- **Config/infra changes** (`docker-compose.yml`, `.env`): restart with `docker compose up -d` (no rebuild unless Dockerfile changed).
+
+```bash
+# Hotpatch (seconds — code changes only)
+./hotpatch.sh
+
+# Full rebuild (only when dependencies or Dockerfiles change)
+docker compose up -d --build api ui
+```
+
+Dockerfiles use a two-stage `COPY` pattern: dependencies install in a cached layer, source code is copied last. This means even full rebuilds skip package installation when only code changed.
+
 ### Neo4j — Aura Only (No Local Container)
 Requires provisioned Aura instance. App refuses to start without credentials.
 
@@ -272,6 +291,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 ## 15. Claude Directives
 
 ### Always Do
+- Use `./hotpatch.sh` for code-only changes — never rebuild Docker images unless dependencies or Dockerfiles changed
 - Read this file before writing code
 - Derive IDs deterministically
 - Route all writes through approval pipeline
@@ -286,6 +306,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Log structured events with correlation IDs — never free-text log messages
 
 ### Never Do
+- Rebuild Docker images for code-only changes — use `./hotpatch.sh` instead
 - Write Cypher in LLM agents
 - Allow non-Agent-C graph mutations
 - Access `st.session_state` directly

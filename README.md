@@ -442,6 +442,21 @@ pytest tests/integration/ -v
 docker compose up
 ```
 
+### Hotpatching (Fast Code Updates)
+
+When you change only Python source files (`api/`, `ui/`), skip the full Docker rebuild:
+
+```bash
+# Copy updated code into running containers and restart (~2 seconds)
+./hotpatch.sh
+```
+
+Only rebuild images when `pyproject.toml` or Dockerfiles change:
+
+```bash
+docker compose up -d --build api ui
+```
+
 ---
 
 ## Architecture Decision Records
