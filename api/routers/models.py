@@ -264,6 +264,25 @@ class ResponseTimePercentiles(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ConfigReloadRequest(BaseModel):
+    """Request model for POST /api/config/reload.
+
+    When credentials are provided in the body, they are injected into the
+    process environment before reloading settings.  This allows the UI
+    container (which has a separate filesystem in Docker) to push updated
+    credentials directly to the API without relying on a shared ``.env``
+    file.
+
+    All fields are optional — omit them to reload from the existing
+    environment / ``.env`` file (local-dev workflow).
+    """
+
+    neo4j_uri: str | None = None
+    neo4j_user: str | None = None
+    neo4j_password: str | None = None
+    openrouter_api_key: str | None = None
+
+
 class ConfigReloadResponse(BaseResponse):
     """Response model for POST /api/config/reload.
 

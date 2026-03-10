@@ -181,8 +181,19 @@ def _derive_user_hash(neo4j_uri: str, neo4j_user: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _notify_api_reload() -> bool:
+def _notify_api_reload(
+    *,
+    neo4j_uri: str = "",
+    neo4j_user: str = "",
+    neo4j_password: str = "",
+    openrouter_api_key: str = "",
+) -> bool:
     """Tell the running API to reload its configuration.
+
+    Credentials are sent in the request body so the API can inject them
+    into its process environment.  This is necessary in Docker where the
+    UI and API containers have separate filesystems and cannot share a
+    ``.env`` file.
 
     Fire-and-forget: returns True on success, False on any failure.
     Failures are expected when the API server is not running.
@@ -190,7 +201,20 @@ def _notify_api_reload() -> bool:
     try:
         import httpx
 
-        resp = httpx.Client(timeout=5.0).post(f"{_API_BASE_URL}/api/config/reload")
+        payload: dict[str, str] = {}
+        if neo4j_uri:
+            payload["neo4j_uri"] = neo4j_uri
+        if neo4j_user:
+            payload["neo4j_user"] = neo4j_user
+        if neo4j_password:
+            payload["neo4j_password"] = neo4j_password
+        if openrouter_api_key:
+            payload["openrouter_api_key"] = openrouter_api_key
+
+        resp = httpx.Client(timeout=5.0).post(
+            f"{_API_BASE_URL}/api/config/reload",
+            json=payload,
+        )
         return resp.status_code == 200  # noqa: TRY300
     except Exception:
         return False
@@ -249,7 +273,12 @@ def _try_restore_session(state: StateManager) -> bool:
         )
 
         # Ensure API has current credentials loaded.
-        _notify_api_reload()
+        _notify_api_reload(
+            neo4j_uri=neo4j_uri,
+            neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password,
+            openrouter_api_key=openrouter_api_key,
+        )
 
         return True
     except Exception:
@@ -503,7 +532,12 @@ def _render_phase_init(state: StateManager) -> None:
                 st.warning(f"Could not save credentials to .env: {exc}")
 
             # Tell the running API to reload its configuration.
-            if _notify_api_reload():
+            if _notify_api_reload(
+                neo4j_uri=neo4j_uri.strip(),
+                neo4j_user=neo4j_user.strip(),
+                neo4j_password=neo4j_password,
+                openrouter_api_key=openrouter_api_key,
+            ):
                 st.info("API configuration reloaded with new credentials.")
 
             state.initialize_session(
