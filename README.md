@@ -45,13 +45,16 @@ Drop in your documents — PDFs, DOCX, spreadsheets, HTML, images, whatever you 
 Using pre-built images from Docker Hub
 
 Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
-    docker pull muhanaddocker/neo4all-api:1.0.0
-    docker pull muhanaddocker/neo4all-worker:1.0.0
-    docker pull muhanaddocker/neo4all-ui:1.0.0
+
+```bash
+docker pull muhanaddocker/neo4all-api:1.0.0 
+docker pull muhanaddocker/neo4all-worker:1.0.0 
+docker pull muhanaddocker/neo4all-ui:1.0.0
+```
 
 All three images are also tagged `latest`.
 
-
+Then:
 
 ```bash
 # 1. Clone and configure
