@@ -13,9 +13,9 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#how-it-works">How It Works</a> &middot;
-  <a href="#api">API Reference</a> &middot;
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#api">API Reference</a> ·
   <a href="https://github.com/Muhanad-husn/neo4all/issues">Issues</a>
 </p>
 
@@ -42,6 +42,17 @@ Drop in your documents — PDFs, DOCX, spreadsheets, HTML, images, whatever you 
 
 ## Quick Start
 
+Using pre-built images from Docker Hub
+
+Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
+    docker pull muhanaddocker/neo4all-api:1.0.0
+    docker pull muhanaddocker/neo4all-worker:1.0.0
+    docker pull muhanaddocker/neo4all-ui:1.0.0
+
+All three images are also tagged `latest`.
+
+
+
 ```bash
 # 1. Clone and configure
 git clone https://github.com/Muhanad-husn/neo4all.git
@@ -49,25 +60,13 @@ cd neo4all
 cp .env.example .env   # fill in your Neo4j Aura + OpenRouter credentials
 
 # 2. Launch everything
-docker compose up
+docker compose up -d
 
 # 3. Open the app
 open http://localhost:8501
 ```
 
 That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), and you're ready to build a knowledge graph.
-
-### Using pre-built images from Docker Hub
-
-Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
-
-```bash
-docker pull muhanaddocker/neo4all-api:1.0.0
-docker pull muhanaddocker/neo4all-worker:1.0.0
-docker pull muhanaddocker/neo4all-ui:1.0.0
-```
-
-All three images are also tagged `latest`.
 
 ---
 
@@ -83,13 +82,13 @@ All three images are also tagged `latest`.
      Phase 2            Phase 3              Phase 4 L1           Phase 4 L2/L3
 ```
 
-| Phase | What happens |
-|-------|-------------|
-| **0 — Connect** | Enter Neo4j Aura credentials + OpenRouter API key. Session persists across browser restarts. |
-| **1 — Define Schema** | Describe your domain in plain language. AI proposes node/edge types. You edit and lock. |
-| **2 — Ingest Documents** | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant. |
-| **3 — Extract Knowledge** | One ARQ job per chunk. LLM extracts entities and relationships. Validated. Written to Neo4j. |
-| **4 — Curate** | Detectors surface issues. Review evidence. Propose fixes manually or let the AI agent pipeline handle batches. Every graph mutation is approved, diffed, executed, and audited. |
+| Phase                     | What happens                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0 — Connect**           | Enter Neo4j Aura credentials + OpenRouter API key. Session persists across browser restarts.                                                                                    |
+| **1 — Define Schema**     | Describe your domain in plain language. AI proposes node/edge types. You edit and lock.                                                                                         |
+| **2 — Ingest Documents**  | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant.                                                                                  |
+| **3 — Extract Knowledge** | One ARQ job per chunk. LLM extracts entities and relationships. Validated. Written to Neo4j.                                                                                    |
+| **4 — Curate**            | Detectors surface issues. Review evidence. Propose fixes manually or let the AI agent pipeline handle batches. Every graph mutation is approved, diffed, executed, and audited. |
 
 ---
 
@@ -97,33 +96,33 @@ All three images are also tagged `latest`.
 
 All 8 increments are complete. The platform is fully functional end-to-end.
 
-| Increment | Version | Description | Status |
-|-----------|---------|-------------|--------|
-| SPEC-01   | 0.1.0   | Scaffolding, session lifecycle, logging, caching, monitoring | ✅ Complete  |
-| SPEC-02   | 0.2.0   | Domain schema definition | ✅ Complete |
-| SPEC-03   | 0.3.0   | Document ingestion & chunking | ✅ Complete |
-| SPEC-04   | 0.4.0   | AI-assisted extraction & ARQ worker | ✅ Complete |
-| SPEC-05   | 0.5.0   | Deterministic candidate generation | ✅ Complete |
-| SPEC-06   | 0.6.0   | Manual curation & proposal pipeline | ✅ Complete |
-| SPEC-07   | 0.7.0   | AI curation agent pipeline | ✅ Complete |
-| SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation | ✅ Complete |
+| Increment | Version | Description                                                  | Status     |
+| --------- | ------- | ------------------------------------------------------------ | ---------- |
+| SPEC-01   | 0.1.0   | Scaffolding, session lifecycle, logging, caching, monitoring | ✅ Complete |
+| SPEC-02   | 0.2.0   | Domain schema definition                                     | ✅ Complete |
+| SPEC-03   | 0.3.0   | Document ingestion & chunking                                | ✅ Complete |
+| SPEC-04   | 0.4.0   | AI-assisted extraction & ARQ worker                          | ✅ Complete |
+| SPEC-05   | 0.5.0   | Deterministic candidate generation                           | ✅ Complete |
+| SPEC-06   | 0.6.0   | Manual curation & proposal pipeline                          | ✅ Complete |
+| SPEC-07   | 0.7.0   | AI curation agent pipeline                                   | ✅ Complete |
+| SPEC-08   | 0.8.0   | Monitoring polish, CI, documentation                         | ✅ Complete |
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | Streamlit |
-| Backend | Python 3.12 / FastAPI |
-| Worker | ARQ + Redis |
-| Graph DB | Neo4j Aura (cloud-only, no local container) |
-| Vector Store | Qdrant |
-| Object Storage | boto3 → RustFS (local) / S3 (prod) |
-| LLM Gateway | OpenRouter API |
-| Package Manager | uv |
-| Caching | Redis (shared with ARQ) |
-| Observability | structlog + in-memory metrics |
+| Layer           | Technology                                  |
+| --------------- | ------------------------------------------- |
+| Frontend        | Streamlit                                   |
+| Backend         | Python 3.12 / FastAPI                       |
+| Worker          | ARQ + Redis                                 |
+| Graph DB        | Neo4j Aura (cloud-only, no local container) |
+| Vector Store    | Qdrant                                      |
+| Object Storage  | boto3 → RustFS (local) / S3 (prod)          |
+| LLM Gateway     | OpenRouter API                              |
+| Package Manager | uv                                          |
+| Caching         | Redis (shared with ARQ)                     |
+| Observability   | structlog + in-memory metrics               |
 
 ---
 
@@ -188,6 +187,7 @@ arq-worker                  # ARQ worker for extraction + agent jobs
 ## API
 
 FastAPI auto-generates interactive docs at:
+
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
@@ -195,74 +195,74 @@ FastAPI auto-generates interactive docs at:
 
 #### Session (Phase 0)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/session/{user_hash}` | Retrieve persisted session record |
-| POST | `/api/session/save` | Persist session state to Redis |
+| Method | Path                       | Description                             |
+| ------ | -------------------------- | --------------------------------------- |
+| GET    | `/api/session/{user_hash}` | Retrieve persisted session record       |
+| POST   | `/api/session/save`        | Persist session state to Redis          |
 | DELETE | `/api/session/{user_hash}` | Clear persisted session ("New Session") |
 
 #### Health & Monitoring
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Basic backend health check |
-| GET | `/api/monitoring/health` | Per-service connectivity with latency |
-| GET | `/api/monitoring/logs/recent` | Recent log entries (filterable by level) |
-| GET | `/api/monitoring/run/{run_id}` | Run-level summary |
-| GET | `/api/monitoring/workers` | ARQ queue depth and active worker count |
-| GET | `/api/monitoring/jobs/{run_id}` | Per-chunk extraction job statuses |
-| GET | `/api/monitoring/metrics` | Aggregated LLM usage per agent type (tokens, cost, invocations) |
-| GET | `/api/monitoring/agents/{run_id}` | Per-candidate agent chain telemetry for a run |
-| GET | `/api/monitoring/cache` | Cache hit/miss ratio, key count, memory usage |
+| Method | Path                              | Description                                                     |
+| ------ | --------------------------------- | --------------------------------------------------------------- |
+| GET    | `/api/health`                     | Basic backend health check                                      |
+| GET    | `/api/monitoring/health`          | Per-service connectivity with latency                           |
+| GET    | `/api/monitoring/logs/recent`     | Recent log entries (filterable by level)                        |
+| GET    | `/api/monitoring/run/{run_id}`    | Run-level summary                                               |
+| GET    | `/api/monitoring/workers`         | ARQ queue depth and active worker count                         |
+| GET    | `/api/monitoring/jobs/{run_id}`   | Per-chunk extraction job statuses                               |
+| GET    | `/api/monitoring/metrics`         | Aggregated LLM usage per agent type (tokens, cost, invocations) |
+| GET    | `/api/monitoring/agents/{run_id}` | Per-candidate agent chain telemetry for a run                   |
+| GET    | `/api/monitoring/cache`           | Cache hit/miss ratio, key count, memory usage                   |
 
 #### Schema (Phase 1)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/schema/propose` | Generate candidate schema via LLM for human review |
-| POST | `/api/schema/approve` | Lock the domain schema for a run (immutable after this call) |
-| GET | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query) |
+| Method | Path                   | Description                                                  |
+| ------ | ---------------------- | ------------------------------------------------------------ |
+| POST   | `/api/schema/propose`  | Generate candidate schema via LLM for human review           |
+| POST   | `/api/schema/approve`  | Lock the domain schema for a run (immutable after this call) |
+| GET    | `/api/schema/{run_id}` | Retrieve locked schema (cache-first, no Neo4j query)         |
 
 #### Documents (Phase 2)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/documents/ingest` | Parse, chunk, and index an uploaded document |
-| GET | `/api/documents/{run_id}` | List all successfully ingested documents for a run |
-| GET | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
+| Method | Path                                      | Description                                        |
+| ------ | ----------------------------------------- | -------------------------------------------------- |
+| POST   | `/api/documents/ingest`                   | Parse, chunk, and index an uploaded document       |
+| GET    | `/api/documents/{run_id}`                 | List all successfully ingested documents for a run |
+| GET    | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
 
 #### Extraction (Phase 3)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/extraction/run` | Enqueue extraction jobs for all chunks in a run |
-| GET | `/api/extraction/status/{run_id}` | Aggregated extraction progress for a run |
-| GET | `/api/extraction/results/{run_id}` | Extracted nodes and edges written to Neo4j |
+| Method | Path                               | Description                                     |
+| ------ | ---------------------------------- | ----------------------------------------------- |
+| POST   | `/api/extraction/run`              | Enqueue extraction jobs for all chunks in a run |
+| GET    | `/api/extraction/status/{run_id}`  | Aggregated extraction progress for a run        |
+| GET    | `/api/extraction/results/{run_id}` | Extracted nodes and edges written to Neo4j      |
 
 #### Curation (Phase 4)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/curation/candidates/generate` | Run all five deterministic detectors; cache results with 5-min TTL |
-| GET | `/api/curation/candidates/{run_id}` | Return cached candidates grouped by type and ordered by severity |
-| POST | `/api/curation/propose` | Submit a manual Proposal Packet for a candidate |
-| GET | `/api/curation/proposals/{run_id}` | List all proposals for a run (with state and diff summary) |
-| POST | `/api/curation/proposals/{id}/execute` | Build diff and execute an approved proposal via Agent-C |
-| GET | `/api/curation/evidence/{candidate_id}` | Retrieve Qdrant evidence chunks for a candidate |
-| POST | `/api/curation/evidence/query` | Ad-hoc evidence query by dedupe_key, doc, or semantic similarity |
-| POST | `/api/curation/proposals/{id}/approve` | Issue approval_id (single-step for low-risk; phase 1 for merge/delete) |
-| POST | `/api/curation/proposals/{id}/confirm` | Phase 2 confirmation for high-risk proposals (merge, delete) |
-| POST | `/api/curation/proposals/{id}/reject` | Reject a proposal (terminal state) |
-| POST | `/api/curation/proposals/{id}/defer` | Defer a proposal for later review |
+| Method | Path                                    | Description                                                            |
+| ------ | --------------------------------------- | ---------------------------------------------------------------------- |
+| POST   | `/api/curation/candidates/generate`     | Run all five deterministic detectors; cache results with 5-min TTL     |
+| GET    | `/api/curation/candidates/{run_id}`     | Return cached candidates grouped by type and ordered by severity       |
+| POST   | `/api/curation/propose`                 | Submit a manual Proposal Packet for a candidate                        |
+| GET    | `/api/curation/proposals/{run_id}`      | List all proposals for a run (with state and diff summary)             |
+| POST   | `/api/curation/proposals/{id}/execute`  | Build diff and execute an approved proposal via Agent-C                |
+| GET    | `/api/curation/evidence/{candidate_id}` | Retrieve Qdrant evidence chunks for a candidate                        |
+| POST   | `/api/curation/evidence/query`          | Ad-hoc evidence query by dedupe_key, doc, or semantic similarity       |
+| POST   | `/api/curation/proposals/{id}/approve`  | Issue approval_id (single-step for low-risk; phase 1 for merge/delete) |
+| POST   | `/api/curation/proposals/{id}/confirm`  | Phase 2 confirmation for high-risk proposals (merge, delete)           |
+| POST   | `/api/curation/proposals/{id}/reject`   | Reject a proposal (terminal state)                                     |
+| POST   | `/api/curation/proposals/{id}/defer`    | Defer a proposal for later review                                      |
 
 #### Graph Explorer
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/graph/nodes/{run_id}/count` | Total node count by type for a run |
-| GET | `/api/graph/nodes/{run_id}` | Paginated node browser (max 50/page, filterable by node_type) |
-| GET | `/api/graph/edges/{run_id}/count` | Total edge count by type for a run |
-| GET | `/api/graph/edges/{run_id}` | Paginated edge browser (max 50/page, filterable by edge_type) |
+| Method | Path                              | Description                                                   |
+| ------ | --------------------------------- | ------------------------------------------------------------- |
+| GET    | `/api/graph/nodes/{run_id}/count` | Total node count by type for a run                            |
+| GET    | `/api/graph/nodes/{run_id}`       | Paginated node browser (max 50/page, filterable by node_type) |
+| GET    | `/api/graph/edges/{run_id}/count` | Total edge count by type for a run                            |
+| GET    | `/api/graph/edges/{run_id}`       | Paginated edge browser (max 50/page, filterable by edge_type) |
 
 ---
 
@@ -305,6 +305,7 @@ This is where neo4all really shines. Curation runs in three layers:
 **Layer 1 — Deterministic Detection (zero LLM cost)**
 
 Five detectors scan your graph and surface every issue they find:
+
 - Exact node & relationship duplicates
 - Probable duplicates (Jaro-Winkler >= 0.90)
 - Schema/canonical violations
@@ -319,6 +320,7 @@ Review evidence from Qdrant, submit proposals (canonicalize, normalize, rename, 
 **Layer 3 — AI Agent Pipeline**
 
 For batch processing, the multi-agent chain handles it:
+
 - **Orchestrator** (non-LLM) assigns risk class and token budget
 - **Agent-A** assembles and classifies evidence
 - **Agent-B** augments retrieval when evidence is insufficient
@@ -330,15 +332,15 @@ AI proposals flow through the exact same approval pipeline as manual ones. No sh
 
 ## UI Pages
 
-| Page | Path | Description |
-|------|------|-------------|
-| Dashboard | `ui/pages/dashboard.py` | Run summary, graph statistics, proposal breakdown |
-| Schema | `ui/pages/schema.py` | Phase 1: domain description → AI proposal → edit → lock |
-| Ingestion | `ui/pages/ingestion.py` | Phase 2: upload documents, view chunks and quality flags |
-| Extraction | `ui/pages/extraction.py` | Phase 3: trigger extraction, monitor per-chunk job progress |
-| Curation | `ui/pages/curation.py` | Phase 4: candidate review, evidence, proposals, approval pipeline, agent dispatch |
-| Graph Explorer | `ui/pages/graph_explorer.py` | Paginated node/edge browser with type filter |
-| Monitoring | `ui/pages/monitoring.py` | Health, logs, workers, jobs, cache stats, agent telemetry, alerting |
+| Page           | Path                         | Description                                                                       |
+| -------------- | ---------------------------- | --------------------------------------------------------------------------------- |
+| Dashboard      | `ui/pages/dashboard.py`      | Run summary, graph statistics, proposal breakdown                                 |
+| Schema         | `ui/pages/schema.py`         | Phase 1: domain description → AI proposal → edit → lock                           |
+| Ingestion      | `ui/pages/ingestion.py`      | Phase 2: upload documents, view chunks and quality flags                          |
+| Extraction     | `ui/pages/extraction.py`     | Phase 3: trigger extraction, monitor per-chunk job progress                       |
+| Curation       | `ui/pages/curation.py`       | Phase 4: candidate review, evidence, proposals, approval pipeline, agent dispatch |
+| Graph Explorer | `ui/pages/graph_explorer.py` | Paginated node/edge browser with type filter                                      |
+| Monitoring     | `ui/pages/monitoring.py`     | Health, logs, workers, jobs, cache stats, agent telemetry, alerting               |
 
 All pages use `StateManager` for session state (no direct `st.session_state` access) and communicate with the backend exclusively via HTTP.
 
@@ -348,11 +350,11 @@ All pages use `StateManager` for session state (no direct `st.session_state` acc
 
 Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhanaddocker):
 
-| Image | Dockerfile | Description |
-|-------|------------|-------------|
-| [`muhanaddocker/neo4all-api`](https://hub.docker.com/r/muhanaddocker/neo4all-api) | `Dockerfile.api` | FastAPI backend (all business logic, graph writes, validation) |
-| [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs) |
-| [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui) | `Dockerfile.ui` | Streamlit frontend (UI only) |
+| Image                                                                                   | Dockerfile          | Description                                                    |
+| --------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------- |
+| [`muhanaddocker/neo4all-api`](https://hub.docker.com/r/muhanaddocker/neo4all-api)       | `Dockerfile.api`    | FastAPI backend (all business logic, graph writes, validation) |
+| [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs)                  |
+| [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui)         | `Dockerfile.ui`     | Streamlit frontend (UI only)                                   |
 
 **Tags:** `1.0.0`, `latest`
 
@@ -370,19 +372,20 @@ docker build -f Dockerfile.ui     -t muhanaddocker/neo4all-ui:1.0.0     .
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 
-| Job | Description |
-|-----|-------------|
-| `lint` | `ruff check .` |
-| `typecheck` | `mypy api/ ui/` (strict mode) |
-| `unit-tests` | `pytest tests/unit/` with Redis service container |
+| Job                 | Description                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `lint`              | `ruff check .`                                                                       |
+| `typecheck`         | `mypy api/ ui/` (strict mode)                                                        |
+| `unit-tests`        | `pytest tests/unit/` with Redis service container                                    |
 | `integration-tests` | `pytest tests/integration/` — **skipped** unless `NEO4J_CI_*` secrets are configured |
-| `docker-build` | `docker compose build` |
+| `docker-build`      | `docker compose build`                                                               |
 
 ---
 
 ## Dry-Run Mode
 
 Set `DRY_RUN=true` to run the full pipeline without graph mutations. Agent-C skips all Neo4j writes. Diffs and proposals are still generated, logged to S3, and visible in the UI. Useful for:
+
 - Validating the pipeline end-to-end before committing to graph changes
 - Reviewing what mutations *would* happen on a new dataset
 - CI environments without a live Neo4j instance
@@ -391,28 +394,28 @@ Set `DRY_RUN=true` to run the full pipeline without graph mutations. Agent-C ski
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEO4J_DEV_URI` | Yes | — | Neo4j Aura connection URI |
-| `NEO4J_DEV_USER` | Yes | — | Neo4j username |
-| `NEO4J_DEV_PASSWORD` | Yes | — | Neo4j password |
-| `NEO4J_CI_URI` | No | — | CI Neo4j URI (integration tests skip if absent) |
-| `NEO4J_CI_USER` | No | — | CI Neo4j username |
-| `NEO4J_CI_PASSWORD` | No | — | CI Neo4j password |
-| `OPENROUTER_API_KEY` | Yes | — | LLM gateway API key |
-| `S3_ENDPOINT_URL` | Yes | — | Object storage endpoint (`http://localhost:9000` for RustFS) |
-| `S3_ACCESS_KEY_ID` | Yes | — | Object storage access key |
-| `S3_SECRET_ACCESS_KEY` | Yes | — | Object storage secret key |
-| `S3_BUCKET_NAME` | Yes | — | Object storage bucket name |
-| `REDIS_URL` | Yes | — | Redis connection URL |
-| `QDRANT_URL` | No | — | Remote Qdrant instance URL |
-| `LOG_FORMAT` | No | `json` | `json` (production) or `console` (development) |
-| `LOG_LEVEL` | No | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `ENABLE_DOCLING` | No | `true` | Enable Docling parser tier |
-| `ENABLE_UNSTRUCTURED` | No | `true` | Enable Unstructured parser tier |
-| `ENABLE_RAW_FALLBACK` | No | `true` | Enable raw-text fallback parser tier |
-| `EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Sentence-transformers model for chunk embeddings |
-| `DRY_RUN` | No | `false` | Skip graph mutations; log diffs to S3 |
+| Variable               | Required | Default            | Description                                                  |
+| ---------------------- | -------- | ------------------ | ------------------------------------------------------------ |
+| `NEO4J_DEV_URI`        | Yes      | —                  | Neo4j Aura connection URI                                    |
+| `NEO4J_DEV_USER`       | Yes      | —                  | Neo4j username                                               |
+| `NEO4J_DEV_PASSWORD`   | Yes      | —                  | Neo4j password                                               |
+| `NEO4J_CI_URI`         | No       | —                  | CI Neo4j URI (integration tests skip if absent)              |
+| `NEO4J_CI_USER`        | No       | —                  | CI Neo4j username                                            |
+| `NEO4J_CI_PASSWORD`    | No       | —                  | CI Neo4j password                                            |
+| `OPENROUTER_API_KEY`   | Yes      | —                  | LLM gateway API key                                          |
+| `S3_ENDPOINT_URL`      | Yes      | —                  | Object storage endpoint (`http://localhost:9000` for RustFS) |
+| `S3_ACCESS_KEY_ID`     | Yes      | —                  | Object storage access key                                    |
+| `S3_SECRET_ACCESS_KEY` | Yes      | —                  | Object storage secret key                                    |
+| `S3_BUCKET_NAME`       | Yes      | —                  | Object storage bucket name                                   |
+| `REDIS_URL`            | Yes      | —                  | Redis connection URL                                         |
+| `QDRANT_URL`           | No       | —                  | Remote Qdrant instance URL                                   |
+| `LOG_FORMAT`           | No       | `json`             | `json` (production) or `console` (development)               |
+| `LOG_LEVEL`            | No       | `INFO`             | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`              |
+| `ENABLE_DOCLING`       | No       | `true`             | Enable Docling parser tier                                   |
+| `ENABLE_UNSTRUCTURED`  | No       | `true`             | Enable Unstructured parser tier                              |
+| `ENABLE_RAW_FALLBACK`  | No       | `true`             | Enable raw-text fallback parser tier                         |
+| `EMBEDDING_MODEL`      | No       | `all-MiniLM-L6-v2` | Sentence-transformers model for chunk embeddings             |
+| `DRY_RUN`              | No       | `false`            | Skip graph mutations; log diffs to S3                        |
 
 ---
 
@@ -440,11 +443,11 @@ docker compose up
 
 ## Architecture Decision Records
 
-| ADR | Decision |
-|-----|----------|
+| ADR                                              | Decision                                                      |
+| ------------------------------------------------ | ------------------------------------------------------------- |
 | [ADR-001](docs/adr/001-parser-fallback-chain.md) | Three-tier parser fallback: Docling → Unstructured → raw text |
-| [ADR-002](docs/adr/002-no-local-neo4j.md) | Neo4j Aura only — no local graph database container |
-| [ADR-003](docs/adr/003-deterministic-ids.md) | SHA-256 content-derived IDs for all governed artifacts |
+| [ADR-002](docs/adr/002-no-local-neo4j.md)        | Neo4j Aura only — no local graph database container           |
+| [ADR-003](docs/adr/003-deterministic-ids.md)     | SHA-256 content-derived IDs for all governed artifacts        |
 
 ---
 
