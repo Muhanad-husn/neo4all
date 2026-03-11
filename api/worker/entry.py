@@ -61,7 +61,7 @@ async def startup(ctx: dict) -> None:
     Log events:
         arq_worker_started  INFO — max_jobs
     """
-    await sync_credentials_from_redis()
+    await sync_credentials_from_redis(ctx=ctx)
     client = get_neo4j_client()
     client.open()
     ctx["neo4j_client"] = client

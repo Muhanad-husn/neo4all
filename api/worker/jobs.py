@@ -182,7 +182,7 @@ async def extraction_job(
 
     # Sync credentials from Redis in case the API received updated creds
     # from the UI after this worker process started.
-    await sync_credentials_from_redis()
+    await sync_credentials_from_redis(ctx=ctx)
 
     started_at = datetime.now(UTC).isoformat()
 

@@ -195,7 +195,7 @@ async def evidence_assembly_job(
     if correlation_id:
         set_correlation_id(correlation_id)
 
-    await sync_credentials_from_redis()
+    await sync_credentials_from_redis(ctx=ctx)
 
     started_at = datetime.now(UTC).isoformat()
 
@@ -337,7 +337,7 @@ async def retrieval_augmentation_job(
     if correlation_id:
         set_correlation_id(correlation_id)
 
-    await sync_credentials_from_redis()
+    await sync_credentials_from_redis(ctx=ctx)
 
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)
@@ -468,7 +468,7 @@ async def proposal_composition_job(
     if correlation_id:
         set_correlation_id(correlation_id)
 
-    await sync_credentials_from_redis()
+    await sync_credentials_from_redis(ctx=ctx)
 
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)
