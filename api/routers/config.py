@@ -19,10 +19,17 @@ import os
 
 from fastapi import APIRouter
 
+from api.cache.client import get_cache_client
+from api.cache.keys import CacheKey
 from api.config import reload_settings
 from api.graph.client import reset_neo4j_client
 from api.observability.logger import get_logger
-from api.routers.models import ConfigReloadRequest, ConfigReloadResponse, ServiceStatus
+from api.routers.models import (
+    ConfigReloadRequest,
+    ConfigReloadResponse,
+    RuntimeCredentials,
+    ServiceStatus,
+)
 from api.services.health import probe_all_services
 
 logger = get_logger(__name__)
@@ -70,6 +77,20 @@ async def reload_config(
                 "credentials_injected_from_request",
                 keys=injected,
             )
+
+        # --- Publish credentials to Redis for worker container pickup ------
+        creds = RuntimeCredentials(
+            neo4j_uri=getattr(body, "neo4j_uri", None),
+            neo4j_user=getattr(body, "neo4j_user", None),
+            neo4j_password=getattr(body, "neo4j_password", None),
+            openrouter_api_key=getattr(body, "openrouter_api_key", None),
+        )
+        cache = get_cache_client()
+        stored = await cache.set(CacheKey.config_credentials(), creds)
+        if stored:
+            logger.info("credentials_published_to_redis", keys=injected)
+        else:
+            logger.warning("credentials_publish_failed")
 
     settings = reload_settings()
 

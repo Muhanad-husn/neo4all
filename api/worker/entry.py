@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from api.graph.client import get_neo4j_client
 from api.observability.logger import configure_logging, get_logger
+from api.worker.config_sync import sync_credentials_from_redis
 from api.worker.jobs import extraction_job
 from api.worker.jobs_agents import (
     evidence_assembly_job,
@@ -54,9 +55,13 @@ async def startup(ctx: dict) -> None:
     with the pooling and timeout settings from Settings (NEO4J_MAX_POOL_SIZE,
     NEO4J_CONNECTION_TIMEOUT_S).
 
+    Also syncs credentials from Redis in case the UI injected them via
+    POST /api/config/reload before the worker started.
+
     Log events:
         arq_worker_started  INFO — max_jobs
     """
+    await sync_credentials_from_redis()
     client = get_neo4j_client()
     client.open()
     ctx["neo4j_client"] = client

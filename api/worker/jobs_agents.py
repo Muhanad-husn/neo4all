@@ -61,6 +61,7 @@ from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.observability.correlation import set_correlation_id
 from api.observability.logger import get_logger
+from api.worker.config_sync import sync_credentials_from_redis
 
 logger = get_logger(__name__)
 
@@ -193,6 +194,8 @@ async def evidence_assembly_job(
     # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
     if correlation_id:
         set_correlation_id(correlation_id)
+
+    await sync_credentials_from_redis()
 
     started_at = datetime.now(UTC).isoformat()
 
@@ -334,6 +337,8 @@ async def retrieval_augmentation_job(
     if correlation_id:
         set_correlation_id(correlation_id)
 
+    await sync_credentials_from_redis()
+
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)
     evidence_report = EvidenceReport.model_validate_json(evidence_report_json)
@@ -462,6 +467,8 @@ async def proposal_composition_job(
     # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
     if correlation_id:
         set_correlation_id(correlation_id)
+
+    await sync_credentials_from_redis()
 
     candidate = Candidate.model_validate_json(candidate_json)
     decision = OrchestratorDecision.model_validate_json(decision_json)

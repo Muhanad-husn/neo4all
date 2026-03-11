@@ -39,6 +39,7 @@ from api.observability.correlation import set_correlation_id
 from api.observability.logger import get_logger
 from api.services.extraction import ExtractionError, get_extraction_service
 from api.vector.indexer import get_vector_indexer
+from api.worker.config_sync import sync_credentials_from_redis
 
 logger = get_logger(__name__)
 
@@ -178,6 +179,10 @@ async def extraction_job(
     # Bind correlation ID to this worker task's structlog context (SKILL-D R-D2).
     if correlation_id:
         set_correlation_id(correlation_id)
+
+    # Sync credentials from Redis in case the API received updated creds
+    # from the UI after this worker process started.
+    await sync_credentials_from_redis()
 
     started_at = datetime.now(UTC).isoformat()
 

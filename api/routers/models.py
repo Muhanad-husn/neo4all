@@ -283,6 +283,22 @@ class ConfigReloadRequest(BaseModel):
     openrouter_api_key: str | None = None
 
 
+class RuntimeCredentials(BaseModel):
+    """Credentials stored in Redis for cross-container propagation.
+
+    Written by POST /api/config/reload; read by the worker before each job
+    to pick up credentials injected via the UI Phase 0 form.
+
+    Fields mirror ConfigReloadRequest but only include non-None values that
+    were actually provided in the reload request.
+    """
+
+    neo4j_uri: str | None = None
+    neo4j_user: str | None = None
+    neo4j_password: str | None = None
+    openrouter_api_key: str | None = None
+
+
 class ConfigReloadResponse(BaseResponse):
     """Response model for POST /api/config/reload.
 

@@ -179,6 +179,17 @@ class CacheKey:
         return f"session:{user_hash}"
 
     @staticmethod
+    def config_credentials() -> str:
+        """Key for runtime credential propagation across containers.
+
+        Pattern: config:credentials
+        No TTL — credentials persist until overwritten by the next reload.
+        Written by POST /api/config/reload; read by the worker before each job
+        to pick up credentials injected via the UI Phase 0 form.
+        """
+        return "config:credentials"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 
