@@ -74,12 +74,15 @@ git clone https://github.com/Muhanad-husn/neo4all.git
 cd neo4all
 cp .env.example .env   # fill in your Neo4j Aura + OpenRouter credentials
 
-# 2. Launch everything
+# 2. Pull latest images and launch everything
+docker compose pull
 docker compose up -d
 
 # 3. Open the app
 open http://localhost:8501
 ```
+
+> **Note:** `docker compose pull` is only needed if you skipped the pull commands above. Without it, `docker compose up -d` will reuse whatever images are cached locally and you may run an outdated version.
 
 That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), and you're ready to build a knowledge graph.
 
