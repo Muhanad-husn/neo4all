@@ -285,8 +285,22 @@ class LLMClient:
                 run_id=run_id,
             )
             if validated is None:
-                # Validation failure is not retryable — the model produced
-                # structurally wrong output and retrying is unlikely to help.
+                # Short garbage responses (e.g. "None", empty) are likely
+                # transient LLM glitches — retry them.  Longer responses
+                # that fail validation have a structural mismatch and
+                # retrying is unlikely to help.
+                if len(raw_text) < 16 and attempt < _MAX_ATTEMPTS:
+                    wait_s = _BACKOFF_BASE_S * (2 ** (attempt - 1))
+                    logger.warning(
+                        "llm_call_retry_short_response",
+                        job_id=job.job_id,
+                        attempt=attempt,
+                        raw_length=len(raw_text),
+                        wait_s=wait_s,
+                        run_id=run_id,
+                    )
+                    await asyncio.sleep(wait_s)
+                    continue
                 return None
 
             duration_ms = round((time.perf_counter() - t0) * 1000, 2)
@@ -376,9 +390,20 @@ class LLMClient:
             raw_length=len(raw_text),
         )
 
+        # Strip markdown code fences that some models wrap around JSON.
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```"):
+            # Remove opening fence (```json or ```)
+            first_nl = cleaned.find("\n")
+            if first_nl != -1:
+                cleaned = cleaned[first_nl + 1:]
+            # Remove closing fence
+            if cleaned.rstrip().endswith("```"):
+                cleaned = cleaned.rstrip()[:-3].rstrip()
+
         # Step 1: Parse as JSON.
         try:
-            parsed: Any = json.loads(raw_text)
+            parsed: Any = json.loads(cleaned)
         except json.JSONDecodeError as exc:
             logger.error(
                 "llm_call_json_error",

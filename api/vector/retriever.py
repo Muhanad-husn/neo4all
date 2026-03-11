@@ -55,8 +55,17 @@ from api.observability.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Lock protecting lazy model loading across threads (asyncio.to_thread pool).
-_model_load_lock = threading.Lock()
+# Lock protecting lazy model loading AND encoding across threads
+# (asyncio.to_thread pool).  SentenceTransformer.encode() is not thread-safe
+# — concurrent encode calls on the same model corrupt PyTorch tensor state
+# ("Cannot copy out of meta tensor").  A single lock serialises both init and
+# encode so only one thread touches the model at a time.
+_model_lock = threading.Lock()
+
+# Module-level singleton for the embedding model.  Shared across all
+# EvidenceRetriever instances to prevent duplicate loads and the meta-tensor
+# race condition that arises when multiple instances load concurrently.
+_embedding_model_instance: Any = None
 
 # Maximum chunks returned per semantic search call.
 MAX_SEMANTIC_RESULTS: int = 50
@@ -126,7 +135,6 @@ class EvidenceRetriever:
 
         self._settings = settings or get_settings()
         self._qdrant: Any = qdrant_client  # None → created lazily
-        self._embedding_model: Any = None  # loaded lazily on first embed
 
     # ------------------------------------------------------------------
     # Public retrieval methods
@@ -391,8 +399,10 @@ class EvidenceRetriever:
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of texts using the configured sentence-transformers model.
 
-        Synchronous — always called via asyncio.to_thread.  The model is
-        loaded lazily on first call and reused for the instance lifetime.
+        Synchronous — always called via asyncio.to_thread.  Uses a module-level
+        singleton model protected by _model_lock to prevent concurrent loads
+        and the PyTorch meta-tensor corruption that occurs when multiple threads
+        call SentenceTransformer.encode() simultaneously.
 
         Args:
             texts: Texts to embed.  Never logged (SKILL-D R-D5).
@@ -404,21 +414,22 @@ class EvidenceRetriever:
             ImportError: sentence-transformers not installed.
             Exception:   Any encoding-level error.
         """
-        if self._embedding_model is None:
-            with _model_load_lock:
-                if self._embedding_model is None:  # double-check after acquiring lock
-                    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+        global _embedding_model_instance
 
-                    model_name = self._settings.EMBEDDING_MODEL
-                    logger.info("embedding_model_loaded", model=model_name)
-                    self._embedding_model = SentenceTransformer(model_name)
+        with _model_lock:
+            if _embedding_model_instance is None:
+                from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
-        embeddings = self._embedding_model.encode(
-            texts,
-            batch_size=64,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
+                model_name = self._settings.EMBEDDING_MODEL
+                logger.info("embedding_model_loaded", model=model_name)
+                _embedding_model_instance = SentenceTransformer(model_name)
+
+            embeddings = _embedding_model_instance.encode(
+                texts,
+                batch_size=64,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
         return [emb.tolist() for emb in embeddings]
 
     # ------------------------------------------------------------------

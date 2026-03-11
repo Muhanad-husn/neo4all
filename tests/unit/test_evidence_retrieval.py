@@ -131,7 +131,8 @@ def _make_retriever(
         settings=_FAKE_SETTINGS,
         qdrant_client=mock_qdrant or AsyncMock(),
     )
-    retriever._embedding_model = embedding_model or _MockEmbeddingModel()
+    import api.vector.retriever as _ret_mod
+    _ret_mod._embedding_model_instance = embedding_model or _MockEmbeddingModel()
     return retriever
 
 

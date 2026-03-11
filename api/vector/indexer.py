@@ -60,8 +60,13 @@ from api.observability.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Lock protecting lazy model loading across threads (asyncio.to_thread pool).
-_model_load_lock = threading.Lock()
+# Lock protecting lazy model loading AND encoding across threads.
+# SentenceTransformer.encode() is not thread-safe — concurrent calls corrupt
+# PyTorch tensor state.  This lock serialises both init and encode.
+_model_lock = threading.Lock()
+
+# Module-level singleton for the embedding model (same pattern as retriever.py).
+_embedding_model_instance: Any = None
 
 # Maximum number of chunks per Qdrant upsert call (SPEC-03 guidance: 100).
 UPSERT_BATCH_SIZE: int = 100
@@ -117,7 +122,6 @@ class VectorIndexer:
 
         self._settings = settings or get_settings()
         self._qdrant: Any = qdrant_client  # None → created lazily on first use
-        self._embedding_model: Any = None  # loaded lazily on first embed call
 
     # ------------------------------------------------------------------
     # Public interface
@@ -519,21 +523,22 @@ class VectorIndexer:
             ImportError: If sentence-transformers is not installed.
             Exception:   Any model-level encoding error.
         """
-        if self._embedding_model is None:
-            with _model_load_lock:
-                if self._embedding_model is None:  # double-check after acquiring lock
-                    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+        global _embedding_model_instance
 
-                    model_name = self._settings.EMBEDDING_MODEL
-                    logger.info("embedding_model_loaded", model=model_name)
-                    self._embedding_model = SentenceTransformer(model_name)
+        with _model_lock:
+            if _embedding_model_instance is None:
+                from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
-        embeddings = self._embedding_model.encode(
-            texts,
-            batch_size=64,       # sentence-transformers internal batch size
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
+                model_name = self._settings.EMBEDDING_MODEL
+                logger.info("embedding_model_loaded", model=model_name)
+                _embedding_model_instance = SentenceTransformer(model_name)
+
+            embeddings = _embedding_model_instance.encode(
+                texts,
+                batch_size=64,       # sentence-transformers internal batch size
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
         return [emb.tolist() for emb in embeddings]
 
     # ------------------------------------------------------------------

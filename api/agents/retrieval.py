@@ -30,7 +30,7 @@ from api.models.candidate import Candidate
 from api.observability.logger import get_logger
 from api.observability.metrics import get_metrics
 from api.services.llm import JobConfig, LLMClient
-from api.vector.retriever import EvidenceChunk, EvidenceRetriever
+from api.vector.retriever import EvidenceChunk, EvidenceRetriever, get_evidence_retriever
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,7 @@ class RetrievalAugmentationAgent:
 
     def _get_retriever(self) -> EvidenceRetriever:
         if self._retriever is None:
-            self._retriever = EvidenceRetriever()
+            self._retriever = get_evidence_retriever()
         return self._retriever
 
     def _get_cache(self) -> CacheClient:
