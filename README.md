@@ -47,9 +47,9 @@ Using pre-built images from Docker Hub
 Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
 
 ```bash
-docker pull muhanaddocker/neo4all-api:1.0.0 
-docker pull muhanaddocker/neo4all-worker:1.0.0 
-docker pull muhanaddocker/neo4all-ui:1.0.0
+docker pull muhanaddocker/neo4all-api:latest 
+docker pull muhanaddocker/neo4all-worker:latest 
+docker pull muhanaddocker/neo4all-ui:latest
 ```
 
 All three images are also tagged `latest`.
