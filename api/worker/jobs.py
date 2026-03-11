@@ -298,24 +298,30 @@ async def extraction_job(
             )
         )
 
-    except Exception as exc:
+    except BaseException as exc:
         # ------------------------------------------------------------------
         # Per-chunk failure: persist FAILED status, log ERROR, do NOT raise.
         # Sibling chunk jobs for the same run must continue unaffected.
+        # Catches BaseException (not just Exception) so that ARQ job
+        # timeouts — which surface as asyncio.CancelledError, a
+        # BaseException subclass — also mark the job as failed.
         # ------------------------------------------------------------------
-        error_msg = str(exc)
+        error_msg = str(exc) or type(exc).__name__
         completed_at = datetime.now(UTC).isoformat()
-        await _set_job_status(
-            ChunkJobStatus(
-                run_id=run_id,
-                chunk_id=chunk_id,
-                doc_id=doc_id,
-                status="failed",
-                error=error_msg,
-                started_at=started_at,
-                completed_at=completed_at,
+        try:
+            await _set_job_status(
+                ChunkJobStatus(
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                    doc_id=doc_id,
+                    status="failed",
+                    error=error_msg,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                )
             )
-        )
+        except Exception:
+            pass  # best-effort status write during cancellation
         logger.error(
             "job_failed",
             run_id=run_id,

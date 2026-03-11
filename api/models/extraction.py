@@ -94,9 +94,15 @@ class ExtractedNode(BaseModel):
     @field_validator("run_id", "chunk_id", "schema_version", "node_type", "primary_value")
     @classmethod
     def _non_empty(cls, v: str) -> str:
-        if not v.strip():
+        import unicodedata
+
+        cleaned = "".join(
+            " " if (unicodedata.category(ch).startswith("Z") and ch != " ") else ch
+            for ch in v
+        ).strip()
+        if not cleaned:
             raise ValueError("must be a non-empty, non-whitespace string")
-        return v
+        return cleaned
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -173,9 +179,15 @@ class ExtractedEdge(BaseModel):
     )
     @classmethod
     def _non_empty(cls, v: str) -> str:
-        if not v.strip():
+        import unicodedata
+
+        cleaned = "".join(
+            " " if (unicodedata.category(ch).startswith("Z") and ch != " ") else ch
+            for ch in v
+        ).strip()
+        if not cleaned:
             raise ValueError("must be a non-empty, non-whitespace string")
-        return v
+        return cleaned
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
@@ -108,12 +108,28 @@ def _schema_to_prompt_json(schema: SchemaVersion) -> str:
 # Private LLM-facing intermediate models
 # ---------------------------------------------------------------------------
 
+def _sanitize_unicode(v: str) -> str:
+    """Replace non-ASCII whitespace (e.g. \\xa0) with regular space, then trim."""
+    import unicodedata
+
+    cleaned = "".join(
+        " " if (unicodedata.category(ch).startswith("Z") and ch != " ") else ch
+        for ch in v
+    )
+    return " ".join(cleaned.split())
+
+
 class _RawNode(BaseModel):
     """Raw node dict as returned by the LLM (not yet a governed domain model)."""
 
     node_type: str
     primary_value: str
     properties: dict[str, Any] = {}
+
+    @field_validator("node_type", "primary_value")
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        return _sanitize_unicode(v)
 
 
 class _RawEdge(BaseModel):
@@ -125,6 +141,17 @@ class _RawEdge(BaseModel):
     end_node_type: str
     end_primary_value: str
     properties: dict[str, Any] = {}
+
+    @field_validator(
+        "rel_type",
+        "start_node_type",
+        "start_primary_value",
+        "end_node_type",
+        "end_primary_value",
+    )
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        return _sanitize_unicode(v)
 
 
 class _LLMExtractionOutput(BaseModel):
