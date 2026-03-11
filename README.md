@@ -46,14 +46,24 @@ Using pre-built images from Docker Hub
 
 Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
 
+This pulls all three images — `neo4all-api`, `neo4all-worker`, and `neo4all-ui`:
+
+**Linux / macOS / Git Bash:**
+
 ```bash
 for img in api worker ui; do docker pull muhanaddocker/neo4all-$img:latest; done
 ```
 
-On **Windows (CMD)** use:
+**Windows (CMD):**
 
 ```cmd
 for %i in (api worker ui) do docker pull muhanaddocker/neo4all-%i:latest
+```
+
+**Windows (PowerShell):**
+
+```powershell
+foreach ($img in "api","worker","ui") { docker pull muhanaddocker/neo4all-${img}:latest }
 ```
 
 Then:
