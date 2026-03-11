@@ -65,6 +65,9 @@ _OPENROUTER_KEY_KEYS = {"OPENROUTER_API_KEY"}
 # Prefixed _nav_ to distinguish from _sm_ (StateManager) keys.
 _K_VIEW_OVERRIDE = "_nav_view_override"
 
+# Session-state key to avoid repeated restore attempts on every Streamlit rerun.
+_K_RESTORE_ATTEMPTED = "_nav_restore_attempted"
+
 
 def _write_env_credentials(
     neo4j_uri: str,
@@ -211,7 +214,7 @@ def _notify_api_reload(
         if openrouter_api_key:
             payload["openrouter_api_key"] = openrouter_api_key
 
-        resp = httpx.Client(timeout=5.0).post(
+        resp = httpx.Client(timeout=2.0).post(
             f"{_API_BASE_URL}/api/config/reload",
             json=payload,
         )
@@ -249,7 +252,7 @@ def _try_restore_session(state: StateManager) -> bool:
 
         user_hash = _derive_user_hash(neo4j_uri, neo4j_user)
 
-        resp = httpx.Client(timeout=3.0).get(
+        resp = httpx.Client(timeout=1.5).get(
             f"{_API_BASE_URL}/api/session/{user_hash}"
         )
         if resp.status_code != 200:
@@ -272,13 +275,20 @@ def _try_restore_session(state: StateManager) -> bool:
             openrouter_api_key=openrouter_api_key,
         )
 
-        # Ensure API has current credentials loaded.
-        _notify_api_reload(
-            neo4j_uri=neo4j_uri,
-            neo4j_user=neo4j_user,
-            neo4j_password=neo4j_password,
-            openrouter_api_key=openrouter_api_key,
-        )
+        # Ensure API has current credentials loaded (fire-and-forget with
+        # short timeout — session restore should not block on service probes).
+        import threading
+
+        threading.Thread(
+            target=_notify_api_reload,
+            kwargs={
+                "neo4j_uri": neo4j_uri,
+                "neo4j_user": neo4j_user,
+                "neo4j_password": neo4j_password,
+                "openrouter_api_key": openrouter_api_key,
+            },
+            daemon=True,
+        ).start()
 
         return True
     except Exception:
@@ -439,6 +449,7 @@ def _render_sidebar(state: StateManager) -> str | None:
                     pass
 
                 state.reset()
+                st.session_state.pop(_K_RESTORE_ATTEMPTED, None)
                 st.rerun()
 
     return view_override
@@ -529,7 +540,9 @@ def _render_phase_init(state: StateManager) -> None:
                     openrouter_api_key=openrouter_api_key,
                 )
             except OSError as exc:
-                st.warning(f"Could not save credentials to .env: {exc}")
+                # Suppress in Docker where .env/.env.example don't exist.
+                if not Path("/.dockerenv").exists():
+                    st.warning(f"Could not save credentials to .env: {exc}")
 
             # Tell the running API to reload its configuration.
             if _notify_api_reload(
@@ -629,8 +642,10 @@ def main() -> None:
     # from Redis + .env.  After restore both conditions become False, so this
     # block is skipped on all subsequent reruns (no infinite loop).
     if state.phase == Phase.INIT and state.run_id is None:
-        if _try_restore_session(state):
-            st.rerun()
+        if not st.session_state.get(_K_RESTORE_ATTEMPTED):
+            st.session_state[_K_RESTORE_ATTEMPTED] = True
+            if _try_restore_session(state):
+                st.rerun()
 
     # --- Session save (fire-and-forget, dirty-check gated) -----------------
     _save_session(state)
