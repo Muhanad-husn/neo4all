@@ -326,8 +326,9 @@ For batch processing, the multi-agent chain handles it:
 
 - **Orchestrator** (non-LLM) assigns risk class and token budget
 - **Agent-A** assembles and classifies evidence (structural signals from detectors are treated as first-class evidence)
-- **Agent-B** augments retrieval when evidence is insufficient (sufficiency scoring accounts for structural baselines before requiring textual confirmation)
-- **Agent-P** composes a governed proposal — with regex safety guards that reject any Cypher or executable code
+- **Structural Recommendation** (non-LLM) pre-digests collision_context metrics into a concrete action recommendation (merge, canonicalize, normalize, delete, defer) with deterministic confidence — this is the primary input for Agent-P
+- **Agent-B** retrieval augmentation (currently dormant — activates when users ingest new documents from the curation panel; see [Roadmap](#roadmap))
+- **Agent-P** composes a governed proposal using the structural recommendation as its anchor — with regex safety guards that reject any Cypher or executable code
 
 AI proposals flow through the exact same approval pipeline as manual ones. No shortcuts. Full telemetry (tokens, cost, execution time) is tracked per agent per candidate.
 
@@ -471,12 +472,23 @@ docker compose up -d --build api ui
 
 ---
 
+## Roadmap
+
+**Next milestone: Curation-panel document ingestion + Agent-B activation**
+
+Currently, the vector store only contains chunks from the original document ingestion (Phase 2). Since those chunks created the graph nodes in the first place, retrieval augmentation (Agent-B) finds no new evidence — it searches the same material that produced the candidates. Agent-B is registered but dormant.
+
+The next milestone enables users to ingest additional documents directly from the curation UI (Phase 4). These new documents are chunked and embedded into Qdrant without triggering extraction — they serve purely as supplementary evidence for entity resolution. When new documents exist in the vector store, Agent-B activates and searches them for evidence that supports or contradicts the structural recommendation. This completes the evidence loop: deterministic detectors flag issues, structural recommendations propose actions, and user-provided documents supply the textual evidence that was previously missing.
+
+---
+
 ## Known Limitations (v1.0.0)
 
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)
 - Qdrant collections (`chunks_{run_id}`) are not cleaned up on run deletion
 - `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added
+- Agent-B (retrieval augmentation) is dormant until curation-panel document ingestion is implemented (see [Roadmap](#roadmap))
 
 ---
 
