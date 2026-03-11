@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    image: muhanaddocker/neo4all-api:1.0.3
+    image: muhanaddocker/neo4all-api:latest
     ports:
       - "8000:8000"
     environment:
@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: muhanaddocker/neo4all-worker:1.0.3
+    image: muhanaddocker/neo4all-worker:latest
     environment:
       - REDIS_URL=redis://redis:6379
       - QDRANT_URL=http://qdrant:6333
@@ -46,7 +46,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ui
-    image: muhanaddocker/neo4all-ui:1.0.3
+    image: muhanaddocker/neo4all-ui:latest
     ports:
       - "8501:8501"
     environment:

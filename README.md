@@ -47,12 +47,14 @@ Using pre-built images from Docker Hub
 Pre-built images are available on [Docker Hub](https://hub.docker.com/u/muhanaddocker):
 
 ```bash
-docker pull muhanaddocker/neo4all-api:latest 
-docker pull muhanaddocker/neo4all-worker:latest 
-docker pull muhanaddocker/neo4all-ui:latest
+for img in api worker ui; do docker pull muhanaddocker/neo4all-$img:latest; done
 ```
 
-All three images are also tagged `latest`.
+On **Windows (CMD)** use:
+
+```cmd
+for %i in (api worker ui) do docker pull muhanaddocker/neo4all-%i:latest
+```
 
 Then:
 
@@ -367,9 +369,9 @@ All images use CPU-only PyTorch (~3 GB each) instead of the default CUDA build (
 To build locally instead of pulling:
 
 ```bash
-docker build -f Dockerfile.api    -t muhanaddocker/neo4all-api:1.0.0    .
-docker build -f Dockerfile.worker -t muhanaddocker/neo4all-worker:1.0.0 .
-docker build -f Dockerfile.ui     -t muhanaddocker/neo4all-ui:1.0.0     .
+docker build -f Dockerfile.api    -t muhanaddocker/neo4all-api:latest    .
+docker build -f Dockerfile.worker -t muhanaddocker/neo4all-worker:latest .
+docker build -f Dockerfile.ui     -t muhanaddocker/neo4all-ui:latest     .
 ```
 
 ---
