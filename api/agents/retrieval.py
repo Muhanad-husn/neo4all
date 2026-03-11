@@ -217,9 +217,9 @@ class RetrievalAugmentationAgent:
             )
 
             # 5. Short-circuit: if round 1 found nothing new, the vector
-            #    store has no additional material beyond what the candidate
-            #    already carries.  Skip remaining rounds.
-            if round_num == 1 and len(fresh_chunks) == 0 and initial_seen_count > 0:
+            #    store has no additional material for this candidate.
+            #    Skip remaining rounds.
+            if round_num == 1 and len(fresh_chunks) == 0:
                 retrieval_exhausted = True
                 logger.info(
                     "retrieval_exhausted_early_exit",
@@ -239,12 +239,13 @@ class RetrievalAugmentationAgent:
                 )
                 break
 
-        # If we ran all rounds and never found anything new beyond initial
-        # evidence, mark as exhausted.
+        # If we ran all rounds and never found anything new, mark as
+        # exhausted.  This covers both the case where Agent-A provided
+        # pre-attached evidence (initial_seen_count > 0) AND the case
+        # where Agent-A found nothing (initial_seen_count == 0).
         if (
             not retrieval_exhausted
             and len(seen_chunk_ids) == initial_seen_count
-            and initial_seen_count > 0
         ):
             retrieval_exhausted = True
 
