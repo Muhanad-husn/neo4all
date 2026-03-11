@@ -46,7 +46,7 @@ from ui.state import PANEL_READ, StateManager
 
 _API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
 _REQUEST_TIMEOUT_FAST: float = 5.0   # used for GET requests
-_REQUEST_TIMEOUT_SLOW: float = 120.0  # used for POST /propose (LLM call)
+_REQUEST_TIMEOUT_SLOW: float = 300.0  # used for POST /propose (LLM call)
 
 # Named panel identifier used with StateManager panel mode tracking.
 _PANEL_SCHEMA = "schema_editor"
