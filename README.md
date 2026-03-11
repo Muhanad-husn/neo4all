@@ -34,7 +34,7 @@ Drop in your documents — PDFs, DOCX, spreadsheets, HTML, images, whatever you 
 - **AI does the heavy lifting, humans keep control.** AI proposes schema, extracts entities, and suggests fixes — but nothing changes in your graph without explicit approval.
 - **20+ file formats out of the box.** Three-tier parser fallback (Docling → Unstructured → raw text) means nearly anything you throw at it just works.
 - **Deterministic by design.** Same input always produces the same IDs, same diffs, same candidates. No `uuid4()` randomness. Every artifact is reproducible.
-- **Five zero-LLM quality detectors** catch exact duplicates, probable duplicates (Jaro-Winkler), schema violations, orphan nodes, and structural anomalies — before any AI curation runs.
+- **Five zero-LLM quality detectors** catch exact duplicates, probable duplicates (Jaro-Winkler + token overlap), schema violations, orphan nodes, and structural anomalies — before any AI curation runs.
 - **Full governed pipeline**: `Proposal → Approval → Diff → Execution → Audit`. Two-phase confirmation for dangerous operations (merge, delete). Dry-run mode for zero-risk validation.
 - **Open source. Run it locally with Docker, or deploy to AWS.** Your data never leaves your infrastructure.
 
@@ -310,7 +310,7 @@ This is where neo4all really shines. Curation runs in three layers:
 Five detectors scan your graph and surface every issue they find:
 
 - Exact node & relationship duplicates
-- Probable duplicates (Jaro-Winkler >= 0.90)
+- Probable duplicates (Jaro-Winkler >= 0.85, with token-overlap gate for lower-similarity pairs)
 - Schema/canonical violations
 - Structural anomalies (orphans, degree outliers, missing provenance)
 
@@ -325,8 +325,8 @@ Review evidence from Qdrant, submit proposals (canonicalize, normalize, rename, 
 For batch processing, the multi-agent chain handles it:
 
 - **Orchestrator** (non-LLM) assigns risk class and token budget
-- **Agent-A** assembles and classifies evidence
-- **Agent-B** augments retrieval when evidence is insufficient
+- **Agent-A** assembles and classifies evidence (structural signals from detectors are treated as first-class evidence)
+- **Agent-B** augments retrieval when evidence is insufficient (sufficiency scoring accounts for structural baselines before requiring textual confirmation)
 - **Agent-P** composes a governed proposal — with regex safety guards that reject any Cypher or executable code
 
 AI proposals flow through the exact same approval pipeline as manual ones. No shortcuts. Full telemetry (tokens, cost, execution time) is tracked per agent per candidate.
