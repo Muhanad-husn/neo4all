@@ -355,10 +355,11 @@ class RetrievalAugmentationAgent:
     ) -> float:
         """Deterministic heuristic with structural baseline from collision_context.
 
-        Structural baseline (from deterministic detectors):
-          - jaro_winkler >= 0.95:              +0.35
-          - jaro_winkler >= 0.90:              +0.25
-          - jaro_winkler >= 0.85:              +0.15
+        Structural baseline (from deterministic detectors — aligned with
+        evidence_assembly/v3 prompt values):
+          - jaro_winkler >= 0.95:              +0.50
+          - jaro_winkler >= 0.90:              +0.40
+          - jaro_winkler >= 0.85:              +0.30
           - context_jaccard > 0:               +min(context_jaccard, 0.2)
           - token_overlap >= 0.5:              +0.05
 
@@ -381,11 +382,11 @@ class RetrievalAugmentationAgent:
             tok = ctx.get("token_overlap", 0.0)
             cj = ctx.get("context_jaccard", 0.0)
             if jw >= 0.95:
-                score += 0.35
+                score += 0.50
             elif jw >= 0.90:
-                score += 0.25
+                score += 0.40
             elif jw >= 0.85:
-                score += 0.15
+                score += 0.30
             if cj > 0.0:
                 score += min(cj, 0.2)
             if tok >= 0.5:
