@@ -478,7 +478,14 @@ async def run_agent_pipeline(
             errors=[ErrorDetail(code="orchestration_error", message=str(exc))],
         )
 
-    # 5. Enqueue evidence_assembly_job for each candidate.
+    # 5. Clear prior pipeline status so the idempotency guard in
+    #    evidence_assembly_job does not skip re-run candidates.
+    for candidate in candidates:
+        await cache.delete(
+            CacheKey.agent_job(run_id=run_id, candidate_id=candidate.candidate_id)
+        )
+
+    # 6. Enqueue evidence_assembly_job for each candidate.
     correlation_id = get_correlation_id()
     try:
         arq_pool = await get_arq_pool()
