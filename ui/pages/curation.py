@@ -112,6 +112,22 @@ def _post(
 # ===========================================================================
 
 
+def _dismiss_stale_proposals(run_id: str) -> None:
+    """Dismiss all existing proposals for the run after candidate regeneration.
+
+    Proposals are preserved in S3 for audit; this only hides them from the UI
+    queue so stale proposals from a previous candidate set are not shown.
+    """
+    data = _fetch(f"/api/curation/proposals/{run_id}")
+    if data is None or data.get("status") == "error":
+        return
+    proposals: list[dict[str, Any]] = data.get("proposals", [])
+    if not proposals:
+        return
+    ids = {p["proposal_id"] for p in proposals}
+    StateManager.get().dismiss_proposals_batch(ids)
+
+
 def _render_trigger_section(run_id: str) -> None:
     """Render the candidate generation trigger button and inline count summary."""
     st.subheader("Generate Candidates")
@@ -170,6 +186,10 @@ def _render_trigger_section(run_id: str) -> None:
 
         if sv:
             st.caption(f"Schema version: `{sv[:16]}…`")
+
+        # Dismiss all existing proposals — regenerated candidates invalidate
+        # prior proposals.  Proposals remain in S3 for audit; this is UI-only.
+        _dismiss_stale_proposals(run_id)
 
         st.rerun()
 

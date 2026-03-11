@@ -356,6 +356,12 @@ class StateManager:
         dismissed.add(proposal_id)
         st.session_state[_K_DISMISSED_PROPOSALS] = dismissed
 
+    def dismiss_proposals_batch(self, proposal_ids: set[str]) -> None:
+        """Hide multiple proposals from the UI queue at once."""
+        dismissed = set(st.session_state[_K_DISMISSED_PROPOSALS])
+        dismissed |= proposal_ids
+        st.session_state[_K_DISMISSED_PROPOSALS] = dismissed
+
     def undismiss_proposal(self, proposal_id: str) -> None:
         """Restore a dismissed proposal to the UI queue."""
         dismissed = set(st.session_state[_K_DISMISSED_PROPOSALS])
