@@ -368,6 +368,10 @@ class StateManager:
         dismissed.discard(proposal_id)
         st.session_state[_K_DISMISSED_PROPOSALS] = dismissed
 
+    def clear_dismissed_proposals(self) -> None:
+        """Reset the dismissed-proposals set (e.g. after purging all proposals)."""
+        st.session_state[_K_DISMISSED_PROPOSALS] = set()
+
     # ------------------------------------------------------------------
     # Session persistence
     # ------------------------------------------------------------------

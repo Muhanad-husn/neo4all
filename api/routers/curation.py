@@ -2,10 +2,11 @@
 api/routers/curation.py — Manual proposal pipeline endpoints (SPEC-06 S-06.8).
 
 Manual proposal pipeline:
-  POST /propose                           — Create a Proposal Packet (same governed
-                                           pipeline as AI — no bypass).
-  GET  /proposals/{run_id}               — List all proposals for a run.
-  POST /proposals/{proposal_id}/execute  — Build diff and execute via Agent-C.
+  POST   /propose                           — Create a Proposal Packet (same governed
+                                             pipeline as AI — no bypass).
+  GET    /proposals/{run_id}               — List all proposals for a run.
+  DELETE /proposals/{run_id}               — Purge all proposals for a run (S3 + Redis).
+  POST   /proposals/{proposal_id}/execute  — Build diff and execute via Agent-C.
 
 Architecture (SKILL-B: thin routers)
 --------------------------------------
@@ -416,6 +417,37 @@ async def list_proposals(run_id: str) -> ListProposalsResponse:
         total=len(proposals),
         proposals=proposals,
     )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /proposals/{run_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/proposals/{run_id}",
+    response_model=BaseResponse,
+    summary="Delete all proposals for a governed run from S3 and Redis",
+)
+async def clear_proposals(run_id: str) -> BaseResponse:
+    """Remove every proposal for a run from both S3 and Redis.
+
+    Returns HTTP 200 with the count of deleted proposals.
+    """
+    from api.proposals.service import ProposalService
+
+    logger.info("curation_proposals_clear_requested", run_id=run_id)
+
+    service = ProposalService()
+    count = await service.clear_for_run(run_id)
+
+    logger.info(
+        "curation_proposals_clear_success",
+        run_id=run_id,
+        deleted=count,
+    )
+
+    return BaseResponse(run_id=run_id, status="success")
 
 
 # ---------------------------------------------------------------------------

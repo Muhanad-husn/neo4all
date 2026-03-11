@@ -37,6 +37,7 @@ from typing import Any
 import streamlit as st
 
 from ui.pages.curation import (
+    _delete,
     _fetch,
     _HIGH_RISK_CLASSES,
     _post,
@@ -434,7 +435,7 @@ def _render_proposal_expander(
                 }
                 for t in targets
             ]
-            st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+            st.dataframe(preview_rows, width="stretch", hide_index=True)
 
         rule_ids = proposal.get("rule_ids", [])
         if rule_ids:
@@ -611,8 +612,19 @@ def _render_proposal_queue(run_id: str, actor: str) -> None:
     """Fetch and display all proposals for a run with per-proposal action panels."""
     st.subheader("Proposal Queue")
 
-    if st.button("Refresh proposals", key="refresh_proposals"):
-        st.rerun()
+    btn_col1, btn_col2 = st.columns([1, 1])
+    with btn_col1:
+        if st.button("Refresh proposals", key="refresh_proposals"):
+            st.rerun()
+    with btn_col2:
+        if st.button("Clear all proposals", key="clear_all_proposals", type="secondary"):
+            resp, err = _delete(f"/api/curation/proposals/{run_id}")
+            if err or resp is None:
+                st.error(f"Failed to clear proposals: {err or 'No response.'}")
+            else:
+                StateManager.get().clear_dismissed_proposals()
+                st.success("All proposals cleared.")
+                st.rerun()
 
     data = _fetch(f"/api/curation/proposals/{run_id}")
 
@@ -850,15 +862,47 @@ def _render_agent_model_config(run_id: str) -> None:
 
     st.markdown("---")
 
+    # Check if pipeline is actively running to disable the trigger button.
+    # Jobs are considered active only if they are in a running/queued stage
+    # AND were updated recently (within 5 minutes).  Stale jobs from a
+    # crashed or restarted worker do not block re-triggering.
+    status_data = _fetch(f"/api/curation/agents/status/{run_id}")
+    pipeline_jobs: list[dict[str, Any]] = (
+        status_data.get("jobs", []) if status_data else []
+    )
+    _active_stages = {"queued", "evidence_running", "retrieval_running", "proposal_running"}
+    _STALE_SECONDS = 300  # 5 minutes
+
+    def _is_actively_running(job: dict[str, Any]) -> bool:
+        if job.get("stage", "") not in _active_stages:
+            return False
+        updated = job.get("updated_at")
+        if not updated:
+            return False
+        from datetime import datetime, timezone
+        try:
+            ts = datetime.fromisoformat(updated)
+            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            return age < _STALE_SECONDS
+        except (ValueError, TypeError):
+            return False
+
+    pipeline_busy = bool(pipeline_jobs) and any(
+        _is_actively_running(j) for j in pipeline_jobs
+    )
+
     # Trigger button.
     if st.button(
-        "Run AI Agent Pipeline",
+        "Curate",
         type="primary",
         key="run_agent_pipeline",
+        disabled=pipeline_busy,
         help=(
             "Enqueues all detected candidates for processing by the AI agent chain. "
             "Progress is shown below and in the Monitoring page."
-        ),
+        )
+        if not pipeline_busy
+        else "Pipeline is already running — wait for it to finish.",
     ):
         payload: dict[str, Any] = {
             "run_id": run_id,
@@ -884,18 +928,23 @@ def _render_agent_model_config(run_id: str) -> None:
                 f"P={data.get('model_p', '?')}"
             )
 
-    # Agent pipeline progress.
-    _render_agent_pipeline_progress(run_id)
+    # Agent pipeline progress — reuse already-fetched status data.
+    _render_agent_pipeline_progress(run_id, prefetched=status_data)
 
 
-def _render_agent_pipeline_progress(run_id: str) -> None:
+def _render_agent_pipeline_progress(
+    run_id: str,
+    prefetched: dict[str, Any] | None = None,
+) -> None:
     """Fetch and display per-candidate agent pipeline status."""
     st.markdown("**Agent Pipeline Progress**")
 
     if st.button("Refresh progress", key="refresh_agent_progress"):
         st.rerun()
 
-    data = _fetch(f"/api/curation/agents/status/{run_id}")
+    data = prefetched if prefetched is not None else _fetch(
+        f"/api/curation/agents/status/{run_id}"
+    )
 
     if data is None:
         st.caption("No agent pipeline telemetry available.")
@@ -950,4 +999,4 @@ def _render_agent_pipeline_progress(run_id: str) -> None:
         }
         for j in jobs
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)

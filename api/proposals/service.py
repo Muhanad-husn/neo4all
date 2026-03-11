@@ -397,6 +397,58 @@ class ProposalService:
         return new_packet
 
     # ------------------------------------------------------------------
+    # clear_for_run
+    # ------------------------------------------------------------------
+
+    async def clear_for_run(self, run_id: str) -> int:
+        """Delete all proposals for a run from S3 and Redis.
+
+        Iterates the per-run proposal index, deletes each proposal's S3
+        object and Redis cache entry, then removes the index itself.
+
+        Args:
+            run_id: Governed run identifier.
+
+        Returns:
+            Number of proposals deleted.
+
+        Log events:
+            proposals_cleared INFO — run_id, count
+        """
+        index = await self._cache.get(
+            CacheKey.proposals_index(run_id), model=_ProposalIndex
+        )
+        if index is None:
+            logger.info("proposals_cleared", run_id=run_id, count=0)
+            return 0
+
+        count = 0
+        for pid in index.proposal_ids:
+            # Delete from S3.
+            s3_key = _proposal_s3_key(run_id, pid)
+            try:
+                await asyncio.to_thread(
+                    self._client.delete_object,
+                    Bucket=self._bucket,
+                    Key=s3_key,
+                )
+            except Exception:
+                logger.warning(
+                    "proposal_delete_s3_error",
+                    proposal_id=pid,
+                    run_id=run_id,
+                )
+            # Delete from Redis cache.
+            await self._cache.delete(CacheKey.proposal(pid))
+            count += 1
+
+        # Delete the index itself.
+        await self._cache.delete(CacheKey.proposals_index(run_id))
+
+        logger.info("proposals_cleared", run_id=run_id, count=count)
+        return count
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

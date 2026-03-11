@@ -46,6 +46,7 @@ Sensitive data (SKILL-D R-D5):
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 from pydantic import BaseModel
@@ -53,6 +54,9 @@ from pydantic import BaseModel
 from api.observability.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Lock protecting lazy model loading across threads (asyncio.to_thread pool).
+_model_load_lock = threading.Lock()
 
 # Maximum chunks returned per semantic search call.
 MAX_SEMANTIC_RESULTS: int = 50
@@ -401,11 +405,13 @@ class EvidenceRetriever:
             Exception:   Any encoding-level error.
         """
         if self._embedding_model is None:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+            with _model_load_lock:
+                if self._embedding_model is None:  # double-check after acquiring lock
+                    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
-            model_name = self._settings.EMBEDDING_MODEL
-            logger.info("embedding_model_loaded", model=model_name)
-            self._embedding_model = SentenceTransformer(model_name)
+                    model_name = self._settings.EMBEDDING_MODEL
+                    logger.info("embedding_model_loaded", model=model_name)
+                    self._embedding_model = SentenceTransformer(model_name)
 
         embeddings = self._embedding_model.encode(
             texts,
@@ -485,6 +491,7 @@ def _parse_primary_value(dedupe_key: str) -> str:
 # ---------------------------------------------------------------------------
 
 _retriever_instance: EvidenceRetriever | None = None
+_retriever_lock = threading.Lock()
 
 
 def get_evidence_retriever() -> EvidenceRetriever:
@@ -496,5 +503,7 @@ def get_evidence_retriever() -> EvidenceRetriever:
     """
     global _retriever_instance
     if _retriever_instance is None:
-        _retriever_instance = EvidenceRetriever()
+        with _retriever_lock:
+            if _retriever_instance is None:
+                _retriever_instance = EvidenceRetriever()
     return _retriever_instance

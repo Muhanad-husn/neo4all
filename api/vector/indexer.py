@@ -51,6 +51,7 @@ Connection
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
 from typing import Any
 
@@ -58,6 +59,9 @@ from api.models.document import Chunk
 from api.observability.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Lock protecting lazy model loading across threads (asyncio.to_thread pool).
+_model_load_lock = threading.Lock()
 
 # Maximum number of chunks per Qdrant upsert call (SPEC-03 guidance: 100).
 UPSERT_BATCH_SIZE: int = 100
@@ -501,8 +505,8 @@ class VectorIndexer:
 
         The model is loaded lazily on first call and reused for the lifetime of
         this VectorIndexer instance. Concurrent calls from separate to_thread
-        invocations are safe: Python's GIL protects the simple attribute
-        assignment during lazy load.
+        invocations are protected by a threading.Lock (double-checked locking)
+        to prevent race conditions during model initialisation.
 
         Args:
             texts: List of strings to embed. Raw chunk text; never logged
@@ -516,11 +520,13 @@ class VectorIndexer:
             Exception:   Any model-level encoding error.
         """
         if self._embedding_model is None:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+            with _model_load_lock:
+                if self._embedding_model is None:  # double-check after acquiring lock
+                    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
-            model_name = self._settings.EMBEDDING_MODEL
-            logger.info("embedding_model_loaded", model=model_name)
-            self._embedding_model = SentenceTransformer(model_name)
+                    model_name = self._settings.EMBEDDING_MODEL
+                    logger.info("embedding_model_loaded", model=model_name)
+                    self._embedding_model = SentenceTransformer(model_name)
 
         embeddings = self._embedding_model.encode(
             texts,
@@ -576,6 +582,7 @@ class VectorIndexer:
 # ---------------------------------------------------------------------------
 
 _service_instance: VectorIndexer | None = None
+_indexer_lock = threading.Lock()
 
 
 def get_vector_indexer() -> VectorIndexer:
@@ -586,5 +593,7 @@ def get_vector_indexer() -> VectorIndexer:
     """
     global _service_instance
     if _service_instance is None:
-        _service_instance = VectorIndexer()
+        with _indexer_lock:
+            if _service_instance is None:
+                _service_instance = VectorIndexer()
     return _service_instance

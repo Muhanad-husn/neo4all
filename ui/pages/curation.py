@@ -107,6 +107,16 @@ def _post(
         return None, str(exc)
 
 
+def _delete(path: str) -> tuple[dict[str, Any] | None, str | None]:
+    """DELETE {_API_BASE_URL}{path}. Returns (data, error)."""
+    try:
+        with httpx.Client(timeout=_REQUEST_TIMEOUT) as c:
+            r = c.delete(f"{_API_BASE_URL}{path}")
+            return r.json(), None  # type: ignore[no-any-return]
+    except Exception as exc:
+        return None, str(exc)
+
+
 # ===========================================================================
 # Layer 1 — Candidate Review (SPEC-05)
 # ===========================================================================
