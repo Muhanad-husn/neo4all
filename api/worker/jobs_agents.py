@@ -255,40 +255,29 @@ async def evidence_assembly_job(
             sufficient=report.sufficient,
         )
 
-        # Chain: enqueue next job via the worker's Redis connection.
+        # Chain: always go straight to proposal composition.
+        # Agent-B (retrieval augmentation) is skipped — the structural
+        # recommendation from collision_context is the primary input for
+        # Agent-P.  Agent-B will be re-enabled when curation-panel
+        # document ingestion allows users to add new evidence.
         redis = ctx["redis"]
         evidence_report_json = report.model_dump_json()
 
-        if report.sufficient:
-            await redis.enqueue_job(
-                "proposal_composition_job",
-                run_id=run_id,
-                candidate_json=candidate_json,
-                decision_json=decision_json,
-                evidence_report_json=evidence_report_json,
-                correlation_id=correlation_id,
-            )
-            logger.info(
-                "agent_chain_enqueued",
-                run_id=run_id,
-                candidate_id=candidate_id,
-                next_job="proposal_composition_job",
-            )
-        else:
-            await redis.enqueue_job(
-                "retrieval_augmentation_job",
-                run_id=run_id,
-                candidate_json=candidate_json,
-                decision_json=decision_json,
-                evidence_report_json=evidence_report_json,
-                correlation_id=correlation_id,
-            )
-            logger.info(
-                "agent_chain_enqueued",
-                run_id=run_id,
-                candidate_id=candidate_id,
-                next_job="retrieval_augmentation_job",
-            )
+        await redis.enqueue_job(
+            "proposal_composition_job",
+            run_id=run_id,
+            candidate_json=candidate_json,
+            decision_json=decision_json,
+            evidence_report_json=evidence_report_json,
+            correlation_id=correlation_id,
+        )
+        logger.info(
+            "agent_chain_enqueued",
+            run_id=run_id,
+            candidate_id=candidate_id,
+            next_job="proposal_composition_job",
+            retrieval_skipped=True,
+        )
 
     except Exception as exc:
         error_msg = str(exc)

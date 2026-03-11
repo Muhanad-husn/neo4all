@@ -35,6 +35,7 @@ from typing import Any
 from api.agents.evidence import load_prompt_template
 from api.agents.models import AgentProposalOutput, EvidenceReport
 from api.agents.orchestrator import OrchestratorDecision
+from api.agents.structural import compute_structural_recommendation
 from api.cache.client import CacheClient, get_cache_client
 from api.cache.keys import CacheKey
 from api.models.candidate import Candidate
@@ -52,7 +53,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _JOB_ID: str = "proposal_composer"
-_TEMPLATE_VERSION: str = "v4"
+_TEMPLATE_VERSION: str = "v5"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -225,10 +226,17 @@ class ProposalComposerAgent:
             evidence_sufficient=evidence_report.sufficient,
         )
 
-        # 1. Schema rules for contextualising the LLM prompt.
+        # 1. Compute and attach structural recommendation (deterministic).
+        if evidence_report.structural_recommendation is None:
+            rec = compute_structural_recommendation(candidate)
+            evidence_report = evidence_report.model_copy(
+                update={"structural_recommendation": rec},
+            )
+
+        # 2. Schema rules for contextualising the LLM prompt.
         schema_rules = await self._gather_schema_rules(run_id=decision.run_id)
 
-        # 2. Build prompt from versioned template.
+        # 3. Build prompt from versioned template.
         template = load_prompt_template(_JOB_ID, _TEMPLATE_VERSION)
         system_prompt: str = template["system_prompt"]
 

@@ -82,6 +82,25 @@ class EvidenceItem(BaseModel):
         return v
 
 
+class StructuralRecommendation(BaseModel):
+    """Deterministic recommendation based on collision_context metrics.
+
+    Computed from governed detectors (not LLM).  This is the primary
+    decision input for Agent-P when no textual evidence is available.
+
+    Attributes:
+        suggested_action:  One of the ProposalClass values.
+        confidence:        0.0–1.0 — deterministic confidence from metrics.
+        reasoning:         Human-readable explanation of the recommendation.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    suggested_action: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+
+
 class EvidenceReport(BaseModel):
     """Typed output of Agent-A (Evidence Assembly).
 
@@ -98,6 +117,9 @@ class EvidenceReport(BaseModel):
         sufficiency_score: 0.0–1.0 — overall evidence sufficiency.
         sufficient:       True if the evidence meets the threshold for
                           proposal composition.
+        structural_recommendation: Deterministic pre-assessment from
+                          collision_context metrics.  Primary input for
+                          Agent-P when textual evidence is sparse.
         run_id:           Governed run identifier.
         schema_version:   Schema version_hash at time of evidence assembly.
     """
@@ -108,6 +130,14 @@ class EvidenceReport(BaseModel):
     items: tuple[EvidenceItem, ...] = Field(default_factory=tuple)
     sufficiency_score: float = Field(ge=0.0, le=1.0)
     sufficient: bool
+    structural_recommendation: StructuralRecommendation | None = Field(
+        default=None,
+        description=(
+            "Deterministic recommendation from collision_context metrics. "
+            "Primary decision input for Agent-P when textual evidence is "
+            "sparse or absent."
+        ),
+    )
     retrieval_exhausted: bool = Field(
         default=False,
         description=(
