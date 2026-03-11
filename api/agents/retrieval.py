@@ -100,7 +100,9 @@ class RetrievalAugmentationAgent:
 
         all_items: list[EvidenceItem] = list(evidence_report.items)
         seen_chunk_ids: set[str] = {item.chunk_id for item in all_items}
+        initial_seen_count = len(seen_chunk_ids)
         round_results: list[RetrievalResult] = []
+        retrieval_exhausted = False
 
         logger.info(
             "retrieval_augmentation_start",
@@ -214,7 +216,20 @@ class RetrievalAugmentationAgent:
                 duration_ms=round_duration_ms,
             )
 
-            # 5. Re-evaluate sufficiency
+            # 5. Short-circuit: if round 1 found nothing new, the vector
+            #    store has no additional material beyond what the candidate
+            #    already carries.  Skip remaining rounds.
+            if round_num == 1 and len(fresh_chunks) == 0 and initial_seen_count > 0:
+                retrieval_exhausted = True
+                logger.info(
+                    "retrieval_exhausted_early_exit",
+                    candidate_id=candidate_id,
+                    run_id=decision.run_id,
+                    initial_evidence_items=initial_seen_count,
+                )
+                break
+
+            # 6. Re-evaluate sufficiency
             if self._estimate_sufficiency(all_items, candidate) >= _SUFFICIENCY_THRESHOLD:
                 logger.info(
                     "retrieval_sufficiency_reached",
@@ -224,6 +239,15 @@ class RetrievalAugmentationAgent:
                 )
                 break
 
+        # If we ran all rounds and never found anything new beyond initial
+        # evidence, mark as exhausted.
+        if (
+            not retrieval_exhausted
+            and len(seen_chunk_ids) == initial_seen_count
+            and initial_seen_count > 0
+        ):
+            retrieval_exhausted = True
+
         # Build final updated evidence report
         sufficiency = self._estimate_sufficiency(all_items, candidate)
         updated_report = EvidenceReport(
@@ -231,6 +255,7 @@ class RetrievalAugmentationAgent:
             items=tuple(all_items),
             sufficiency_score=sufficiency,
             sufficient=sufficiency >= _SUFFICIENCY_THRESHOLD,
+            retrieval_exhausted=retrieval_exhausted,
             run_id=decision.run_id,
             schema_version=decision.schema_version,
         )
@@ -243,6 +268,7 @@ class RetrievalAugmentationAgent:
             final_items=len(all_items),
             final_sufficiency=sufficiency,
             sufficient=updated_report.sufficient,
+            retrieval_exhausted=retrieval_exhausted,
         )
         return updated_report, round_results
 

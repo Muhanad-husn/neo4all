@@ -108,6 +108,15 @@ class EvidenceReport(BaseModel):
     items: tuple[EvidenceItem, ...] = Field(default_factory=tuple)
     sufficiency_score: float = Field(ge=0.0, le=1.0)
     sufficient: bool
+    retrieval_exhausted: bool = Field(
+        default=False,
+        description=(
+            "True when retrieval augmentation ran but found no chunks "
+            "beyond those already attached to the candidate. Signals "
+            "that the pre-attached evidence is the complete picture, "
+            "not that evidence is missing."
+        ),
+    )
     run_id: str
     schema_version: str
 
