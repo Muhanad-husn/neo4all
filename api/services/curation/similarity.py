@@ -61,6 +61,29 @@ def _jaro_winkler(s: str, t: str, p: float = 0.1) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Token overlap
+# ---------------------------------------------------------------------------
+
+
+def _token_overlap(s: str, t: str) -> float:
+    """Token-level overlap ratio between two strings.
+
+    Tokenises on whitespace + punctuation boundaries, lowercases, then
+    computes ``2 * |intersection| / (|tokens_a| + |tokens_b|)``.
+    Returns 0.0 if both strings are empty.
+    """
+    import re as _re
+
+    _TOKEN_RE = _re.compile(r"[a-z0-9]+")
+    tokens_a = set(_TOKEN_RE.findall(s.lower()))
+    tokens_b = set(_TOKEN_RE.findall(t.lower()))
+    total = len(tokens_a) + len(tokens_b)
+    if total == 0:
+        return 0.0
+    return 2.0 * len(tokens_a & tokens_b) / total
+
+
+# ---------------------------------------------------------------------------
 # Set similarity
 # ---------------------------------------------------------------------------
 

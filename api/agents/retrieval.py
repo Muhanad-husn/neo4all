@@ -215,7 +215,7 @@ class RetrievalAugmentationAgent:
             )
 
             # 5. Re-evaluate sufficiency
-            if self._estimate_sufficiency(all_items) >= _SUFFICIENCY_THRESHOLD:
+            if self._estimate_sufficiency(all_items, candidate) >= _SUFFICIENCY_THRESHOLD:
                 logger.info(
                     "retrieval_sufficiency_reached",
                     candidate_id=candidate_id,
@@ -225,7 +225,7 @@ class RetrievalAugmentationAgent:
                 break
 
         # Build final updated evidence report
-        sufficiency = self._estimate_sufficiency(all_items)
+        sufficiency = self._estimate_sufficiency(all_items, candidate)
         updated_report = EvidenceReport(
             candidate_id=candidate.candidate_id,
             items=tuple(all_items),
@@ -349,16 +349,49 @@ class RetrievalAugmentationAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _estimate_sufficiency(items: list[EvidenceItem]) -> float:
-        """Deterministic heuristic: supporting=0.3, corroborating=0.15,
-        conflicting=0.1 per item, clamped to [0.0, 1.0].
+    def _estimate_sufficiency(
+        items: list[EvidenceItem],
+        candidate: Candidate | None = None,
+    ) -> float:
+        """Deterministic heuristic with structural baseline from collision_context.
+
+        Structural baseline (from deterministic detectors):
+          - jaro_winkler >= 0.95:              +0.35
+          - jaro_winkler >= 0.90:              +0.25
+          - jaro_winkler >= 0.85:              +0.15
+          - context_jaccard > 0:               +min(context_jaccard, 0.2)
+          - token_overlap >= 0.5:              +0.05
+
+        Textual evidence layer:
+          - supporting:    +0.3 per item
+          - corroborating: +0.15 per item
+          - conflicting:   +0.1 per item
+
+        Result clamped to [0.0, 1.0].
 
         Fast estimate so Agent-B can decide whether to continue rounds
         without re-invoking Agent-A each time.
         """
-        if not items:
-            return 0.0
         score = 0.0
+
+        # Structural baseline from collision_context
+        if candidate is not None:
+            ctx = candidate.collision_context or {}
+            jw = ctx.get("jaro_winkler", 0.0)
+            tok = ctx.get("token_overlap", 0.0)
+            cj = ctx.get("context_jaccard", 0.0)
+            if jw >= 0.95:
+                score += 0.35
+            elif jw >= 0.90:
+                score += 0.25
+            elif jw >= 0.85:
+                score += 0.15
+            if cj > 0.0:
+                score += min(cj, 0.2)
+            if tok >= 0.5:
+                score += 0.05
+
+        # Textual evidence layer
         for item in items:
             if item.classification == "supporting":
                 score += 0.3

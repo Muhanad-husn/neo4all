@@ -44,7 +44,7 @@ _PROMPTS_ROOT: Path = (
     else Path(__file__).resolve().parents[2] / "prompts"
 )
 _JOB_ID: str = "evidence_assembly"
-_TEMPLATE_VERSION: str = "v1"
+_TEMPLATE_VERSION: str = "v2"
 CHUNK_CACHE_TTL: int = 1800  # 30 min (SKILL-D R-D8)
 _MAX_CHUNKS_PER_REF: int = 10
 _CHUNK_DELIMITER: str = "\n---CHUNK---\n"
