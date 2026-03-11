@@ -275,20 +275,12 @@ def _try_restore_session(state: StateManager) -> bool:
             openrouter_api_key=openrouter_api_key,
         )
 
-        # Ensure API has current credentials loaded (fire-and-forget with
-        # short timeout — session restore should not block on service probes).
-        import threading
-
-        threading.Thread(
-            target=_notify_api_reload,
-            kwargs={
-                "neo4j_uri": neo4j_uri,
-                "neo4j_user": neo4j_user,
-                "neo4j_password": neo4j_password,
-                "openrouter_api_key": openrouter_api_key,
-            },
-            daemon=True,
-        ).start()
+        # NOTE: We intentionally do NOT call _notify_api_reload() here.
+        # Session restore reads credentials from os.environ (injected by
+        # docker-compose env_file at container start), which may be stale.
+        # Overwriting Redis with stale values corrupts credentials for the
+        # worker.  The API and worker sync from Redis independently; the
+        # authoritative credentials are those the user entered in Phase 0.
 
         return True
     except Exception:

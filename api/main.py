@@ -52,11 +52,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     from api.config import get_settings
     from api.services.health import probe_all_services
+    from api.worker.config_sync import sync_credentials_from_redis
 
     settings = get_settings()
     configure_logging(log_format=settings.LOG_FORMAT, log_level=settings.LOG_LEVEL)
 
     logger.info("app_starting", version=_VERSION)
+
+    # Pull credentials from Redis in case the user set them via the UI
+    # before this container (re)started.  This ensures the API process
+    # has up-to-date NEO4J / OPENROUTER env vars even after a restart.
+    await sync_credentials_from_redis()
 
     results = await probe_all_services(settings)
     for result in results:
