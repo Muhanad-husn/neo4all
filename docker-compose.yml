@@ -25,6 +25,7 @@ services:
 
   worker:
     image: muhanaddocker/neo4all-worker:latest
+    command: arq-worker
     environment:
       - REDIS_URL=redis://redis:6379
       - QDRANT_URL=http://qdrant:6333
