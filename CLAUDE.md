@@ -37,7 +37,8 @@ A **session-based, AI-assisted web application** that transforms documents into 
 ├── docs/                # Governance artifacts (specs, skills, ADRs)
 │   ├── specs/           # Increment specification documents (SPEC-01 through SPEC-08)
 │   ├── skills/          # Cross-cutting skill definitions (SKILL-A, B, C, D)
-│   └── adr/             # Architecture Decision Records
+│   ├── adr/             # Architecture Decision Records
+│   └── archive/         # Build-time documents (retained for reference)
 ├── prompts/             # Versioned prompt templates by job_id
 ├── fixtures/            # Test fixtures for deterministic components
 ├── tests/unit/          # Deterministic tests (no network)
@@ -303,8 +304,8 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Reference versioned prompt templates
 - Fail closed on invalid inputs
 - Test fallback behavior, not model quality
-- Before implementing any increment, read the relevant spec in [`docs/specs/`](docs/specs/) and all skills in [`docs/skills/`](docs/skills/) — see [§17 Specifications & Skills](#17-specifications--skills) for the full table
-- After completing any increment, run the [SKILL-B](docs/skills/SKILL-B-governance.md) governance checklist and update README.md and CLAUDE.md
+- Before making changes, read CLAUDE.md in full and review relevant skills in [`docs/skills/`](docs/skills/)
+- After significant changes, verify [SKILL-B](docs/skills/SKILL-B-governance.md) governance rules still hold
 - Use the centralized logger from `api/observability/logger.py` — never create ad-hoc loggers
 - Check the cache before expensive reads — use `api/cache/client.py` with deterministic keys
 - Log structured events with correlation IDs — never free-text log messages
@@ -329,18 +330,18 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 
 ## 16. Increment Status
 
-| Increment | Version | Status |
-|-----------|---------|--------|
-| [SPEC-01](docs/specs/SPEC-01-scaffolding.md) | 0.1.0 | ✅ Complete |
-| [SPEC-02](docs/specs/SPEC-02-schema.md) | 0.2.0 | ✅ Complete |
-| [SPEC-03](docs/specs/SPEC-03-ingestion.md) | 0.3.0 | ✅ Complete |
-| [SPEC-04](docs/specs/SPEC-04-extraction.md) | 0.4.0 | ✅ Complete |
-| [SPEC-05](docs/specs/SPEC-05-candidates.md) | 0.5.0 | ✅ Complete |
-| [SPEC-06](docs/specs/SPEC-06-manual-curation.md) | 0.6.0 | ✅ Complete |
-| [SPEC-07](docs/specs/SPEC-07-agent-pipeline.md) | 0.7.0 | ✅ Complete |
-| [SPEC-08](docs/specs/SPEC-08-hardening.md) | 0.8.0 | ✅ Complete |
+All 8 increments are complete (v1.0.1). The project is in maintenance/enhancement mode. See `CHANGELOG.md` for release history and `README.md` Roadmap for planned work.
 
-Do not begin increment N+1 until increment N passes all acceptance criteria and the SKILL-B governance checklist.
+| Increment | Version | Spec |
+|-----------|---------|------|
+| SPEC-01 | 0.1.0 | [Scaffolding](docs/specs/SPEC-01-scaffolding.md) |
+| SPEC-02 | 0.2.0 | [Schema](docs/specs/SPEC-02-schema.md) |
+| SPEC-03 | 0.3.0 | [Ingestion](docs/specs/SPEC-03-ingestion.md) |
+| SPEC-04 | 0.4.0 | [Extraction](docs/specs/SPEC-04-extraction.md) |
+| SPEC-05 | 0.5.0 | [Candidates](docs/specs/SPEC-05-candidates.md) |
+| SPEC-06 | 0.6.0 | [Manual Curation](docs/specs/SPEC-06-manual-curation.md) |
+| SPEC-07 | 0.7.0 | [Agent Pipeline](docs/specs/SPEC-07-agent-pipeline.md) |
+| SPEC-08 | 0.8.0 | [Hardening](docs/specs/SPEC-08-hardening.md) |
 
 ---
 
@@ -348,17 +349,15 @@ Do not begin increment N+1 until increment N passes all acceptance criteria and 
 
 ### 17.1 How to Use
 
-Before beginning implementation work on any increment:
+Before making changes:
 1. Read this file (CLAUDE.md) in full
-2. Identify the current increment from the spec list below
-3. Read the relevant `docs/specs/SPEC-*.md` file
-4. Read ALL skill files in `docs/skills/`
-5. Follow the spec's file generation sequence and acceptance criteria
-6. Run the SKILL-B governance checklist after completion
+2. Read ALL skill files in `docs/skills/`
+3. For architectural context, consult the relevant spec in `docs/specs/`
+4. Follow SKILL-B governance rules
 
 ### 17.2 Increment Specifications
 
-Increments are strictly ordered — do not start N+1 until N passes.
+All increments complete — specs retained as architectural reference.
 
 | Spec | Inc | Description |
 |------|-----|-------------|

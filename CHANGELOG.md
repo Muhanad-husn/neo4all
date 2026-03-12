@@ -2,6 +2,21 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.1] - 2026-03-12
+
+### Added
+- Show-all-rows toggle to graph explorer tables
+- Enhanced dashboard and pipeline pages with detailed monitoring
+- Deterministic chain merge fast-path to Agent-P
+
+### Changed
+- Default model changed from gpt-4o-mini to openai/gpt-5-mini
+
+### Fixed
+- Evidence endpoint cache miss due to stage-keyed candidates
+
+---
+
 ## [1.0.0] - 2026-03-07
 
 ### Initial Public Release
