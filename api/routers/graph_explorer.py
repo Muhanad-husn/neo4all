@@ -9,14 +9,14 @@ Endpoints (mounted at /api/graph):
 
   GET /nodes/{run_id}
       Paginated node list with optional type filter.
-      Max 50 rows per page.  Page is 1-indexed.
+      Max 5000 rows per page.  Page is 1-indexed.
 
   GET /nodes/{run_id}/count
       Total node count for a run, broken down by node_type.
 
   GET /edges/{run_id}
       Paginated edge list with optional type filter.
-      Max 50 rows per page.  Page is 1-indexed.
+      Max 5000 rows per page.  Page is 1-indexed.
 
   GET /edges/{run_id}/count
       Total edge count for a run, broken down by rel_type.
@@ -146,7 +146,7 @@ async def count_nodes(
 @router.get(
     "/nodes/{run_id}",
     response_model=NodePageResponse,
-    summary="Paginated node list with optional node_type filter (max 50/page)",
+    summary="Paginated node list with optional node_type filter (max 5000/page)",
     responses={
         400: {
             "model": NodePageResponse,
@@ -163,7 +163,7 @@ async def list_nodes(
     response: Response,
     page: int = Query(1, ge=1, description="1-indexed page number"),
     page_size: int = Query(
-        _DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE, description="Rows per page (max 50)"
+        _DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE, description="Rows per page (max 5000)"
     ),
     node_type: str | None = Query(None, description="Filter by node label (exact match)"),
     reader: GraphReader = Depends(get_graph_reader),
@@ -327,7 +327,7 @@ async def count_edges(
 @router.get(
     "/edges/{run_id}",
     response_model=EdgePageResponse,
-    summary="Paginated edge list with optional edge_type filter (max 50/page)",
+    summary="Paginated edge list with optional edge_type filter (max 5000/page)",
     responses={
         503: {
             "model": EdgePageResponse,
@@ -340,7 +340,7 @@ async def list_edges(
     response: Response,
     page: int = Query(1, ge=1, description="1-indexed page number"),
     page_size: int = Query(
-        _DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE, description="Rows per page (max 50)"
+        _DEFAULT_PAGE_SIZE, ge=1, le=_MAX_PAGE_SIZE, description="Rows per page (max 5000)"
     ),
     edge_type: str | None = Query(None, description="Filter by relationship type (exact match)"),
     reader: GraphReader = Depends(get_graph_reader),

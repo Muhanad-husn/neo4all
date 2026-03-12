@@ -9,12 +9,12 @@ Workflow:
   Nodes tab:
     1. GET /api/graph/nodes/{run_id}/count  — totals by node_type.
     2. GET /api/graph/nodes/{run_id}?page=N&page_size=50&node_type=...
-       — paginated list, up to 50 per page.
+       — paginated list, default 50 per page (max 5000 with 'Show all').
 
   Edges tab:
     1. GET /api/graph/edges/{run_id}/count  — totals by rel_type.
     2. GET /api/graph/edges/{run_id}?page=N&page_size=50&edge_type=...
-       — paginated list, up to 50 per page.
+       — paginated list, default 50 per page (max 5000 with 'Show all').
 
 Architecture rules:
   - No business logic — pure API calls and display (CLAUDE.md §4.1, SKILL-B).
@@ -169,18 +169,25 @@ def _render_node_browser(run_id: str) -> None:
 
     st.divider()
 
-    # --- Step 2: Page selector (number_input return value is the current page) ---
-    current_page: int = _page_selector(
-        total=total if node_type_filter == "(all types)" else total,
-        page_size=_PAGE_SIZE,
-        key="nodes_page",
-    )
+    # --- Step 2: Show-all toggle + page selector ---
+    show_all: bool = st.toggle("Show all rows", key="nodes_show_all")
 
-    # --- Step 3: Fetch the selected page ---
-    params: dict[str, Any] = {"page": current_page, "page_size": _PAGE_SIZE}
-    if node_type_filter != "(all types)":
-        params["node_type"] = node_type_filter
+    if show_all:
+        # Fetch all items in a single request.
+        params: dict[str, Any] = {"page": 1, "page_size": max(total, 1)}
+        if node_type_filter != "(all types)":
+            params["node_type"] = node_type_filter
+    else:
+        current_page: int = _page_selector(
+            total=total if node_type_filter == "(all types)" else total,
+            page_size=_PAGE_SIZE,
+            key="nodes_page",
+        )
+        params = {"page": current_page, "page_size": _PAGE_SIZE}
+        if node_type_filter != "(all types)":
+            params["node_type"] = node_type_filter
 
+    # --- Step 3: Fetch data ---
     page_data = _fetch(f"/api/graph/nodes/{run_id}", params=params)
 
     if page_data is None:
@@ -199,11 +206,13 @@ def _render_node_browser(run_id: str) -> None:
         st.info("No nodes on this page.")
         return
 
-    # Update the total in the page selector caption if the filter narrowed it.
-    if node_type_filter != "(all types)":
-        st.caption(f"Filtered total: {page_total} node(s) of type '{node_type_filter}'")
-    if has_more:
-        st.caption(f"Showing {_PAGE_SIZE} of {page_total} — use the page selector above.")
+    if show_all:
+        st.caption(f"Showing all {page_total} node(s)")
+    else:
+        if node_type_filter != "(all types)":
+            st.caption(f"Filtered total: {page_total} node(s) of type '{node_type_filter}'")
+        if has_more:
+            st.caption(f"Showing {_PAGE_SIZE} of {page_total} — use the page selector above.")
 
     # --- Step 4: Display table ---
     rows = [
@@ -272,18 +281,24 @@ def _render_edge_browser(run_id: str) -> None:
 
     st.divider()
 
-    # --- Step 2: Page selector ---
-    current_page: int = _page_selector(
-        total=total,
-        page_size=_PAGE_SIZE,
-        key="edges_page",
-    )
+    # --- Step 2: Show-all toggle + page selector ---
+    show_all: bool = st.toggle("Show all rows", key="edges_show_all")
 
-    # --- Step 3: Fetch the selected page ---
-    params: dict[str, Any] = {"page": current_page, "page_size": _PAGE_SIZE}
-    if edge_type_filter != "(all types)":
-        params["edge_type"] = edge_type_filter
+    if show_all:
+        params: dict[str, Any] = {"page": 1, "page_size": max(total, 1)}
+        if edge_type_filter != "(all types)":
+            params["edge_type"] = edge_type_filter
+    else:
+        current_page: int = _page_selector(
+            total=total,
+            page_size=_PAGE_SIZE,
+            key="edges_page",
+        )
+        params = {"page": current_page, "page_size": _PAGE_SIZE}
+        if edge_type_filter != "(all types)":
+            params["edge_type"] = edge_type_filter
 
+    # --- Step 3: Fetch data ---
     page_data = _fetch(f"/api/graph/edges/{run_id}", params=params)
 
     if page_data is None:
@@ -302,10 +317,13 @@ def _render_edge_browser(run_id: str) -> None:
         st.info("No edges on this page.")
         return
 
-    if edge_type_filter != "(all types)":
-        st.caption(f"Filtered total: {page_total} edge(s) of type '{edge_type_filter}'")
-    if has_more:
-        st.caption(f"Showing {_PAGE_SIZE} of {page_total} — use the page selector above.")
+    if show_all:
+        st.caption(f"Showing all {page_total} edge(s)")
+    else:
+        if edge_type_filter != "(all types)":
+            st.caption(f"Filtered total: {page_total} edge(s) of type '{edge_type_filter}'")
+        if has_more:
+            st.caption(f"Showing {_PAGE_SIZE} of {page_total} — use the page selector above.")
 
     # --- Step 4: Display table ---
     rows = [
@@ -374,8 +392,9 @@ def main() -> None:
 
     st.title("Graph Explorer")
     st.caption(
-        "Paginated, read-only view of all nodes and edges in the Neo4j graph "
-        "for this run.  GraphReader cache (5-minute TTL).  Max 50 rows per page."
+        "Read-only view of all nodes and edges in the Neo4j graph "
+        "for this run.  GraphReader cache (5-minute TTL).  "
+        "Toggle 'Show all rows' to view the complete dataset."
     )
 
     tab_nodes, tab_edges = st.tabs(["Nodes", "Edges"])

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from api.models.responses import BaseResponse
 
-_MAX_PAGE_SIZE: int = 50
+_MAX_PAGE_SIZE: int = 5000
 _DEFAULT_PAGE_SIZE: int = 50
 
 
@@ -75,7 +75,7 @@ class NodePageResponse(BaseResponse):
     Attributes:
         run_id:      The governed run being browsed.
         page:        1-indexed current page number.
-        page_size:   Number of items per page (≤ 50).
+        page_size:   Number of items per page (≤ 5000).
         total:       Total matching nodes (after type filtering, before paging).
         has_more:    True if further pages exist.
         items:       Nodes on this page, sorted by dedupe_key.
@@ -95,7 +95,7 @@ class EdgePageResponse(BaseResponse):
     Attributes:
         run_id:      The governed run being browsed.
         page:        1-indexed current page number.
-        page_size:   Number of items per page (≤ 50).
+        page_size:   Number of items per page (≤ 5000).
         total:       Total matching edges (after type filtering, before paging).
         has_more:    True if further pages exist.
         items:       Edges on this page, sorted by dedupe_key.
