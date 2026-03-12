@@ -233,6 +233,26 @@ class ProposalComposerAgent:
                 update={"structural_recommendation": rec},
             )
 
+        # 1b. Deterministic fast-path for chain group merges.
+        #     These candidates are created by union-find from proven pairwise
+        #     duplicates — no LLM reasoning needed.  Skip the LLM call and
+        #     produce the merge proposal directly.
+        logger.info(
+            "proposal_fast_path_check",
+            candidate_id=candidate_id,
+            detection_method=candidate.detection_method,
+            detection_method_type=type(candidate.detection_method).__name__,
+            is_chain_group=(candidate.detection_method == "duplicate_chain_group"),
+        )
+        if candidate.detection_method == "duplicate_chain_group":
+            return await self._deterministic_chain_merge(
+                candidate=candidate,
+                decision=decision,
+                evidence_report=evidence_report,
+                metrics=metrics,
+                t0=t0,
+            )
+
         # 2. Schema rules for contextualising the LLM prompt.
         schema_rules = await self._gather_schema_rules(run_id=decision.run_id)
 
@@ -394,6 +414,86 @@ class ProposalComposerAgent:
                 "additional_properties": list(edge_type.additional_properties),
             })
         return rules
+
+    # ------------------------------------------------------------------
+    # Deterministic chain merge (no LLM)
+    # ------------------------------------------------------------------
+
+    async def _deterministic_chain_merge(
+        self,
+        candidate: Candidate,
+        decision: OrchestratorDecision,
+        evidence_report: EvidenceReport,
+        metrics: Any,
+        t0: float,
+    ) -> ProposalPacket | None:
+        """Produce a merge proposal for a chain group candidate without LLM.
+
+        The candidate was created by the union-find chain detector from proven
+        pairwise duplicates.  The survivor (targets[0]) is the most-connected
+        node.  No LLM reasoning is needed — the deterministic detectors
+        already established the duplicate relationship.
+        """
+        candidate_id = candidate.candidate_id
+        ctx = candidate.collision_context
+        survivor = ctx.get("survivor_key", "?")
+        group_size = ctx.get("conflict_group_size", "?")
+        members = ctx.get("component_members", [])
+
+        output = AgentProposalOutput(
+            candidate_id=candidate_id,
+            proposal_class="merge",
+            rule_ids=(),
+            evidence_ids=tuple(
+                item.chunk_id for item in evidence_report.items if item.chunk_id
+            ),
+            rationale=(
+                f"Deterministic chain merge: {group_size} nodes form a connected "
+                f"component of overlapping duplicates. Merging all into survivor "
+                f"'{survivor}' (highest connectivity). Members: "
+                f"{', '.join(members[:5])}{'…' if len(members) > 5 else ''}."
+            ),
+            confidence_score=0.90,
+        )
+
+        packet = self._build_proposal_packet(
+            output=output,
+            candidate=candidate,
+            decision=decision,
+            evidence_report=evidence_report,
+        )
+
+        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+        try:
+            stored = await self._get_proposal_service().create(packet)
+        except Exception as exc:
+            logger.error(
+                "proposal_composition_storage_failed",
+                candidate_id=candidate_id,
+                run_id=decision.run_id,
+                error=str(exc),
+                duration_ms=duration_ms,
+            )
+            return None
+
+        logger.info(
+            "proposal_composition_complete",
+            candidate_id=candidate_id,
+            run_id=decision.run_id,
+            proposal_id=stored.proposal_id,
+            proposal_class="merge",
+            confidence_score=0.90,
+            duration_ms=duration_ms,
+            deterministic=True,
+        )
+
+        self._record_telemetry(
+            metrics, decision.run_id, candidate_id, duration_ms,
+            0, 0, success=True,
+        )
+
+        return stored
 
     # ------------------------------------------------------------------
     # ProposalPacket builder
