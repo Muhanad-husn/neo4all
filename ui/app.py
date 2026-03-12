@@ -645,14 +645,9 @@ def _render_phase_init(state: StateManager) -> None:
             except OSError as exc:
                 st.warning(f"Could not save credentials to .env: {exc}")
 
-            # Also inject into os.environ so _read_env_credentials() can
-            # find them via the fallback path even if .env write failed.
-            os.environ["NEO4J_URI"] = neo4j_uri.strip()
-            os.environ["NEO4J_USERNAME"] = neo4j_user.strip()
-            os.environ["NEO4J_PASSWORD"] = neo4j_password
-            os.environ["OPENROUTER_API_KEY"] = openrouter_api_key
-
             # Tell the running API to reload its configuration.
+            # Redis is the single source of truth for runtime credentials;
+            # no need to inject into os.environ.
             if _notify_api_reload(
                 neo4j_uri=neo4j_uri.strip(),
                 neo4j_user=neo4j_user.strip(),

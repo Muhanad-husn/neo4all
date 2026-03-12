@@ -170,11 +170,13 @@ async def probe_all_services(settings: Settings) -> list[ProbeResult]:
     Returns:
         List of ProbeResult, one per service. Never raises.
     """
+    from api.credentials import get_credentials
+    creds = get_credentials()
     results = await asyncio.gather(
         probe_neo4j(
-            settings.NEO4J_DEV_URI,
-            settings.NEO4J_DEV_USER,
-            settings.NEO4J_DEV_PASSWORD,
+            creds.neo4j_uri,
+            creds.neo4j_user,
+            creds.neo4j_password,
         ),
         probe_redis(),
         probe_s3(

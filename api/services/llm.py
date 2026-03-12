@@ -141,8 +141,8 @@ class LLMClient:
     # ------------------------------------------------------------------
 
     def _resolve_api_key(self) -> str:
-        from api.config import get_settings
-        key = self._api_key or get_settings().OPENROUTER_API_KEY
+        from api.credentials import get_credentials
+        key = self._api_key or get_credentials().openrouter_api_key
         if not key.strip():
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
         return key

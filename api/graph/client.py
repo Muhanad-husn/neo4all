@@ -104,12 +104,14 @@ class Neo4jClient:
 
     def _resolve_settings(self) -> tuple[str, str, str, int, float]:
         from api.config import get_settings
+        from api.credentials import get_credentials
 
+        c = get_credentials()
         s = get_settings()
         return (
-            self._uri or s.NEO4J_DEV_URI,
-            self._user or s.NEO4J_DEV_USER,
-            self._password or s.NEO4J_DEV_PASSWORD,
+            self._uri or c.neo4j_uri,
+            self._user or c.neo4j_user,
+            self._password or c.neo4j_password,
             self._max_pool_size if self._max_pool_size is not None else s.NEO4J_MAX_POOL_SIZE,
             (
                 self._connection_timeout_s

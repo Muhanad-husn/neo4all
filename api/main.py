@@ -51,8 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         - Emit shutdown log events.
     """
     from api.config import get_settings
+    from api.credentials import refresh_credentials
     from api.services.health import probe_all_services
-    from api.worker.config_sync import sync_credentials_from_redis
 
     settings = get_settings()
     configure_logging(log_format=settings.LOG_FORMAT, log_level=settings.LOG_LEVEL)
@@ -60,12 +60,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("app_starting", version=_VERSION)
 
     # Pull credentials from Redis in case the user set them via the UI
-    # before this container (re)started.  This ensures the API process
-    # has up-to-date NEO4J / OPENROUTER env vars even after a restart.
-    if await sync_credentials_from_redis():
-        # Re-fetch settings so probes use the freshly-injected credentials
-        # instead of the stale object loaded before the sync.
-        settings = get_settings()
+    # before this container (re)started.  The credential override is
+    # stored in-memory — no need to re-fetch Settings afterwards.
+    await refresh_credentials()
 
     results = await probe_all_services(settings)
     for result in results:
