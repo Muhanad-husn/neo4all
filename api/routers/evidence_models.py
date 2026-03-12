@@ -148,9 +148,10 @@ class EvidenceQueryResponse(BaseResponse):
 # ---------------------------------------------------------------------------
 
 
-def _detection_hash(schema_version: str) -> str:
-    """Deterministic 32-char hash matching curation.py's candidate cache keys."""
-    payload = f"{schema_version}:all_detectors_v1"
+def _detection_hash(schema_version: str, stage: int | None = None) -> str:
+    """Deterministic 32-char hash matching candidates.py's cache keys."""
+    stage_tag = f"_stage{stage}" if stage is not None else ""
+    payload = f"{schema_version}:all_detectors_v1{stage_tag}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 

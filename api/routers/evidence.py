@@ -51,6 +51,7 @@ from api.routers.evidence_models import (
     EvidenceCandidateResponse,
     EvidenceQueryRequest,
     EvidenceQueryResponse,
+    _SlimCandidate,
     _SlimCandidateCache,
     _DEFAULT_TOP_K,
     _MAX_TOP_K,
@@ -125,32 +126,23 @@ async def get_evidence_for_candidate(
             message=f"No locked schema found for run '{run_id}'.",
         )
 
-    # 2. Look up candidate in the detection cache.
-    dhash = _detection_hash(schema.version_hash)
-    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
-    cached: _SlimCandidateCache | None = await cache.get(
-        cache_key, model=_SlimCandidateCache
-    )
-    if cached is None:
-        logger.warning(
-            "evidence_candidate_cache_empty",
-            run_id=run_id,
-            candidate_id=candidate_id,
+    # 2. Look up candidate across all stage cache keys (None, 1, 2, 3).
+    #    Detection results are stored per-stage; scan all to find the candidate.
+    candidate: _SlimCandidate | None = None
+    for stage_val in (None, 1, 2, 3):
+        dhash = _detection_hash(schema.version_hash, stage=stage_val)
+        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+        cached: _SlimCandidateCache | None = await cache.get(
+            cache_key, model=_SlimCandidateCache
         )
-        response.status_code = 404
-        return _error_response(
-            run_id=run_id,
-            candidate_id=candidate_id,
-            code="candidates_not_generated",
-            message=(
-                f"No candidate cache found for run '{run_id}'. "
-                "Run POST /candidates/generate first."
-            ),
-        )
+        if cached is not None:
+            candidate = next(
+                (c for c in cached.candidates if c.candidate_id == candidate_id),
+                None,
+            )
+            if candidate is not None:
+                break
 
-    candidate = next(
-        (c for c in cached.candidates if c.candidate_id == candidate_id), None
-    )
     if candidate is None:
         logger.warning(
             "evidence_candidate_not_found",

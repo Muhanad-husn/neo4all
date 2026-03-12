@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "neo4all"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI-Powered Graph Extraction & Curation Platform"
 license = "PolyForm-Noncommercial-1.0.0"
 readme = "README.md"
