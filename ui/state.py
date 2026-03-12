@@ -68,6 +68,8 @@ _K_PROPOSAL_VERSION = "_sm_proposal_version"  # int; incremented on each propose
 _K_LAST_SAVED_HASH = "_sm_last_saved_hash"    # str | None
 # Dismissed proposals — hidden from the UI queue but preserved for governance.
 _K_DISMISSED_PROPOSALS = "_sm_dismissed_proposals"  # set[str]
+# Pending confirmations — auto-passed tokens for two-click high-risk approval.
+_K_PENDING_CONFIRMATIONS = "_sm_pending_confirmations"  # dict[str, str]
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -124,6 +126,7 @@ class StateManager:
             _K_PROPOSAL_VERSION: 0,
             _K_LAST_SAVED_HASH: None,
             _K_DISMISSED_PROPOSALS: set(),
+            _K_PENDING_CONFIRMATIONS: {},
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -372,6 +375,22 @@ class StateManager:
         """Reset the dismissed-proposals set (e.g. after purging all proposals)."""
         st.session_state[_K_DISMISSED_PROPOSALS] = set()
 
+    def set_pending_confirmation(self, proposal_id: str, token: str) -> None:
+        """Store a confirmation token for two-click high-risk approval."""
+        confirmations = dict(st.session_state[_K_PENDING_CONFIRMATIONS])
+        confirmations[proposal_id] = token
+        st.session_state[_K_PENDING_CONFIRMATIONS] = confirmations
+
+    def get_pending_confirmation(self, proposal_id: str) -> str | None:
+        """Retrieve a stored confirmation token, or None if not pending."""
+        return st.session_state[_K_PENDING_CONFIRMATIONS].get(proposal_id)
+
+    def clear_pending_confirmation(self, proposal_id: str) -> None:
+        """Remove a stored confirmation token."""
+        confirmations = dict(st.session_state[_K_PENDING_CONFIRMATIONS])
+        confirmations.pop(proposal_id, None)
+        st.session_state[_K_PENDING_CONFIRMATIONS] = confirmations
+
     # ------------------------------------------------------------------
     # Session persistence
     # ------------------------------------------------------------------
@@ -442,3 +461,4 @@ class StateManager:
         st.session_state[_K_PROPOSAL_VERSION] = 0
         st.session_state[_K_LAST_SAVED_HASH] = None
         st.session_state[_K_DISMISSED_PROPOSALS] = set()
+        st.session_state[_K_PENDING_CONFIRMATIONS] = {}

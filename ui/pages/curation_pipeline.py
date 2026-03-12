@@ -207,12 +207,43 @@ def _render_pending_actions(
     pclass = proposal["proposal_class"]
     is_high_risk = pclass in _HIGH_RISK_CLASSES
 
-    approve_label = "Approve (Phase 1)" if is_high_risk else "Approve"
+    sm = StateManager.get()
+    pending_token = sm.get_pending_confirmation(pid)
+
+    # If a confirmation token is pending, show the confirm/cancel UI instead.
+    if is_high_risk and pending_token:
+        st.warning("High-risk action — click Confirm to proceed.")
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("Confirm Approval", key=f"btn_confirm_{pid}", type="primary"):
+                data, err = _post(
+                    f"/api/curation/proposals/{pid}/confirm",
+                    {
+                        "run_id": run_id,
+                        "actor": actor,
+                        "confirmation_token": pending_token,
+                    },
+                )
+                if err or data is None:
+                    st.error(f"Confirmation failed: {err or 'No response from API.'}")
+                elif data.get("status") == "error":
+                    for e in data.get("errors", []):
+                        st.error(f"[{e.get('code')}] {e.get('message')}")
+                else:
+                    sm.clear_pending_confirmation(pid)
+                    approval_id = data.get("approval_id", "")
+                    st.success(f"Approved! approval_id: `{approval_id[:16]}…`")
+                    st.rerun()
+        with col_cancel:
+            if st.button("Cancel", key=f"btn_cancel_confirm_{pid}"):
+                sm.clear_pending_confirmation(pid)
+                st.rerun()
+        return
 
     col_approve, col_reject, col_defer = st.columns(3)
 
     with col_approve:
-        if st.button(approve_label, key=f"btn_approve_{pid}", type="primary"):
+        if st.button("Approve", key=f"btn_approve_{pid}", type="primary"):
             data, err = _post(
                 f"/api/curation/proposals/{pid}/approve",
                 {"run_id": run_id, "actor": actor},
@@ -224,16 +255,12 @@ def _render_pending_actions(
                     st.error(f"[{e.get('code')}] {e.get('message')}")
             elif data.get("confirmation_required"):
                 token = data.get("confirmation_token", "")
-                st.warning("High-risk action — Phase 2 confirmation required.")
-                st.info("Copy this token and paste it into the Confirm form below:")
-                st.code(token, language=None)
+                sm.set_pending_confirmation(pid, token)
+                st.rerun()
             else:
                 approval_id = data.get("approval_id", "")
-                st.success("Approved!")
-                st.info("Copy this approval ID — you will need it to execute:")
-                st.code(approval_id, language=None)
-                # No st.rerun() here — keep the approval_id visible so the user
-                # can copy it before the page refreshes.
+                st.success(f"Approved! approval_id: `{approval_id[:16]}…`")
+                st.rerun()
 
     with col_reject:
         if st.button("Reject", key=f"btn_reject_{pid}"):
@@ -258,46 +285,6 @@ def _render_pending_actions(
             else:
                 st.success("Proposal deferred.")
                 st.rerun()
-
-    # Two-phase confirmation form — always shown for high-risk pending proposals.
-    if is_high_risk:
-        st.markdown("---")
-        st.markdown("**Phase 2 — Confirm High-Risk Approval**")
-        st.caption(
-            "After clicking 'Approve (Phase 1)' above, paste the confirmation "
-            "token into the field below to complete the two-phase approval."
-        )
-        with st.form(key=f"confirm_form_{pid}"):
-            token_input = st.text_input(
-                "Confirmation token",
-                placeholder="Paste the token shown after Phase 1 approve",
-            )
-            actor_input = st.text_input("Actor", value=actor)
-            submitted = st.form_submit_button("Confirm Approval", type="primary")
-
-        if submitted:
-            if not token_input.strip():
-                st.error("Confirmation token is required.")
-            else:
-                data, err = _post(
-                    f"/api/curation/proposals/{pid}/confirm",
-                    {
-                        "run_id": run_id,
-                        "actor": actor_input or actor,
-                        "confirmation_token": token_input.strip(),
-                    },
-                )
-                if err or data is None:
-                    st.error(f"Confirmation failed: {err or 'No response from API.'}")
-                elif data.get("status") == "error":
-                    for e in data.get("errors", []):
-                        st.error(f"[{e.get('code')}] {e.get('message')}")
-                else:
-                    approval_id = data.get("approval_id", "")
-                    st.success("Approval confirmed!")
-                    st.info("Copy this approval ID — you will need it to execute:")
-                    st.code(approval_id, language=None)
-                    # No st.rerun() — keep approval_id visible.
 
 
 def _execute_proposal(
@@ -462,28 +449,31 @@ def _render_proposal_expander(
 
 
 def _do_batch_approve(
-    proposals: list[dict[str, Any]], run_id: str, actor: str
+    proposals: list[dict[str, Any]], run_id: str, actor: str,
+    include_high_risk: bool = False,
 ) -> None:
-    """Approve all low-risk pending proposals.  High-risk (merge/delete) are skipped."""
+    """Approve all pending proposals.  High-risk are skipped unless include_high_risk."""
     pending = [p for p in proposals if p["state"] == "pending"]
-    low_risk = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
-    high_risk_count = len(pending) - len(low_risk)
+    if include_high_risk:
+        batch = pending
+    else:
+        batch = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
+        high_risk_count = len(pending) - len(batch)
+        if high_risk_count > 0:
+            st.warning(
+                f"Skipping {high_risk_count} high-risk proposal(s) (merge/delete) — "
+                "check 'Include high-risk' to include them."
+            )
 
-    if not low_risk:
-        st.info("No low-risk pending proposals to approve.")
+    if not batch:
+        st.info("No pending proposals to approve.")
         return
-
-    if high_risk_count > 0:
-        st.warning(
-            f"Skipping {high_risk_count} high-risk proposal(s) (merge/delete) — "
-            "these require manual two-phase confirmation."
-        )
 
     progress = st.progress(0.0, text="Approving proposals…")
     approved_count = 0
     failed_ids: list[str] = []
 
-    for i, p in enumerate(low_risk):
+    for i, p in enumerate(batch):
         pid = p["proposal_id"]
         data, err = _post(
             f"/api/curation/proposals/{pid}/approve",
@@ -491,9 +481,20 @@ def _do_batch_approve(
         )
         if err or data is None or data.get("status") == "error":
             failed_ids.append(pid[:12])
+        elif data.get("confirmation_required"):
+            # High-risk: auto-confirm with the returned token.
+            token = data.get("confirmation_token", "")
+            confirm_data, confirm_err = _post(
+                f"/api/curation/proposals/{pid}/confirm",
+                {"run_id": run_id, "actor": actor, "confirmation_token": token},
+            )
+            if confirm_err or confirm_data is None or confirm_data.get("status") == "error":
+                failed_ids.append(pid[:12])
+            else:
+                approved_count += 1
         else:
             approved_count += 1
-        progress.progress((i + 1) / len(low_risk), text=f"Approved {approved_count}/{len(low_risk)}")
+        progress.progress((i + 1) / len(batch), text=f"Approved {approved_count}/{len(batch)}")
 
     progress.empty()
 
@@ -571,17 +572,29 @@ def _render_batch_actions(
 
     low_risk_pending = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
 
+    include_high_risk = st.checkbox(
+        "Include high-risk (merge/delete)",
+        key="batch_include_high_risk",
+        help="When checked, batch Approve All includes high-risk proposals.",
+    )
+
+    approve_count = len(pending) if include_high_risk else len(low_risk_pending)
+
     col_approve, col_execute, col_dismiss = st.columns(3)
 
     with col_approve:
-        label = f"Approve All Pending ({len(low_risk_pending)})"
+        label = f"Approve All Pending ({approve_count})"
         if st.button(
             label,
             key="batch_approve",
-            disabled=(len(low_risk_pending) == 0),
-            help="Approves all low-risk pending proposals. High-risk (merge/delete) are skipped.",
+            disabled=(approve_count == 0),
+            help=(
+                "Approves all pending proposals including high-risk."
+                if include_high_risk
+                else "Approves all low-risk pending proposals. High-risk (merge/delete) are skipped."
+            ),
         ):
-            _do_batch_approve(proposals, run_id, actor)
+            _do_batch_approve(proposals, run_id, actor, include_high_risk=include_high_risk)
 
     with col_execute:
         label = f"Execute All Approved ({len(approved)})"
