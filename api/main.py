@@ -62,7 +62,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Pull credentials from Redis in case the user set them via the UI
     # before this container (re)started.  This ensures the API process
     # has up-to-date NEO4J / OPENROUTER env vars even after a restart.
-    await sync_credentials_from_redis()
+    if await sync_credentials_from_redis():
+        # Re-fetch settings so probes use the freshly-injected credentials
+        # instead of the stale object loaded before the sync.
+        settings = get_settings()
 
     results = await probe_all_services(settings)
     for result in results:
