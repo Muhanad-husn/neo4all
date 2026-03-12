@@ -432,11 +432,47 @@ async def generate_candidates(
     )
 
     # ------------------------------------------------------------------
-    # 5. Deduplicate by candidate_id (same graph situation → same identity)
+    # 5a. Suppress overlapping candidates: remove orphan_node anomalies
+    #     when the same node already appears in a duplicate candidate.
+    #     A probable/exact duplicate that gets merged also resolves the
+    #     orphan status, so a separate orphan candidate would be redundant
+    #     and can cause execution failures (node deleted by merge before
+    #     the orphan's proposal executes).
+    # ------------------------------------------------------------------
+    duplicate_types = {
+        CandidateType.exact_node_duplicate,
+        CandidateType.probable_duplicate,
+    }
+    duplicate_refs: set[str] = set()
+    for c in all_candidates:
+        if c.candidate_type in duplicate_types:
+            duplicate_refs.update(c.involved_element_refs)
+
+    filtered: list[Candidate] = []
+    suppressed = 0
+    for c in all_candidates:
+        if (
+            c.candidate_type == CandidateType.structural_anomaly
+            and c.collision_context.get("dedupe_key") in duplicate_refs
+            and c.detection_method == "orphan_node"
+        ):
+            suppressed += 1
+            continue
+        filtered.append(c)
+
+    if suppressed:
+        logger.info(
+            "candidates_overlap_suppressed",
+            run_id=run_id,
+            suppressed_count=suppressed,
+        )
+
+    # ------------------------------------------------------------------
+    # 5b. Deduplicate by candidate_id (same graph situation → same identity)
     # ------------------------------------------------------------------
     seen: set[str] = set()
     unique: list[Candidate] = []
-    for c in all_candidates:
+    for c in filtered:
         if c.candidate_id not in seen:
             seen.add(c.candidate_id)
             unique.append(c)

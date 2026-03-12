@@ -38,7 +38,7 @@ from api.agents.orchestrator import OrchestratorDecision
 from api.agents.structural import compute_structural_recommendation
 from api.cache.client import CacheClient, get_cache_client
 from api.cache.keys import CacheKey
-from api.models.candidate import Candidate
+from api.models.candidate import Candidate, CandidateLane
 from api.observability.logger import get_logger
 from api.observability.metrics import get_metrics
 from api.proposals.models import ElementRef, ProposalClass, ProposalPacket
@@ -53,7 +53,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _JOB_ID: str = "proposal_composer"
-_TEMPLATE_VERSION: str = "v6"
+_TEMPLATE_VERSION: str = "v7"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -414,14 +414,31 @@ class ProposalComposerAgent:
         proposal_class) by the ProposalPacket model.
         """
         # Build target ElementRefs from the candidate's involved elements.
-        targets = tuple(
-            ElementRef(
-                element_type="node",
-                dedupe_key=ref,
-                label=ref,
+        # For relationship-lane candidates (canonical_violation, exact_rel_duplicate),
+        # the collision_context identifies the relationship dedupe_key explicitly.
+        # All other refs in involved_element_refs are endpoint nodes.
+        rel_dk: str | None = None
+        if candidate.candidate_lane == CandidateLane.relationship:
+            rel_dk = candidate.collision_context.get("rel_dedupe_key") or (
+                candidate.collision_context.get("dedupe_key")
             )
-            for ref in candidate.involved_element_refs
-        )
+
+        targets_list: list[ElementRef] = []
+        for ref in candidate.involved_element_refs:
+            if rel_dk and ref == rel_dk:
+                element_type = "relationship"
+            elif candidate.candidate_lane == CandidateLane.relationship:
+                element_type = "node"  # endpoint node ref
+            else:
+                element_type = "node"
+            targets_list.append(
+                ElementRef(
+                    element_type=element_type,
+                    dedupe_key=ref,
+                    label=ref,
+                )
+            )
+        targets = tuple(targets_list)
 
         # Collect unique doc_ids from the evidence report for provenance.
         evidence_doc_ids = tuple(sorted({

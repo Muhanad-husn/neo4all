@@ -185,15 +185,21 @@ def _recommend_canonical_violation(
             ),
         )
 
-    # canonical_direction_violation
+    # canonical_direction_violation — node types don't match any schema edge.
+    # The relationship may be real but mislabeled (e.g., HAS_CONTRACT between
+    # Org→Org should be WORKS_FOR).  Suggest rename rather than delete so the
+    # LLM can evaluate whether the connection is valid under a different type.
     return StructuralRecommendation(
-        suggested_action="delete",
-        confidence=0.80,
+        suggested_action="rename",
+        confidence=0.65,
         reasoning=(
             f"Relationship '{rel_type}' connects "
             f"{ctx.get('actual_start_type', '?')} -> "
             f"{ctx.get('actual_end_type', '?')} which matches no valid "
-            f"schema direction. This relationship is invalid."
+            f"schema direction for this type. The connection may be real "
+            f"but mislabeled — consider whether a different relationship "
+            f"type fits this pair of node types, or delete if the "
+            f"relationship is truly invalid."
         ),
     )
 

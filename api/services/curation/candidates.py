@@ -731,10 +731,26 @@ async def run_scoped_detection(
         if any(ref in focus_keys for ref in c.involved_element_refs)
     )
 
+    # Suppress orphan_node anomalies when the same node is in a duplicate candidate
+    duplicate_types = {CandidateType.exact_node_duplicate, CandidateType.probable_duplicate}
+    dup_refs: set[str] = set()
+    for c in all_candidates:
+        if c.candidate_type in duplicate_types:
+            dup_refs.update(c.involved_element_refs)
+
+    filtered: list[Candidate] = [
+        c for c in all_candidates
+        if not (
+            c.candidate_type == CandidateType.structural_anomaly
+            and c.collision_context.get("dedupe_key") in dup_refs
+            and c.detection_method == "orphan_node"
+        )
+    ]
+
     # Deduplicate by candidate_id
     seen: set[str] = set()
     unique: list[Candidate] = []
-    for c in all_candidates:
+    for c in filtered:
         if c.candidate_id not in seen:
             seen.add(c.candidate_id)
             unique.append(c)

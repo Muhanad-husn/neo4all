@@ -84,6 +84,16 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class _MergeAffectedCache(BaseModel):
+    """Redis cache envelope for merge-affected scoped detection results.
+
+    Used by _run_scoped_detection to store candidates found after a merge
+    so they can be retrieved by the curation UI.
+    """
+
+    candidates: list[dict[str, Any]]
+
+
 class ApprovalRecord(BaseModel):
     """Approval record stored at CacheKey.approval(approval_id).
 
@@ -720,7 +730,9 @@ class ExecutionAgent:
             if candidates:
                 await self._cache.set(
                     CacheKey.merge_affected(run_id=run_id, diff_id=diff_id),
-                    {"candidates": [c.model_dump() for c in candidates]},
+                    _MergeAffectedCache(
+                        candidates=[c.model_dump() for c in candidates],
+                    ),
                     ttl=300,
                 )
 
