@@ -199,7 +199,7 @@ class ExtractionService:
         self._llm = llm_client or LLMClient()
         self._job_config = job_config or JobConfig(
             job_id=self._JOB_ID,
-            model="openai/gpt-4o-mini",
+            model="openai/gpt-5-mini",
             temperature=0.1,  # low variance — structured extraction
             response_format={"type": "json_object"},
         )

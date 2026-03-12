@@ -820,13 +820,13 @@ def _render_agent_model_config(run_id: str) -> None:
 
     if config_data is None:
         st.warning("Cannot reach the agent config endpoint — model defaults unavailable.")
-        default_a = "openai/gpt-4o-mini"
-        default_b = "openai/gpt-4o-mini"
-        default_p = "openai/gpt-4o-mini"
+        default_a = "openai/gpt-5-mini"
+        default_b = "openai/gpt-5-mini"
+        default_p = "openai/gpt-5-mini"
     else:
-        default_a = config_data.get("agent_a", {}).get("model", "openai/gpt-4o-mini")
-        default_b = config_data.get("agent_b", {}).get("model", "openai/gpt-4o-mini")
-        default_p = config_data.get("agent_p", {}).get("model", "openai/gpt-4o-mini")
+        default_a = config_data.get("agent_a", {}).get("model", "openai/gpt-5-mini")
+        default_b = config_data.get("agent_b", {}).get("model", "openai/gpt-5-mini")
+        default_p = config_data.get("agent_p", {}).get("model", "openai/gpt-5-mini")
 
     st.markdown("**Per-Agent Model Assignment**")
     st.caption(

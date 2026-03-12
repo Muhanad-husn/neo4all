@@ -38,7 +38,7 @@ Usage:
 
     client = LLMClient()
     result: MyResponse | None = await client.call(
-        job=JobConfig(job_id="schema_propose", model="openai/gpt-4o-mini"),
+        job=JobConfig(job_id="schema_propose", model="openai/gpt-5-mini"),
         system_prompt="...",
         user_message="...",
         response_model=MyResponse,
@@ -89,7 +89,7 @@ class JobConfig(BaseModel):
         job_id:        Identifies the job type; used for logging and prompt
                        template resolution (e.g. "schema_propose").
         model:         OpenRouter model identifier
-                       (e.g. "openai/gpt-4o-mini", "anthropic/claude-3-haiku").
+                       (e.g. "openai/gpt-5-mini", "anthropic/claude-3-haiku").
         temperature:   Sampling temperature.  Default 0.2 for low-variance
                        structured outputs.
         max_tokens:    Hard cap on response tokens.  None lets the model decide.
