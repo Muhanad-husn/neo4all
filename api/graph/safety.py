@@ -22,6 +22,7 @@ independently.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Injection guards
@@ -52,6 +53,20 @@ def _vp(name: str) -> str:
             f"Invalid property name: {name!r}. Must match ^[A-Za-z_][A-Za-z0-9_]*$."
         )
     return name
+
+
+def _rel_dedupe_key(rel_type: str, start_key: str, end_key: str, sv: str) -> str:
+    """Compute a deterministic relationship dedupe key.
+
+    Mirrors the ``::``-joined format used by ``_serialize_rel_dedupe_key``
+    in ``api/graph/writer.py``.
+    """
+    return "::".join((rel_type, start_key, end_key, sv))
+
+
+def _extract_chunk_id(rel_props: dict[str, Any]) -> str:
+    """Extract ``_chunk_id`` from raw relationship properties, defaulting to empty string."""
+    return str(rel_props.get("_chunk_id", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -123,13 +138,23 @@ _MERGE_OUT_T = (
     "MATCH (s {{_dedupe_key: $sk, _run_id: $run_id}}) "
     "MATCH (e {{_dedupe_key: $tk, _run_id: $run_id}}) "
     "MERGE (s)-[r:`{rt}`]->(e) "
-    "ON CREATE SET r += $props, r._run_id = $run_id, r._created_at = datetime() "
+    "ON CREATE SET r += $props, r._run_id = $run_id, r._dedupe_key = $rdk, "
+    "              r._schema_version = $sv, r._chunk_id = $chunk_id, "
+    "              r._created_at = datetime() "
     "ON MATCH  SET r._last_seen_at = datetime()"
 )
 _MERGE_IN_T = (
     "MATCH (s {{_dedupe_key: $tk, _run_id: $run_id}}) "
     "MATCH (e {{_dedupe_key: $sk, _run_id: $run_id}}) "
     "MERGE (s)-[r:`{rt}`]->(e) "
-    "ON CREATE SET r += $props, r._run_id = $run_id, r._created_at = datetime() "
+    "ON CREATE SET r += $props, r._run_id = $run_id, r._dedupe_key = $rdk, "
+    "              r._schema_version = $sv, r._chunk_id = $chunk_id, "
+    "              r._created_at = datetime() "
     "ON MATCH  SET r._last_seen_at = datetime()"
+)
+# Post-merge invariant: all survivor relationships must have governance metadata.
+_SURVIVOR_REL_GOVERNANCE_CHECK = (
+    "MATCH (s {_dedupe_key: $sk, _run_id: $run_id})-[r]-() "
+    "WHERE r._dedupe_key IS NULL OR r._schema_version IS NULL "
+    "RETURN count(r) AS c"
 )

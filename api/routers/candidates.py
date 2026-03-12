@@ -50,7 +50,9 @@ from api.services.curation.candidates import (
     ExactRelDuplicateDetector,
     ProbableDuplicateDetector,
     StructuralAnomalyDetector,
+    run_scoped_detection,
 )
+from api.schema.service import get_schema_service
 
 logger = get_logger(__name__)
 
@@ -90,6 +92,13 @@ class GenerateCandidatesRequest(BaseModel):
     """Request body for POST /api/curation/candidates/generate."""
 
     run_id: str
+
+
+class GenerateScopedCandidatesRequest(BaseModel):
+    """Request body for POST /api/curation/candidates/generate-scoped."""
+
+    run_id: str
+    affected_node_keys: list[str]
 
 
 class CandidateTypeCount(BaseModel):
@@ -532,3 +541,107 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# POST /api/curation/candidates/generate-scoped
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/candidates/generate-scoped",
+    response_model=GenerateCandidatesResponse,
+    summary="Run detectors scoped to a set of affected node keys (post-merge re-trigger)",
+    responses={
+        409: {
+            "model": GenerateCandidatesResponse,
+            "description": "Schema not locked — approve Phase 1 before generating candidates",
+        },
+        503: {
+            "model": GenerateCandidatesResponse,
+            "description": "Neo4j unavailable — graph read failed",
+        },
+    },
+)
+async def generate_candidates_scoped(
+    request: GenerateScopedCandidatesRequest,
+    response: Response,
+    reader: GraphReader = Depends(get_graph_reader),
+) -> GenerateCandidatesResponse:
+    """Run candidate detectors scoped to affected node keys.
+
+    Unlike the full ``/candidates/generate`` endpoint, this only evaluates
+    candidates involving the specified node keys.  Designed for post-merge
+    re-detection or manual re-trigger from the UI.
+    """
+    run_id = request.run_id
+    focus_keys = set(request.affected_node_keys)
+    logger.info(
+        "scoped_candidate_generation_requested",
+        run_id=run_id,
+        focus_keys_count=len(focus_keys),
+    )
+
+    # Verify schema is locked
+    schema_service = get_schema_service()
+    schema = await schema_service.get_current(run_id)
+    if schema is None:
+        logger.warning("candidates_schema_not_locked", run_id=run_id)
+        response.status_code = 409
+        return GenerateCandidatesResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="schema_not_locked",
+                    message=(
+                        f"No locked schema found for run '{run_id}'. "
+                        "Complete Phase 1 (approve the domain schema) before "
+                        "generating candidates."
+                    ),
+                )
+            ],
+        )
+
+    try:
+        candidates = await run_scoped_detection(
+            run_id=run_id,
+            schema_version=schema.version_hash,
+            focus_keys=focus_keys,
+            reader=reader,
+            schema=schema,
+        )
+    except Exception as exc:
+        logger.error(
+            "scoped_candidates_graph_read_failed",
+            run_id=run_id,
+            error=str(exc),
+        )
+        response.status_code = 503
+        return GenerateCandidatesResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="neo4j_unavailable",
+                    message=f"Graph read failed for run '{run_id}'.",
+                )
+            ],
+        )
+
+    candidates_out = [_to_candidate_out(c) for c in candidates]
+
+    logger.info(
+        "scoped_candidate_generation_complete",
+        run_id=run_id,
+        total_count=len(candidates_out),
+        schema_version=schema.version_hash,
+    )
+
+    return GenerateCandidatesResponse(
+        run_id=run_id,
+        status="success",
+        total_count=len(candidates_out),
+        counts_by_type=_build_type_counts(candidates_out),
+        schema_version=schema.version_hash,
+    )

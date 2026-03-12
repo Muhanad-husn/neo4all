@@ -61,15 +61,20 @@ from api.graph.safety import (
     _REMOVE_NODE_PROP,
     _SAFE_IDENTIFIER_RE,
     _SAFE_PROP_RE,
+    _SURVIVOR_REL_GOVERNANCE_CHECK,
     _UPDATE_EDGE,
     _UPDATE_NODE,
+    _extract_chunk_id,
+    _rel_dedupe_key,
     _vi,
     _vp,
 )
+from api.graph.reader import GraphReader, get_graph_reader
 from api.observability.logger import get_logger
 from api.proposals.models import ProposalState
 from api.proposals.service import ProposalService
 from api.schema.service import SchemaService, get_schema_service
+from api.services.curation.candidates import run_scoped_detection
 from api.storage.artifacts import ArtifactsService, get_artifacts_service
 
 logger = get_logger(__name__)
@@ -173,6 +178,7 @@ class ExecutionAgent:
         self._proposals = proposal_service or ProposalService()
         self._auditor = audit_writer or AuditWriter()
         self._cache = cache or get_cache_client()
+        self._merge_affected_keys: list[str] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -335,6 +341,12 @@ class ExecutionAgent:
         # --- 5. Post-execution cache invalidation (SKILL-D R-D10) ---
         if outcome == AuditOutcome.applied:
             await self._invalidate_run_cache(diff.run_id)
+
+        # --- 5b. Auto-trigger scoped candidate re-detection after merge ---
+        if outcome == AuditOutcome.applied and self._merge_affected_keys:
+            await self._run_scoped_detection(
+                diff.run_id, diff.schema_version, diff.diff_id
+            )
 
         # --- 6. Write immutable audit record ---
         record = AuditRecord.make(
@@ -530,22 +542,28 @@ class ExecutionAgent:
             )
 
     async def _apply_merge_nodes(
-        self, step: DiffStep, run_id: str, _sv: str
+        self, step: DiffStep, run_id: str, schema_version: str
     ) -> None:
         """Collapse obsolete nodes into the survivor.
 
         For each obsolete node (merge_keys[1:]):
           1. Collect its outgoing and incoming relationships (excluding edges to survivor).
-          2. Re-create each relationship from/to the survivor via MERGE.
+          2. Re-create each relationship from/to the survivor via MERGE, including
+             governance metadata (_dedupe_key, _schema_version, _chunk_id).
           3. DETACH DELETE the obsolete node (removes remaining relationships).
+
+        Affected node keys (survivor + all neighbors) are collected into
+        ``self._merge_affected_keys`` for post-merge scoped candidate re-detection.
         """
         if not step.merge_keys:
             raise ExecutionStepError("merge_nodes: merge_keys is empty — no survivor defined")
 
         survivor_key = step.merge_keys[0]
         obsolete_keys = step.merge_keys[1:]
+        affected_keys: set[str] = {survivor_key}
 
         for obs_key in obsolete_keys:
+            affected_keys.add(obs_key)
             out_rows = await self._run_read(
                 _OBS_OUT_RELS, {"ok": obs_key, "sk": survivor_key, "run_id": run_id}
             )
@@ -555,26 +573,52 @@ class ExecutionAgent:
 
             for row in out_rows:
                 rt = _vi(str(row["rt"]), "rel_type")
+                raw_props = row.get("props") or {}
+                chunk_id = _extract_chunk_id(raw_props)
+                target_key = str(row["tk"])
+                affected_keys.add(target_key)
                 props = {
                     k: v
-                    for k, v in (row.get("props") or {}).items()
+                    for k, v in raw_props.items()
                     if not k.startswith("_")
                 }
+                rdk = _rel_dedupe_key(rt, survivor_key, target_key, schema_version)
                 await self._run_write(
                     _MERGE_OUT_T.format(rt=rt),
-                    {"sk": survivor_key, "tk": row["tk"], "props": props, "run_id": run_id},
+                    {
+                        "sk": survivor_key,
+                        "tk": target_key,
+                        "props": props,
+                        "run_id": run_id,
+                        "rdk": rdk,
+                        "sv": schema_version,
+                        "chunk_id": chunk_id,
+                    },
                 )
 
             for row in in_rows:
                 rt = _vi(str(row["rt"]), "rel_type")
+                raw_props = row.get("props") or {}
+                chunk_id = _extract_chunk_id(raw_props)
+                target_key = str(row["tk"])
+                affected_keys.add(target_key)
                 props = {
                     k: v
-                    for k, v in (row.get("props") or {}).items()
+                    for k, v in raw_props.items()
                     if not k.startswith("_")
                 }
+                rdk = _rel_dedupe_key(rt, target_key, survivor_key, schema_version)
                 await self._run_write(
                     _MERGE_IN_T.format(rt=rt),
-                    {"sk": survivor_key, "tk": row["tk"], "props": props, "run_id": run_id},
+                    {
+                        "sk": survivor_key,
+                        "tk": target_key,
+                        "props": props,
+                        "run_id": run_id,
+                        "rdk": rdk,
+                        "sv": schema_version,
+                        "chunk_id": chunk_id,
+                    },
                 )
 
             await self._run_write(_DELETE_NODE, {"dk": obs_key, "run_id": run_id})
@@ -584,6 +628,8 @@ class ExecutionAgent:
                 survivor_key=survivor_key,
                 obsolete_key=obs_key,
             )
+
+        self._merge_affected_keys = list(affected_keys)
 
     # ------------------------------------------------------------------
     # Post-apply invariant checks
@@ -628,6 +674,70 @@ class ExecutionAgent:
                     raise ExecutionInvariantError(
                         f"merge_nodes: obsolete node {obs_key!r} still exists after merge"
                     )
+            # Verify all survivor relationships carry governance metadata.
+            gov_rows = await self._run_read(
+                _SURVIVOR_REL_GOVERNANCE_CHECK,
+                {"sk": survivor_key, "run_id": run_id},
+            )
+            ungoverned = int(gov_rows[0].get("c", 0)) if gov_rows else 0
+            if ungoverned > 0:
+                raise ExecutionInvariantError(
+                    f"merge_nodes: {ungoverned} relationship(s) on survivor "
+                    f"{survivor_key!r} lack governance metadata "
+                    "(_dedupe_key or _schema_version)"
+                )
+
+    # ------------------------------------------------------------------
+    # Scoped candidate re-detection after merge
+    # ------------------------------------------------------------------
+
+    async def _run_scoped_detection(
+        self, run_id: str, schema_version: str, diff_id: str
+    ) -> None:
+        """Run candidate detectors scoped to the merge-affected neighborhood.
+
+        Best-effort: failures are logged but never block the audit record.
+        Results are stored under CacheKey.merge_affected(run_id, diff_id).
+        """
+        try:
+            reader = get_graph_reader()
+            schema = await self._schema.get_current(run_id)
+            if schema is None:
+                logger.warning(
+                    "scoped_detection_no_schema", run_id=run_id, diff_id=diff_id
+                )
+                return
+
+            focus_keys = set(self._merge_affected_keys)
+            candidates = await run_scoped_detection(
+                run_id=run_id,
+                schema_version=schema_version,
+                focus_keys=focus_keys,
+                reader=reader,
+                schema=schema,
+            )
+
+            if candidates:
+                await self._cache.set(
+                    CacheKey.merge_affected(run_id=run_id, diff_id=diff_id),
+                    {"candidates": [c.model_dump() for c in candidates]},
+                    ttl=300,
+                )
+
+            logger.info(
+                "scoped_detection_complete",
+                run_id=run_id,
+                diff_id=diff_id,
+                focus_keys_count=len(focus_keys),
+                candidates_found=len(candidates),
+            )
+        except Exception as exc:
+            logger.warning(
+                "scoped_detection_failed",
+                run_id=run_id,
+                diff_id=diff_id,
+                error=str(exc),
+            )
 
     # ------------------------------------------------------------------
     # Cache invalidation

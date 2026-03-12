@@ -190,6 +190,17 @@ class CacheKey:
         return "config:credentials"
 
     @staticmethod
+    def merge_affected(run_id: str, diff_id: str) -> str:
+        """Key for merge-affected element references (post-merge scoped detection).
+
+        Pattern: merge_affected:{run_id}:{diff_id}
+        TTL: 300 s (5 minutes — same as candidate cache).
+        Written by Agent-C after successful merge; read by UI for
+        manual re-trigger or display of affected neighborhood.
+        """
+        return f"merge_affected:{run_id}:{diff_id}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 

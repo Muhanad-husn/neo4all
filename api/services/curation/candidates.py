@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from api.graph.reader_models import (
     DegreeListResult,
@@ -38,6 +39,9 @@ from api.services.curation.similarity import (
     _primary_value,
     _token_overlap,
 )
+
+if TYPE_CHECKING:
+    from api.graph.reader import GraphReader
 
 logger = get_logger(__name__)
 
@@ -272,6 +276,84 @@ class ProbableDuplicateDetector:
             detector_name="ProbableDuplicateDetector",
             run_id=run_id,
             candidates_found=len(candidates),
+        )
+        return candidates
+
+    def detect_scoped(
+        self,
+        run_id: str,
+        schema_version: str,
+        nodes: NodeListResult,
+        schema: SchemaVersion,
+        focus_keys: set[str],
+        rels: RelListResult | None = None,
+    ) -> list[Candidate]:
+        """Like ``detect`` but only emits candidates where at least one node is in *focus_keys*.
+
+        Reduces the O(n^2) comparison to O(n * k) where k = len(focus_keys).
+        """
+        primary_props: dict[str, str] = {
+            ndef.type: ndef.primary_property for ndef in schema.nodes
+        }
+        by_type: dict[str, list[GraphNodeRecord]] = defaultdict(list)
+        for node in nodes.nodes:
+            by_type[node.node_type].append(node)
+
+        adj: dict[str, set[str]] = _build_adjacency(rels) if rels is not None else {}
+
+        candidates: list[Candidate] = []
+        for node_type, members in by_type.items():
+            prop = primary_props.get(node_type)
+            if prop is None or len(members) < 2:
+                continue
+            for i in range(len(members)):
+                for j in range(i + 1, len(members)):
+                    a, b = members[i], members[j]
+                    # Scoped: skip pairs where neither node is in focus_keys.
+                    if a.dedupe_key not in focus_keys and b.dedupe_key not in focus_keys:
+                        continue
+                    val_a = _primary_value(a, prop)
+                    val_b = _primary_value(b, prop)
+                    if not val_a or not val_b:
+                        continue
+                    jw = _jaro_winkler(val_a, val_b)
+                    if jw < JW_THRESHOLD:
+                        continue
+                    tok = _token_overlap(val_a, val_b)
+                    if jw < JW_SOFT_THRESHOLD and tok < TOKEN_OVERLAP_GATE:
+                        continue
+                    context_score = _jaccard(
+                        adj.get(a.dedupe_key, set()),
+                        adj.get(b.dedupe_key, set()),
+                    )
+                    refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
+                    candidates.append(
+                        Candidate(
+                            run_id=run_id,
+                            schema_version=schema_version,
+                            candidate_type=CandidateType.probable_duplicate,
+                            candidate_lane=CandidateLane.node,
+                            involved_element_refs=refs,
+                            severity=Severity.medium,
+                            detection_method=self.DETECTION_METHOD,
+                            collision_context={
+                                "node_type": node_type,
+                                "primary_property": prop,
+                                "value_a": val_a,
+                                "value_b": val_b,
+                                "jaro_winkler": round(jw, 6),
+                                "token_overlap": round(tok, 6),
+                                "context_jaccard": round(context_score, 6),
+                            },
+                        )
+                    )
+
+        logger.info(
+            "detector_run_complete",
+            detector_name="ProbableDuplicateDetector(scoped)",
+            run_id=run_id,
+            candidates_found=len(candidates),
+            focus_keys_count=len(focus_keys),
         )
         return candidates
 
@@ -563,3 +645,104 @@ class StructuralAnomalyDetector:
                     )
                 )
         return candidates
+
+
+# ---------------------------------------------------------------------------
+# Scoped candidate re-detection (post-merge)
+# ---------------------------------------------------------------------------
+
+
+def _touches_focus(rel: GraphRelRecord, focus_keys: set[str]) -> bool:
+    """Return True if either endpoint of a relationship is in focus_keys."""
+    return rel.start_dedupe_key in focus_keys or rel.end_dedupe_key in focus_keys
+
+
+async def run_scoped_detection(
+    run_id: str,
+    schema_version: str,
+    focus_keys: set[str],
+    reader: GraphReader,
+    schema: SchemaVersion,
+) -> list[Candidate]:
+    """Run candidate detectors scoped to a set of focus node keys.
+
+    Used after merge execution to detect new anomalies in the affected
+    neighborhood without a full-graph scan.
+
+    Detector scoping:
+      - ExactNodeDuplicateDetector: skipped (merge does not create node dups).
+      - ExactRelDuplicateDetector: filtered to rels touching focus_keys.
+      - ProbableDuplicateDetector: uses ``detect_scoped`` (O(n*k) instead of O(n^2)).
+      - CanonicalViolationDetector: filtered to rels touching focus_keys.
+      - StructuralAnomalyDetector: full data (needs global stats), output post-filtered.
+    """
+    nodes = await reader.get_nodes_by_run(run_id)
+    rels = await reader.get_relationships_by_run(run_id)
+    orphans = await reader.get_orphans(run_id)
+    degrees = await reader.get_node_degrees(run_id)
+
+    all_candidates: list[Candidate] = []
+
+    # ExactRelDuplicateDetector — scoped to rels touching focus_keys
+    scoped_rels = RelListResult(
+        rels=[r for r in rels.rels if _touches_focus(r, focus_keys)]
+    )
+    all_candidates.extend(
+        ExactRelDuplicateDetector().detect(
+            run_id=run_id, schema_version=schema_version, rels=scoped_rels
+        )
+    )
+
+    # ProbableDuplicateDetector — scoped comparison
+    all_candidates.extend(
+        ProbableDuplicateDetector().detect_scoped(
+            run_id=run_id,
+            schema_version=schema_version,
+            nodes=nodes,
+            schema=schema,
+            focus_keys=focus_keys,
+            rels=rels,
+        )
+    )
+
+    # CanonicalViolationDetector — scoped to rels touching focus_keys
+    all_candidates.extend(
+        CanonicalViolationDetector().detect(
+            run_id=run_id,
+            schema_version=schema_version,
+            rels=scoped_rels,
+            nodes=nodes,
+            schema=schema,
+        )
+    )
+
+    # StructuralAnomalyDetector — full data, post-filter to focus_keys
+    structural = StructuralAnomalyDetector().detect(
+        run_id=run_id,
+        schema_version=schema_version,
+        nodes=nodes,
+        rels=rels,
+        orphans=orphans,
+        degrees=degrees,
+        schema=schema,
+    )
+    all_candidates.extend(
+        c for c in structural
+        if any(ref in focus_keys for ref in c.involved_element_refs)
+    )
+
+    # Deduplicate by candidate_id
+    seen: set[str] = set()
+    unique: list[Candidate] = []
+    for c in all_candidates:
+        if c.candidate_id not in seen:
+            seen.add(c.candidate_id)
+            unique.append(c)
+
+    logger.info(
+        "scoped_detection_complete",
+        run_id=run_id,
+        focus_keys_count=len(focus_keys),
+        candidates_found=len(unique),
+    )
+    return unique
