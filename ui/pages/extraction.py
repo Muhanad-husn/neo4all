@@ -35,6 +35,10 @@ import httpx
 import streamlit as st
 
 from api.models.run import Phase
+from ui.components.monitoring_helpers import (
+    render_entity_yield_metrics,
+    render_failed_chunks_expander,
+)
 from ui.state import StateManager
 
 # ---------------------------------------------------------------------------
@@ -197,11 +201,18 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
         st.rerun()
 
 
-def _render_progress_section(status: dict[str, Any] | None) -> None:
+def _render_progress_section(
+    status: dict[str, Any] | None,
+    jobs: list[dict[str, Any]] | None = None,
+) -> None:
     """Render the per-run progress bar and chunk count metrics.
 
     Always shown when extraction has been triggered. Hides gracefully when the
     status endpoint is unreachable.
+
+    Args:
+        status: Aggregated status from GET /api/extraction/status/{run_id}.
+        jobs: Per-chunk job details from GET /api/monitoring/jobs/{run_id}.
     """
     st.subheader("Progress")
 
@@ -224,7 +235,15 @@ def _render_progress_section(status: dict[str, Any] | None) -> None:
     resolved = completed + failed
     frac = resolved / total
 
-    col_t, col_c, col_f, col_p = st.columns(4)
+    running = _is_running(status)
+
+    # Show Pending metric only while extraction is running (it's always 0 when done).
+    if running:
+        col_t, col_c, col_f, col_p = st.columns(4)
+        col_p.metric("Pending", pending)
+    else:
+        col_t, col_c, col_f = st.columns(3)
+
     col_t.metric("Total", total)
     col_c.metric("Complete", completed)
     col_f.metric(
@@ -233,25 +252,34 @@ def _render_progress_section(status: dict[str, Any] | None) -> None:
         delta=f"-{failed}" if failed else None,
         delta_color="inverse",
     )
-    col_p.metric("Pending", pending)
 
     st.progress(
         frac,
         text=f"{int(frac * 100)}% processed  ({resolved} / {total} chunks)",
     )
 
-    if _is_running(status):
+    # Entity yield from completed jobs.
+    job_list = jobs.get("jobs", []) if isinstance(jobs, dict) else (jobs or [])
+    if job_list:
+        render_entity_yield_metrics(job_list)
+
+    # Failed chunk details.
+    if failed > 0 and job_list:
+        render_failed_chunks_expander(job_list)
+
+    if running:
         st.caption(":blue[Extraction running — page auto-refreshes every 2 s.]")
 
 
 def _render_summary_section(
     status: dict[str, Any] | None,
     results: dict[str, Any] | None,
+    jobs: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Render extraction summary and entity preview after all jobs resolve.
+    """Render extraction summary and per-chunk entity breakdown after all jobs resolve.
 
-    Shows completion status (success / partial failure) and entity counts
-    read from Neo4j via GET /api/extraction/results/{run_id}.
+    Shows completion status (success / partial failure), entity counts from
+    Neo4j, and a per-chunk breakdown table sourced from WorkerJobDetail.
     """
     st.subheader("Extraction Summary")
 
@@ -284,12 +312,22 @@ def _render_summary_section(
     if schema_version:
         st.caption(f"Schema version: `{schema_version[:16]}…`")
 
-    st.markdown("**Entity Preview**")
-    preview = [
-        {"Entity type": "Nodes (all labels)", "Count": node_count},
-        {"Entity type": "Relationships (all types)", "Count": edge_count},
-    ]
-    st.dataframe(preview, use_container_width=True, hide_index=True)
+    # Per-chunk entity breakdown table from job details.
+    job_list = jobs.get("jobs", []) if isinstance(jobs, dict) else (jobs or [])
+    completed_jobs = [j for j in job_list if j.get("status") == "completed"]
+    if completed_jobs:
+        st.markdown("**Per-Chunk Entity Breakdown**")
+        rows = [
+            {
+                "Chunk ID": (j.get("chunk_id") or "")[:16] + "\u2026",
+                "Doc ID": (j.get("doc_id") or "")[:16] + "\u2026",
+                "Nodes Created": j.get("nodes_created", 0),
+                "Edges Created": j.get("edges_created", 0),
+            }
+            for j in completed_jobs
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
     st.caption(
         "Detailed per-type breakdown and entity browsing are available "
         "via Neo4j Browser or the Curation phase."
@@ -307,17 +345,20 @@ def _extraction_monitor(run_id: str) -> None:
 
     Only this fragment refreshes every 2 s while extraction is running —
     the rest of the page (sidebar, trigger section, header) stays stable.
+    Fetches per-chunk job details alongside status for entity yield and
+    failure diagnostics.
     """
     status = _fetch(f"/api/extraction/status/{run_id}")
+    jobs = _fetch(f"/api/monitoring/jobs/{run_id}")
 
     # --- Progress section ---
-    _render_progress_section(status)
+    _render_progress_section(status, jobs=jobs)
 
-    # --- Summary + entity preview: shown only when all jobs are resolved ---
+    # --- Summary + entity breakdown: shown only when all jobs are resolved ---
     if _is_done(status):
         st.divider()
         results = _fetch(f"/api/extraction/results/{run_id}")
-        _render_summary_section(status, results)
+        _render_summary_section(status, results, jobs=jobs)
 
         # Offer phase advancement only while still in Phase.EXTRACTION
         state = StateManager.get()

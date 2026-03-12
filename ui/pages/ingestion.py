@@ -35,11 +35,15 @@ consistency after browser refreshes or re-uploads.
 
 from __future__ import annotations
 
+import os
+from datetime import timedelta
 from typing import Any
 
+import httpx
 import streamlit as st
 
 from api.models.run import Phase
+from ui.components.activity_feed import _relative_time, _severity_dot
 from ui.pages.ingestion_helpers import (
     _ACCEPTED_EXTENSIONS,
     _docs_to_df,
@@ -50,6 +54,8 @@ from ui.pages.ingestion_helpers import (
     _show_api_errors,
 )
 from ui.state import StateManager
+
+_API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 
 # ---------------------------------------------------------------------------
@@ -204,13 +210,15 @@ def _render_chunk_viewer(run_id: str, documents: list[dict[str, Any]]) -> None:
         ":orange[Yellow rows] = low OCR confidence or low text density."
     )
 
+    expand_all = st.toggle("Expand all documents", key="expand_all_chunks")
+
     for doc in documents:
         doc_id: str = doc.get("doc_id", "")
         chunk_count: int = doc.get("chunk_count", 0)
         chunk_noun = "chunk" if chunk_count == 1 else "chunks"
         label = f"`{doc_id[:16]}…` — {chunk_count} {chunk_noun}"
 
-        with st.expander(label, expanded=False):
+        with st.expander(label, expanded=expand_all):
             _render_single_doc_chunks(run_id=run_id, doc_id=doc_id)
 
 
@@ -266,6 +274,47 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Section: Inline activity feed
+# ---------------------------------------------------------------------------
+
+
+@st.fragment(run_every=timedelta(seconds=5))
+def _fragment_ingestion_activity(run_id: str) -> None:
+    """Compact inline activity feed showing recent ingestion events.
+
+    Auto-refreshes every 5 s. Surfaces parser tier fallbacks, ingestion
+    events, and errors in real-time between the upload section and document list.
+    """
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(
+                f"{_API_BASE_URL}/api/monitoring/logs/activity",
+                params={"run_id": run_id, "limit": 5},
+            )
+            if resp.status_code != 200:
+                return
+            data = resp.json()
+    except Exception:
+        return
+
+    entries = data.get("entries", [])
+    if not entries:
+        return
+
+    st.caption("**Recent ingestion activity**")
+    for entry in entries:
+        level = str(entry.get("level", "info"))
+        event = str(entry.get("event", "unknown")).replace("_", " ")
+        timestamp = entry.get("timestamp", "")
+        rel_time = _relative_time(timestamp)
+        dot = _severity_dot(level)
+        line = f"{dot} {event}"
+        if rel_time:
+            line += f"  :gray[{rel_time}]"
+        st.markdown(line)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -305,6 +354,10 @@ def main() -> None:
 
     # ── Step 1: Upload panel ─────────────────────────────────────────────────
     _render_upload_section(state)
+
+    # ── Inline activity feed (between upload and document list) ───────────
+    _fragment_ingestion_activity(run_id)
+
     st.divider()
 
     # ── Steps 2 & 3: Document list → Chunk manifest viewer ───────────────────

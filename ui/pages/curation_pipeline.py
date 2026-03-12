@@ -32,11 +32,12 @@ Backend endpoints consumed:
   GET  /api/monitoring/agents/{run_id}
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import streamlit as st
 
+from ui.components.monitoring_helpers import format_duration
 from ui.pages.curation import (
     _delete,
     _fetch,
@@ -898,10 +899,9 @@ def _render_agent_model_config(run_id: str) -> None:
         updated = job.get("updated_at")
         if not updated:
             return False
-        from datetime import datetime, timezone
         try:
             ts = datetime.fromisoformat(updated)
-            age = (datetime.now(timezone.utc) - ts).total_seconds()
+            age = (datetime.now(UTC) - ts).total_seconds()
             return age < _STALE_SECONDS
         except (ValueError, TypeError):
             return False
@@ -1030,18 +1030,51 @@ def _render_agent_pipeline_progress(run_id: str) -> None:
     running = total - completed - failed - deferred - cancelled
     proposals_made = sum(1 for j in jobs if j.get("proposal_id"))
 
+    # Elapsed time: earliest started_at to latest updated_at.
+    started_timestamps: list[str] = [
+        j["started_at"] for j in jobs if j.get("started_at")
+    ]
+    updated_timestamps: list[str] = [
+        j["updated_at"] for j in jobs if j.get("updated_at")
+    ]
+    elapsed_str = ""
+    if started_timestamps and updated_timestamps:
+        earliest = min(started_timestamps)
+        latest = max(updated_timestamps)
+        elapsed_str = format_duration(earliest, latest)
+
     # Progress bar.
     finished = completed + failed + deferred + cancelled
     fraction = finished / total if total > 0 else 0.0
-    st.progress(fraction, text=f"Progress: {finished} / {total} candidates processed")
+    progress_text = f"Progress: {finished} / {total} candidates processed"
+    if elapsed_str:
+        if running > 0:
+            progress_text += f"  \u2014  Pipeline running for {elapsed_str}"
+        else:
+            progress_text += f"  \u2014  Completed in {elapsed_str}"
+    st.progress(fraction, text=progress_text)
 
-    # Compact metric cards.
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # Compact metric cards — now includes Cancelled.
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Completed", f"{completed}/{total}")
     c2.metric("Running", running)
     c3.metric("Failed", failed)
     c4.metric("Deferred", deferred)
-    c5.metric("Proposals", proposals_made)
+    c5.metric("Cancelled", cancelled)
+    c6.metric("Proposals", proposals_made)
+
+    # Cost/token summary from agent telemetry.
+    telemetry = _fetch(f"/api/monitoring/agents/{run_id}")
+    if telemetry is not None and telemetry.get("status") != "error":
+        records: list[dict[str, Any]] = telemetry.get("records", [])
+        if records:
+            total_input_tokens = sum(r.get("input_tokens", 0) for r in records)
+            total_output_tokens = sum(r.get("output_tokens", 0) for r in records)
+            total_cost = sum(r.get("cost", 0.0) for r in records)
+            tc1, tc2, tc3 = st.columns(3)
+            tc1.metric("Tokens in", f"{total_input_tokens:,}")
+            tc2.metric("Tokens out", f"{total_output_tokens:,}")
+            tc3.metric("Est. cost", f"${total_cost:.4f}")
 
     # Stage breakdown — one-line summary when jobs are actively running.
     if running > 0:
