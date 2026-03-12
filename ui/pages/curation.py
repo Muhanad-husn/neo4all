@@ -63,6 +63,7 @@ _STATE_BADGE: dict[str, str] = {
     "executed": ":violet[EXECUTED]",
     "rejected": ":red[REJECTED]",
     "deferred": ":gray[DEFERRED]",
+    "excluded": ":orange[EXCLUDED]",
 }
 
 # proposal_class values that require two-phase approval (mirrors backend)
@@ -281,7 +282,11 @@ def _format_context(ctx: dict[str, Any]) -> str:
     return "  |  ".join(str(p) for p in parts[:4])
 
 
-def _render_candidate_group(group: dict[str, Any]) -> None:
+def _render_candidate_group(
+    group: dict[str, Any],
+    run_id: str = "",
+    actor: str = "",
+) -> None:
     """Render one candidate type group inside a collapsible expander."""
     ctype: str = group.get("candidate_type", "")
     total: int = group.get("total", 0)
@@ -309,6 +314,38 @@ def _render_candidate_group(group: dict[str, Any]) -> None:
             for c in candidates
         ]
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        # Bulk orphan delete button for structural anomaly groups.
+        if ctype == "structural_anomaly" and run_id and actor:
+            orphans = [
+                c for c in candidates
+                if c.get("detection_method") == "orphan_node"
+            ]
+            if orphans:
+                if st.button(
+                    f"Delete All Orphan Nodes ({len(orphans)})",
+                    key="btn_delete_all_orphans",
+                    type="secondary",
+                    help="Creates, approves, and executes delete proposals for all orphan nodes.",
+                ):
+                    with st.spinner("Deleting all orphan nodes…"):
+                        data, err = _post(
+                            "/api/curation/orphans/delete-all",
+                            {"run_id": run_id, "actor": actor},
+                        )
+                    if err or data is None:
+                        st.error(f"Bulk delete failed: {err or 'No response from API.'}")
+                    elif data.get("status") == "error":
+                        for e in data.get("errors", []):
+                            st.error(f"[{e.get('code')}] {e.get('message')}")
+                    else:
+                        executed = data.get("proposals_executed", 0)
+                        failed = data.get("failed", 0)
+                        st.success(
+                            f"Orphan deletion complete — {executed} deleted, "
+                            f"{failed} failed."
+                        )
+                        st.rerun()
 
 
 def _render_candidates_section(run_id: str) -> None:
@@ -364,6 +401,7 @@ def main() -> None:
     from ui.pages.curation_pipeline import (  # noqa: E402
         _render_agent_model_config,
         _render_candidate_detail_section,
+        _render_excluded_items,
         _render_proposal_queue,
     )
 
@@ -443,7 +481,7 @@ def main() -> None:
                 st.caption(f"Schema version: `{sv[:16]}…`")
             st.divider()
             for group in groups:
-                _render_candidate_group(group)
+                _render_candidate_group(group, run_id=run_id, actor=actor)
 
     # --- Layer 2: Candidate detail, evidence, proposal form ---
     st.divider()
@@ -453,6 +491,11 @@ def main() -> None:
 
     # --- Layer 2: Proposal queue ---
     _render_proposal_queue(run_id, actor)
+
+    st.divider()
+
+    # --- Layer 2: Excluded items ---
+    _render_excluded_items(run_id, actor)
 
     st.divider()
 

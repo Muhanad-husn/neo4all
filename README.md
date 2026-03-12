@@ -272,6 +272,10 @@ FastAPI auto-generates interactive docs at:
 | POST   | `/api/curation/proposals/{id}/confirm`  | Phase 2 confirmation for high-risk proposals (merge, delete)           |
 | POST   | `/api/curation/proposals/{id}/reject`   | Reject a proposal (terminal state)                                     |
 | POST   | `/api/curation/proposals/{id}/defer`    | Defer a proposal for later review                                      |
+| POST   | `/api/curation/proposals/{id}/exclude`  | Exclude a proposal — suppress its candidate from future detection      |
+| POST   | `/api/curation/proposals/{id}/restore`  | Restore an excluded proposal back to pending                           |
+| GET    | `/api/curation/proposals/{run_id}/excluded` | List all excluded proposals for a run                              |
+| POST   | `/api/curation/orphans/delete-all`      | Bulk delete all orphan nodes through the governed pipeline             |
 
 #### Graph Explorer
 
@@ -374,7 +378,7 @@ Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhan
 | [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs)                  |
 | [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui)         | `Dockerfile.ui`     | Streamlit frontend (UI only)                                   |
 
-**Tags:** `1.0.1`, `latest`
+**Tags:** `1.0.2`, `latest`
 
 All images use CPU-only PyTorch (~3 GB each) instead of the default CUDA build (~13 GB). The embedding model (`all-MiniLM-L6-v2`) runs identically on CPU.
 
@@ -496,7 +500,7 @@ The next milestone enables users to ingest additional documents directly from th
 
 ---
 
-## Known Limitations (v1.0.1)
+## Known Limitations (v1.0.2)
 
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)

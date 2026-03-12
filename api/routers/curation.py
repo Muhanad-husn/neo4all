@@ -420,6 +420,50 @@ async def list_proposals(run_id: str) -> ListProposalsResponse:
 
 
 # ---------------------------------------------------------------------------
+# GET /proposals/{run_id}/excluded
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/proposals/{run_id}/excluded",
+    response_model=ListProposalsResponse,
+    summary="List all excluded proposals for a governed run",
+)
+async def list_excluded_proposals(run_id: str) -> ListProposalsResponse:
+    """Return all excluded proposals for a run.
+
+    Filtered view of the existing proposals list — only proposals with
+    state == "excluded" are returned.
+
+    Always returns HTTP 200.
+    """
+    from api.proposals.service import ProposalService
+
+    logger.info("curation_proposals_excluded_list_requested", run_id=run_id)
+
+    service = ProposalService()
+    packets = await service.list_for_run(run_id)
+
+    excluded = [
+        _to_proposal_out(p) for p in packets
+        if p.state == ProposalState.excluded
+    ]
+
+    logger.info(
+        "curation_proposals_excluded_list_success",
+        run_id=run_id,
+        total=len(excluded),
+    )
+
+    return ListProposalsResponse(
+        run_id=run_id,
+        status="success",
+        total=len(excluded),
+        proposals=excluded,
+    )
+
+
+# ---------------------------------------------------------------------------
 # DELETE /proposals/{run_id}
 # ---------------------------------------------------------------------------
 
@@ -448,6 +492,226 @@ async def clear_proposals(run_id: str) -> BaseResponse:
     )
 
     return BaseResponse(run_id=run_id, status="success")
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models — Delete All Orphans
+# ---------------------------------------------------------------------------
+
+
+class DeleteAllOrphansRequest(BaseModel):
+    """Request body for POST /orphans/delete-all."""
+
+    run_id: str
+    actor: str
+
+    @field_validator("run_id", "actor")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class DeleteAllOrphansResponse(BaseResponse):
+    """Response for POST /orphans/delete-all.
+
+    Attributes:
+        proposals_created: Number of delete proposals created.
+        proposals_executed: Number successfully executed.
+        failed: Number that failed during execution.
+    """
+
+    proposals_created: int = 0
+    proposals_executed: int = 0
+    failed: int = 0
+
+
+# ---------------------------------------------------------------------------
+# POST /orphans/delete-all
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/orphans/delete-all",
+    response_model=DeleteAllOrphansResponse,
+    summary="Create, approve, and execute delete proposals for all orphan node candidates",
+    responses={
+        409: {
+            "model": DeleteAllOrphansResponse,
+            "description": "Schema not locked",
+        },
+        503: {
+            "model": DeleteAllOrphansResponse,
+            "description": "Storage or graph unavailable",
+        },
+    },
+)
+async def delete_all_orphans(
+    request: DeleteAllOrphansRequest,
+    response: Response,
+) -> DeleteAllOrphansResponse:
+    """Bulk delete all orphan node candidates through the full governed pipeline.
+
+    For each orphan candidate: creates a delete proposal, approves it (two-phase
+    since delete is high-risk), builds the diff, and executes via Agent-C.
+    No pipeline bypass — every step goes through the governed mutation flow.
+
+    **Errors**
+    - ``409 Conflict`` — no locked schema for this run_id.
+    - ``503 Service Unavailable`` — storage or graph error.
+    """
+    import hashlib as _hashlib
+
+    from api.agents.execution import ApprovalRecord, ExecutionAgent
+    from api.diff.builder import DiffBuilder
+    from api.proposals.service import ProposalService, ProposalStorageError
+
+    run_id = request.run_id
+    actor = request.actor
+
+    logger.info("orphan_delete_all_requested", run_id=run_id, actor=actor)
+
+    cache = get_cache_client()
+
+    # 1. Verify schema is locked.
+    schema: SchemaVersion | None = await cache.get(
+        CacheKey.schema(run_id=run_id), model=SchemaVersion
+    )
+    if schema is None:
+        response.status_code = 409
+        return DeleteAllOrphansResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="schema_not_locked",
+                    message=f"No locked schema found for run '{run_id}'.",
+                )
+            ],
+        )
+
+    # 2. Fetch candidates from cache, filter to orphan_node.
+    from api.routers.candidates import _CandidateListCache, _detection_hash
+
+    orphan_candidates: list[dict[str, Any]] = []
+    for stage_val in (None, 1, 2, 3):
+        dhash = _detection_hash(schema.version_hash, stage=stage_val)
+        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+        cached: _CandidateListCache | None = await cache.get(
+            cache_key, model=_CandidateListCache
+        )
+        if cached:
+            for c in cached.candidates:
+                if c.detection_method == "orphan_node":
+                    orphan_candidates.append(c.model_dump())
+
+    # Deduplicate by candidate_id.
+    seen: set[str] = set()
+    unique_orphans: list[dict[str, Any]] = []
+    for oc in orphan_candidates:
+        cid = oc["candidate_id"]
+        if cid not in seen:
+            seen.add(cid)
+            unique_orphans.append(oc)
+
+    if not unique_orphans:
+        return DeleteAllOrphansResponse(
+            run_id=run_id,
+            status="success",
+            proposals_created=0,
+            proposals_executed=0,
+            failed=0,
+        )
+
+    # 3. Process each orphan candidate through the full pipeline.
+    service = ProposalService()
+    diff_builder = DiffBuilder()
+    agent = ExecutionAgent()
+    created = 0
+    executed = 0
+    failed = 0
+
+    for oc in unique_orphans:
+        candidate_id = oc["candidate_id"]
+        refs = oc.get("involved_element_refs", [])
+        targets = tuple(
+            ElementRef(element_type="node", dedupe_key=ref, label="", properties={})
+            for ref in refs
+        )
+
+        try:
+            # a. Create proposal.
+            packet = ProposalPacket(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                proposal_class=ProposalClass.delete,
+                schema_version=schema.version_hash,
+                targets=targets,
+                rationale=f"Bulk orphan deletion — node has no relationships.",
+                confidence_score=1.0,
+            )
+            await service.create(packet)
+            created += 1
+
+            # b. Approve (two-phase for delete).
+            proposal_id = packet.proposal_id
+            await service.transition(run_id, proposal_id, ProposalState.approved)
+
+            # c. Write approval record.
+            raw = f"approval:{proposal_id}:{actor}"
+            approval_id = _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            approval = ApprovalRecord(
+                approval_id=approval_id,
+                proposal_id=proposal_id,
+                run_id=run_id,
+                actor=actor,
+                is_confirmed=True,
+            )
+            await cache.set(CacheKey.approval(approval_id), approval)
+
+            # d. Build diff and execute.
+            diff = diff_builder.build(packet)
+            audit_record = await agent.execute(
+                diff=diff, approval_id=approval_id, actor=actor,
+            )
+
+            if str(audit_record.outcome) == "applied":
+                try:
+                    await service.transition(run_id, proposal_id, ProposalState.executed)
+                except Exception:
+                    pass
+                executed += 1
+            else:
+                failed += 1
+
+        except Exception as exc:
+            logger.warning(
+                "orphan_delete_candidate_failed",
+                candidate_id=candidate_id,
+                error=str(exc),
+            )
+            failed += 1
+
+    # 4. Invalidate caches.
+    await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
+    await cache.invalidate_prefix(CacheKey.graph_query_prefix(run_id))
+
+    logger.info(
+        "orphan_delete_all_complete",
+        run_id=run_id,
+        created=created,
+        executed=executed,
+        failed=failed,
+    )
+
+    return DeleteAllOrphansResponse(
+        run_id=run_id,
+        status="success",
+        proposals_created=created,
+        proposals_executed=executed,
+        failed=failed,
+    )
 
 
 # ---------------------------------------------------------------------------

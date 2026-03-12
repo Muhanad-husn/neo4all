@@ -2,6 +2,21 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.2] - 2026-03-12
+
+### Added
+- Exclude proposal state: permanently suppress noisy candidates from future detection (pending -> excluded, re-openable)
+- POST `/proposals/{id}/exclude` and `/proposals/{id}/restore` approval gate endpoints
+- Excluded candidate filtering in `GET /candidates/{run_id}` via Redis-backed excluded set
+- Bulk "Delete All Orphan Nodes" endpoint (`POST /orphans/delete-all`) — creates, approves, and executes delete proposals through the full governed pipeline
+- UI: Exclude button alongside Approve/Reject/Defer in proposal queue
+- UI: Delete All Orphan Nodes button in structural anomaly candidate group
+- UI: Excluded Items section with per-item and batch Restore functionality
+- GET `/proposals/{run_id}/excluded` endpoint for filtered excluded proposals view
+- `CacheKey.excluded_candidates(run_id)` cache key builder
+
+---
+
 ## [1.0.1] - 2026-03-12
 
 ### Added

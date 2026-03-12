@@ -197,6 +197,12 @@ class _CandidateListCache(BaseModel):
     schema_version: str
 
 
+class _ExcludedCandidatesCache(BaseModel):
+    """Redis cache envelope for the set of excluded candidate_ids within a run."""
+
+    candidate_ids: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -704,6 +710,29 @@ async def generate_candidates(
 
 
 # ---------------------------------------------------------------------------
+# Excluded candidate filter helper
+# ---------------------------------------------------------------------------
+
+
+async def _load_excluded_ids(run_id: str) -> set[str]:
+    """Load excluded candidate IDs from Redis with graceful degradation.
+
+    Returns an empty set on cache miss or error (SKILL-D R-D9).
+    """
+    try:
+        cache = get_cache_client()
+        excluded: _ExcludedCandidatesCache | None = await cache.get(
+            CacheKey.excluded_candidates(run_id),
+            model=_ExcludedCandidatesCache,
+        )
+        if excluded is not None:
+            return set(excluded.candidate_ids)
+    except Exception:
+        logger.debug("excluded_candidates_load_failed", run_id=run_id)
+    return set()
+
+
+# ---------------------------------------------------------------------------
 # GET /api/curation/candidates/{run_id}
 # ---------------------------------------------------------------------------
 
@@ -765,6 +794,11 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
         if c.candidate_id not in seen_ids:
             seen_ids.add(c.candidate_id)
             deduped.append(c)
+
+    # Filter out excluded candidates.
+    excluded_ids = await _load_excluded_ids(run_id)
+    if excluded_ids:
+        deduped = [c for c in deduped if c.candidate_id not in excluded_ids]
 
     if not deduped:
         logger.debug("candidates_list_empty", run_id=run_id)

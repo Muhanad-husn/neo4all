@@ -1,9 +1,9 @@
 """
 api/routers/approvals_models.py — Request/response models for the Approval Gate endpoints.
 
-These Pydantic models define the API contracts for the four approval-gate
-endpoints (approve, confirm, reject, defer).  Extracted from approvals.py
-to keep the router module focused on HTTP handling.
+These Pydantic models define the API contracts for the six approval-gate
+endpoints (approve, confirm, reject, defer, exclude, restore).  Extracted
+from approvals.py to keep the router module focused on HTTP handling.
 
 All response models extend BaseResponse (SKILL-A R-A2).
 """
@@ -133,5 +133,56 @@ class DeferProposalRequest(BaseModel):
 
 class DeferProposalResponse(BaseResponse):
     """Response for POST /proposals/{proposal_id}/defer."""
+
+    proposal_id: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Exclude
+# ---------------------------------------------------------------------------
+
+
+class ExcludeProposalRequest(BaseModel):
+    """Request body for POST /proposals/{proposal_id}/exclude."""
+
+    run_id: str
+    actor: str
+    reason: str = ""
+
+    @field_validator("run_id", "actor")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class ExcludeProposalResponse(BaseResponse):
+    """Response for POST /proposals/{proposal_id}/exclude."""
+
+    proposal_id: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Restore
+# ---------------------------------------------------------------------------
+
+
+class RestoreProposalRequest(BaseModel):
+    """Request body for POST /proposals/{proposal_id}/restore."""
+
+    run_id: str
+    actor: str
+
+    @field_validator("run_id", "actor")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class RestoreProposalResponse(BaseResponse):
+    """Response for POST /proposals/{proposal_id}/restore."""
 
     proposal_id: str = ""

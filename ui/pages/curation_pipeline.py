@@ -243,7 +243,7 @@ def _render_pending_actions(
                 st.rerun()
         return
 
-    col_approve, col_reject, col_defer = st.columns(3)
+    col_approve, col_reject, col_defer, col_exclude = st.columns(4)
 
     with col_approve:
         if st.button("Approve", key=f"btn_approve_{pid}", type="primary"):
@@ -287,6 +287,18 @@ def _render_pending_actions(
                 st.error(f"Defer failed: {err or 'No response from API.'}")
             else:
                 st.success("Proposal deferred.")
+                st.rerun()
+
+    with col_exclude:
+        if st.button("Exclude", key=f"btn_exclude_{pid}"):
+            data, err = _post(
+                f"/api/curation/proposals/{pid}/exclude",
+                {"run_id": run_id, "actor": actor, "reason": ""},
+            )
+            if err or data is None:
+                st.error(f"Exclude failed: {err or 'No response from API.'}")
+            else:
+                st.success("Proposal excluded from future detection.")
                 st.rerun()
 
 
@@ -447,6 +459,18 @@ def _render_proposal_expander(
             if st.button("Dismiss", key=f"btn_dismiss_{pid}"):
                 StateManager.get().dismiss_proposal(pid)
                 st.rerun()
+        elif state == "excluded":
+            st.warning("This proposal is excluded — its candidate is hidden from detection.")
+            if st.button("Restore", key=f"btn_restore_{pid}"):
+                data, err = _post(
+                    f"/api/curation/proposals/{pid}/restore",
+                    {"run_id": run_id, "actor": actor},
+                )
+                if err or data is None:
+                    st.error(f"Restore failed: {err or 'No response from API.'}")
+                else:
+                    st.success("Proposal restored to pending.")
+                    st.rerun()
         else:
             st.caption(f"No actions available — proposal is {state}.")
 
@@ -699,6 +723,73 @@ def _render_proposal_queue(run_id: str, actor: str) -> None:
 
     for proposal in visible:
         _render_proposal_expander(proposal, run_id, actor)
+
+
+def _render_excluded_items(run_id: str, actor: str) -> None:
+    """Render a section listing all excluded proposals with restore buttons."""
+    st.subheader("Excluded Items")
+
+    data = _fetch(f"/api/curation/proposals/{run_id}/excluded")
+
+    if data is None:
+        st.warning("Cannot reach the excluded proposals endpoint.")
+        return
+
+    if data.get("status") == "error":
+        for e in data.get("errors", []):
+            st.error(f"[{e.get('code')}] {e.get('message')}")
+        return
+
+    proposals: list[dict[str, Any]] = data.get("proposals", [])
+
+    if not proposals:
+        st.info("No excluded items.")
+        return
+
+    st.metric("Excluded", len(proposals))
+
+    rows = [
+        {
+            "ID": p.get("proposal_id", "")[:12] + "…",
+            "Class": p.get("proposal_class", ""),
+            "Rationale": p.get("rationale", ""),
+            "Candidate": p.get("candidate_id", "")[:16] + "…",
+        }
+        for p in proposals
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    # Per-item restore buttons.
+    for p in proposals:
+        pid = p["proposal_id"]
+        if st.button(
+            f"Restore `{pid[:12]}…`",
+            key=f"btn_restore_excluded_{pid}",
+        ):
+            resp, err = _post(
+                f"/api/curation/proposals/{pid}/restore",
+                {"run_id": run_id, "actor": actor},
+            )
+            if err or resp is None:
+                st.error(f"Restore failed: {err or 'No response from API.'}")
+            else:
+                st.success("Proposal restored to pending.")
+                st.rerun()
+
+    # Restore All button.
+    if len(proposals) > 1:
+        if st.button("Restore All", key="btn_restore_all_excluded", type="secondary"):
+            restored = 0
+            for p in proposals:
+                pid = p["proposal_id"]
+                resp, err = _post(
+                    f"/api/curation/proposals/{pid}/restore",
+                    {"run_id": run_id, "actor": actor},
+                )
+                if not err and resp is not None:
+                    restored += 1
+            st.success(f"Restored {restored} proposal(s) to pending.")
+            st.rerun()
 
 
 def _render_candidate_detail_section(

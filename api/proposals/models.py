@@ -18,8 +18,9 @@ re-derived from the three linkage fields.  Because the model is frozen the
 computed value is stable for the model's lifetime.
 
 State machine:
-    pending → approved | rejected | deferred
+    pending → approved | rejected | deferred | excluded
     approved → executed
+    excluded → pending (re-openable)
 
 Only a Proposal in "pending" state may transition to approved/rejected/deferred.
 An approved proposal may transition to "executed" after Agent-C applies the diff.
@@ -79,6 +80,8 @@ class ProposalState(StrEnum):
     executed: Diff has been applied by Agent-C.  Terminal — no further transitions.
     rejected: Explicitly rejected.  No further transitions permitted.
     deferred: Acknowledged but set aside.  Can be re-opened (pending) later.
+    excluded: Permanently suppressed from future candidate detection.  Can be
+              re-opened (pending) later, similar to deferred.
     """
 
     pending = "pending"
@@ -86,17 +89,20 @@ class ProposalState(StrEnum):
     executed = "executed"
     rejected = "rejected"
     deferred = "deferred"
+    excluded = "excluded"
 
 
 # Valid state transitions: {from_state: {allowed_to_states}}
 _VALID_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
     ProposalState.pending: frozenset(
-        {ProposalState.approved, ProposalState.rejected, ProposalState.deferred}
+        {ProposalState.approved, ProposalState.rejected, ProposalState.deferred,
+         ProposalState.excluded}
     ),
     ProposalState.approved: frozenset({ProposalState.executed}),
     ProposalState.executed: frozenset(),   # terminal
     ProposalState.rejected: frozenset(),   # terminal
     ProposalState.deferred: frozenset({ProposalState.pending}),  # re-openable
+    ProposalState.excluded: frozenset({ProposalState.pending}),  # re-openable
 }
 
 

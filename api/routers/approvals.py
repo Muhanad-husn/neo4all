@@ -19,6 +19,8 @@ Endpoints (mounted at /api/curation):
 
   POST /proposals/{proposal_id}/reject    — Reject a pending proposal.
   POST /proposals/{proposal_id}/defer     — Defer a pending proposal.
+  POST /proposals/{proposal_id}/exclude   — Exclude a pending proposal from future detection.
+  POST /proposals/{proposal_id}/restore   — Restore an excluded proposal to pending.
 
 Deterministic ID derivation (CLAUDE.md §5 — no uuid4):
   approval_id        = SHA-256("approval:" + proposal_id + ":" + actor)
@@ -61,8 +63,12 @@ from api.routers.approvals_models import (
     ConfirmProposalResponse,
     DeferProposalRequest,
     DeferProposalResponse,
+    ExcludeProposalRequest,
+    ExcludeProposalResponse,
     RejectProposalRequest,
     RejectProposalResponse,
+    RestoreProposalRequest,
+    RestoreProposalResponse,
 )
 
 logger = get_logger(__name__)
@@ -638,6 +644,210 @@ async def defer_proposal(
     )
 
     return DeferProposalResponse(
+        run_id=run_id,
+        proposal_id=proposal_id,
+        status="success",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Excluded candidates cache model
+# ---------------------------------------------------------------------------
+
+
+class _ExcludedCandidatesCache(BaseModel):
+    """Redis cache envelope for the set of excluded candidate_ids within a run."""
+
+    candidate_ids: list[str]
+
+
+# ---------------------------------------------------------------------------
+# POST /proposals/{proposal_id}/exclude
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/proposals/{proposal_id}/exclude",
+    response_model=ExcludeProposalResponse,
+    summary="Exclude a pending proposal from future candidate detection",
+    responses={
+        404: {
+            "model": ExcludeProposalResponse,
+            "description": "Proposal not found",
+        },
+        409: {
+            "model": ExcludeProposalResponse,
+            "description": "Proposal cannot be excluded from its current state",
+        },
+        503: {
+            "model": ExcludeProposalResponse,
+            "description": "Storage error during state transition",
+        },
+    },
+)
+async def exclude_proposal(
+    proposal_id: str,
+    request: ExcludeProposalRequest,
+    response: Response,
+) -> ExcludeProposalResponse:
+    """Exclude a pending proposal — suppress its candidate from future detection.
+
+    Transitions the proposal to the "excluded" state.  The candidate_id is
+    added to a Redis set so it is filtered out of future candidate listings.
+    Excluded proposals can be restored (transitioned back to "pending").
+
+    **Errors**
+    - ``404 Not Found`` — proposal not found.
+    - ``409 Conflict`` — proposal is in a state that cannot be excluded.
+    - ``503 Service Unavailable`` — storage failure.
+    """
+    run_id = request.run_id
+
+    logger.info(
+        "proposal_exclude_requested",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        actor=request.actor,
+    )
+
+    err = await _transition_proposal(
+        run_id, proposal_id, ProposalState.excluded, response, ExcludeProposalResponse,
+    )
+    if err is not None:
+        return err
+
+    # Add candidate_id to excluded set.
+    service = ProposalService()
+    cache = get_cache_client()
+    try:
+        proposal = await service.get_for_run(run_id, proposal_id)
+        if proposal is not None:
+            cache_key = CacheKey.excluded_candidates(run_id)
+            existing: _ExcludedCandidatesCache | None = await cache.get(
+                cache_key, model=_ExcludedCandidatesCache,
+            )
+            current_ids = set(existing.candidate_ids) if existing else set()
+            current_ids.add(proposal.candidate_id)
+            await cache.set(
+                cache_key,
+                _ExcludedCandidatesCache(candidate_ids=sorted(current_ids)),
+            )
+            # Invalidate candidate cache so next listing reflects the exclusion.
+            await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
+    except Exception:
+        logger.warning(
+            "proposal_exclude_cache_update_failed",
+            proposal_id=proposal_id,
+            run_id=run_id,
+        )
+
+    logger.info(
+        "proposal_excluded",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        actor=request.actor,
+    )
+
+    return ExcludeProposalResponse(
+        run_id=run_id,
+        proposal_id=proposal_id,
+        status="success",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /proposals/{proposal_id}/restore
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/proposals/{proposal_id}/restore",
+    response_model=RestoreProposalResponse,
+    summary="Restore an excluded proposal back to pending state",
+    responses={
+        404: {
+            "model": RestoreProposalResponse,
+            "description": "Proposal not found",
+        },
+        409: {
+            "model": RestoreProposalResponse,
+            "description": "Proposal cannot be restored from its current state",
+        },
+        503: {
+            "model": RestoreProposalResponse,
+            "description": "Storage error during state transition",
+        },
+    },
+)
+async def restore_proposal(
+    proposal_id: str,
+    request: RestoreProposalRequest,
+    response: Response,
+) -> RestoreProposalResponse:
+    """Restore an excluded proposal back to pending state.
+
+    Transitions the proposal from "excluded" to "pending".  The candidate_id
+    is removed from the excluded set so it reappears in candidate listings.
+
+    **Errors**
+    - ``404 Not Found`` — proposal not found.
+    - ``409 Conflict`` — proposal is not in "excluded" state.
+    - ``503 Service Unavailable`` — storage failure.
+    """
+    run_id = request.run_id
+
+    logger.info(
+        "proposal_restore_requested",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        actor=request.actor,
+    )
+
+    # Fetch proposal before transition to get candidate_id.
+    service = ProposalService()
+    cache = get_cache_client()
+    try:
+        proposal = await service.get_for_run(run_id, proposal_id)
+    except Exception:
+        proposal = None
+
+    err = await _transition_proposal(
+        run_id, proposal_id, ProposalState.pending, response, RestoreProposalResponse,
+    )
+    if err is not None:
+        return err
+
+    # Remove candidate_id from excluded set.
+    if proposal is not None:
+        try:
+            cache_key = CacheKey.excluded_candidates(run_id)
+            existing: _ExcludedCandidatesCache | None = await cache.get(
+                cache_key, model=_ExcludedCandidatesCache,
+            )
+            if existing:
+                current_ids = set(existing.candidate_ids)
+                current_ids.discard(proposal.candidate_id)
+                await cache.set(
+                    cache_key,
+                    _ExcludedCandidatesCache(candidate_ids=sorted(current_ids)),
+                )
+            # Invalidate candidate cache so next listing reflects the restoration.
+            await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
+        except Exception:
+            logger.warning(
+                "proposal_restore_cache_update_failed",
+                proposal_id=proposal_id,
+                run_id=run_id,
+            )
+
+    logger.info(
+        "proposal_restored",
+        proposal_id=proposal_id,
+        run_id=run_id,
+        actor=request.actor,
+    )
+
+    return RestoreProposalResponse(
         run_id=run_id,
         proposal_id=proposal_id,
         status="success",

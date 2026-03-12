@@ -221,6 +221,17 @@ class CacheKey:
         return f"merge_affected:{run_id}:{diff_id}"
 
     @staticmethod
+    def excluded_candidates(run_id: str) -> str:
+        """Key for the set of excluded candidate_ids within a run (no TTL).
+
+        Pattern: excluded_candidates:{run_id}
+
+        Maintained by the /exclude and /restore approval endpoints.
+        Read by the candidate listing endpoint to filter out excluded candidates.
+        """
+        return f"excluded_candidates:{run_id}"
+
+    @staticmethod
     def run_prefix(run_id: str) -> str:
         """Return the key prefix shared by all keys scoped to a run_id.
 
