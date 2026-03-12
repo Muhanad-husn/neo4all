@@ -353,13 +353,12 @@ AI proposals flow through the exact same approval pipeline as manual ones. No sh
 
 | Page           | Path                         | Description                                                                       |
 | -------------- | ---------------------------- | --------------------------------------------------------------------------------- |
-| Dashboard      | `ui/pages/dashboard.py`      | Run summary, graph statistics, proposal breakdown                                 |
+| Dashboard      | `ui/pages/dashboard.py`      | Run summary, extraction progress, graph statistics, proposal breakdown             |
 | Schema         | `ui/pages/schema.py`         | Phase 1: domain description → AI proposal → edit → lock                           |
 | Ingestion      | `ui/pages/ingestion.py`      | Phase 2: upload documents, view chunks and quality flags                          |
 | Extraction     | `ui/pages/extraction.py`     | Phase 3: trigger extraction, monitor per-chunk job progress                       |
 | Curation       | `ui/pages/curation.py`       | Phase 4: candidate review, evidence, proposals, approval pipeline, agent dispatch |
 | Graph Explorer | `ui/pages/graph_explorer.py` | Paginated node/edge browser with type filter                                      |
-| Monitoring     | `ui/pages/monitoring.py`     | Health, logs, workers, jobs, cache stats, agent telemetry, alerting               |
 
 All pages use `StateManager` for session state (no direct `st.session_state` access) and communicate with the backend exclusively via HTTP.
 
@@ -526,7 +525,7 @@ neo4all/
 │   ├── storage/            #   S3/RustFS artifact storage
 │   └── observability/      #   structlog, metrics, correlation IDs
 ├── ui/                     # Streamlit frontend — UI only, no business logic
-│   ├── pages/              #   One module per phase + explorer + monitoring
+│   ├── pages/              #   One module per phase + explorer + dashboard
 │   └── components/         #   Reusable widgets
 ├── prompts/                # Versioned YAML prompt templates
 ├── tests/                  # Unit (deterministic) + integration (Neo4j Aura)

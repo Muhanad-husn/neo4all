@@ -323,7 +323,7 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 - Construct cache keys by string concatenation — use `CacheKey` builders
 - Log credentials, API keys, or raw document content
 - Perform expensive reads without checking the cache first
-- Add business logic to the monitoring UI page
+- Add business logic to the dashboard UI page
 
 ---
 
@@ -430,5 +430,5 @@ The rules below are extracted from the skill files. Refer to the full skill file
 - **R-D9**: Cache misses are normal (DEBUG level) — system falls through to source; Redis failures logged at WARNING, never fail-closed
 - **R-D10**: After any graph mutation, invalidate all run-scoped cache keys (post-execution hook in Agent-C)
 - **R-D11**: Monitoring endpoints introduced progressively per spec (see `SKILL-D` for the full table)
-- **R-D12**: Frontend monitoring page is read-only, no business logic — renders data from backend endpoints
+- **R-D12**: Frontend dashboard is read-only, no business logic — renders data from backend endpoints
 - **R-D13**: Monitoring never blocks pipeline — in-memory metrics, ring buffer for logs, Redis INFO for cache stats

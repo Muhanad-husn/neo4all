@@ -22,7 +22,6 @@ Phase routing (simple if/elif — no st.navigation()):
 
 Utility views (sidebar selector, available after Phase 0):
   Dashboard        → ui/pages/dashboard.py
-  Monitoring       → ui/pages/monitoring.py
   Graph Explorer   → ui/pages/graph_explorer.py  (Phase 4+ only)
 """
 
@@ -482,7 +481,7 @@ def _render_sidebar(state: StateManager) -> str | None:
 
         # View selector — utility pages accessible once a session exists.
         if state.run_id:
-            view_options = ["Current Phase", "Dashboard", "Monitoring"]
+            view_options = ["Current Phase", "Dashboard"]
             if current_phase.value >= Phase.CURATION.value:
                 view_options.append("Graph Explorer")
 
@@ -724,9 +723,6 @@ def _route_utility_view(view: str) -> None:
     if view == "Dashboard":
         from ui.pages import dashboard as dashboard_page
         dashboard_page.main()
-    elif view == "Monitoring":
-        from ui.pages import monitoring as monitoring_page
-        monitoring_page.main()
     elif view == "Graph Explorer":
         from ui.pages import graph_explorer as graph_explorer_page
         graph_explorer_page.main()

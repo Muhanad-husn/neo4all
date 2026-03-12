@@ -7,8 +7,9 @@ single overview. All data fetched from the backend — no business logic.
 Sections:
   - Phase indicator (reusable component)
   - Run summary metrics (documents, entities, jobs, proposals)
-  - Graph statistics by type (nodes and edges)
-  - Proposal status breakdown
+  - Extraction progress bar
+  - Graph statistics by type (nodes and edges) with bar charts
+  - Proposal status breakdown with resolution progress bar
   - Recent activity log feed
 
 Architecture rules:
@@ -31,9 +32,9 @@ import os
 from typing import Any
 
 import httpx
+import pandas as pd
 import streamlit as st
 
-from api.models.run import Phase
 from ui.components.phase_indicator import render_phase_indicator
 from ui.state import StateManager
 
@@ -91,11 +92,39 @@ def _render_run_summary(
     c4.metric("Proposals", proposal_count)
 
 
+def _render_extraction_progress(job_data: dict[str, Any] | None) -> None:
+    """Render extraction progress bar with completed/failed/pending metrics."""
+    st.subheader("Extraction Progress")
+
+    if job_data is None:
+        st.warning("Cannot reach API — extraction progress unavailable.")
+        return
+
+    total: int = job_data.get("total", 0)
+    completed: int = job_data.get("completed", 0)
+    failed: int = job_data.get("failed", 0)
+    pending: int = job_data.get("pending", 0)
+
+    if total == 0:
+        st.info("No extraction jobs found for this run.")
+        return
+
+    resolved = completed + failed
+    frac = resolved / total
+
+    st.progress(frac, text=f"{int(frac * 100)}% resolved  ({resolved} / {total} chunks)")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Completed", completed)
+    c2.metric("Failed", failed)
+    c3.metric("Pending", pending)
+
+
 def _render_graph_stats(
     node_data: dict[str, Any] | None,
     edge_data: dict[str, Any] | None,
 ) -> None:
-    """Render node/edge type breakdowns as two-column tables."""
+    """Render node/edge type breakdowns as bar charts."""
     st.subheader("Graph Statistics")
 
     if node_data is None and edge_data is None:
@@ -108,8 +137,8 @@ def _render_graph_stats(
         st.markdown("**Node Counts by Type**")
         by_type = node_data.get("by_type", []) if node_data else []
         if by_type:
-            rows = [{"Type": t["type"], "Count": t["count"]} for t in by_type]
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            df = pd.DataFrame(by_type).rename(columns={"type": "Type", "count": "Count"})
+            st.bar_chart(df, x="Type", y="Count")
         else:
             st.info("No node data.")
 
@@ -117,14 +146,14 @@ def _render_graph_stats(
         st.markdown("**Edge Counts by Type**")
         by_type = edge_data.get("by_type", []) if edge_data else []
         if by_type:
-            rows = [{"Type": t["type"], "Count": t["count"]} for t in by_type]
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            df = pd.DataFrame(by_type).rename(columns={"type": "Type", "count": "Count"})
+            st.bar_chart(df, x="Type", y="Count")
         else:
             st.info("No edge data.")
 
 
 def _render_proposal_summary(proposal_data: dict[str, Any] | None) -> None:
-    """Render proposal status breakdown as 3-column metrics."""
+    """Render proposal status breakdown with resolution progress bar."""
     st.subheader("Proposal Summary")
 
     if proposal_data is None:
@@ -142,6 +171,14 @@ def _render_proposal_summary(proposal_data: dict[str, Any] | None) -> None:
     c1.metric("Total", total)
     c2.metric("Approved", approved)
     c3.metric("Rejected / Failed", rejected)
+
+    if total > 0:
+        resolved = approved + rejected
+        frac = resolved / total
+        pending = total - resolved
+        st.progress(frac, text=f"{int(frac * 100)}% resolved  ({resolved} / {total})")
+        if pending > 0:
+            st.caption(f"{pending} proposal(s) still pending.")
 
 
 def _render_recent_activity(log_data: dict[str, Any] | None) -> None:
@@ -197,6 +234,8 @@ def main() -> None:
     log_data = _fetch("/api/monitoring/logs/recent", params={"limit": 10})
 
     _render_run_summary(state, doc_data, node_data, job_data, proposal_data)
+    st.divider()
+    _render_extraction_progress(job_data)
     st.divider()
     _render_graph_stats(node_data, edge_data)
     st.divider()

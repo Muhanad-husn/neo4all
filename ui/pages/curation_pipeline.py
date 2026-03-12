@@ -912,7 +912,7 @@ def _render_agent_model_config(run_id: str) -> None:
         disabled=pipeline_busy,
         help=(
             "Enqueues all detected candidates for processing by the AI agent chain. "
-            "Progress is shown below and in the Monitoring page."
+            "Progress is shown below and in the Dashboard."
         )
         if not pipeline_busy
         else "Pipeline is already running — wait for it to finish.",

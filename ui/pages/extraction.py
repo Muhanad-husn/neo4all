@@ -18,8 +18,8 @@ Architecture rules:
     access anywhere in this file (CLAUDE.md §8).
   - API calls via httpx synchronous client (Streamlit is single-threaded).
   - Panels degrade gracefully when the API is unreachable (SKILL-D R-D12).
-  - Auto-poll implemented with time.sleep() + st.rerun() — consistent with
-    the monitoring page pattern; acceptable in a single-user dev environment.
+  - Auto-poll implemented with time.sleep() + st.rerun() — acceptable in a
+    single-user dev environment.
 
 Backend endpoints consumed:
   POST /api/extraction/run              — enqueue all pending chunk jobs
@@ -245,7 +245,7 @@ def _render_summary_section(
     else:
         st.warning(
             f"{failed} of {total} chunk(s) failed extraction. "
-            "Open the Monitoring page → Job Tracker for error details."
+            "Check the Dashboard for error details."
         )
 
     st.divider()
