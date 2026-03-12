@@ -68,6 +68,12 @@ _K_VIEW_OVERRIDE = "_nav_view_override"
 # Session-state key to avoid repeated restore attempts on every Streamlit rerun.
 _K_RESTORE_ATTEMPTED = "_nav_restore_attempted"
 
+# Session-state key storing restore diagnostics for Phase 0 display.
+_K_RESTORE_RESULT = "_nav_restore_result"
+
+# Session-state key flagging degraded session persistence (save failures).
+_K_SAVE_DEGRADED = "_nav_save_degraded"
+
 
 def _write_env_credentials(
     neo4j_uri: str,
@@ -94,7 +100,22 @@ def _write_env_credentials(
         if example_path.exists():
             original = example_path.read_text(encoding="utf-8")
         else:
-            raise OSError("Neither .env nor .env.example found")
+            # No template — generate minimal credential-only .env.
+            lines = []
+            for k in _NEO4J_URI_KEYS:
+                lines.append(f"{k}={neo4j_uri}\n")
+                break  # one canonical key is enough
+            for k in _NEO4J_USER_KEYS:
+                lines.append(f"{k}={neo4j_user}\n")
+                break
+            for k in _NEO4J_PASSWORD_KEYS:
+                lines.append(f"{k}={neo4j_password}\n")
+                break
+            for k in _OPENROUTER_KEY_KEYS:
+                lines.append(f"{k}={openrouter_api_key}\n")
+                break
+            env_path.write_text("".join(lines), encoding="utf-8")
+            return
 
     # Build a lookup: env-var key → new value (only for credential keys).
     replacements: dict[str, str] = {}
@@ -235,8 +256,17 @@ def _try_restore_session(state: StateManager) -> bool:
     ``run_id is None`` (i.e., a completely fresh bootstrap).
 
     Returns True if a session was successfully restored, False otherwise.
-    Fails silently (returns False) on any error — Phase 0 will be shown.
+    Stores diagnostic info in ``st.session_state[_K_RESTORE_RESULT]`` so
+    Phase 0 can display a meaningful message on failure.
     """
+    def _fail(reason: str) -> bool:
+        st.session_state[_K_RESTORE_RESULT] = {
+            "attempted": True,
+            "success": False,
+            "reason": reason,
+        }
+        return False
+
     try:
         import httpx
 
@@ -248,19 +278,23 @@ def _try_restore_session(state: StateManager) -> bool:
 
         # Cannot restore without at least URI and user.
         if not neo4j_uri or not neo4j_user:
-            return False
+            return _fail("No credentials in .env or environment variables")
 
         user_hash = _derive_user_hash(neo4j_uri, neo4j_user)
 
-        resp = httpx.Client(timeout=1.5).get(
-            f"{_API_BASE_URL}/api/session/{user_hash}"
-        )
+        try:
+            resp = httpx.Client(timeout=3.0).get(
+                f"{_API_BASE_URL}/api/session/{user_hash}"
+            )
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return _fail("Could not reach API to restore session")
+
         if resp.status_code != 200:
-            return False
+            return _fail(f"API returned status {resp.status_code}")
 
         data = resp.json()
         if not data.get("found") or data.get("record") is None:
-            return False
+            return _fail("No saved session found")
 
         record = data["record"]
 
@@ -282,9 +316,14 @@ def _try_restore_session(state: StateManager) -> bool:
         # worker.  The API and worker sync from Redis independently; the
         # authoritative credentials are those the user entered in Phase 0.
 
+        st.session_state[_K_RESTORE_RESULT] = {
+            "attempted": True,
+            "success": True,
+            "reason": "",
+        }
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        return _fail(f"Unexpected error: {exc}")
 
 
 def _reconcile_phase(state: StateManager) -> None:
@@ -394,8 +433,9 @@ def _save_session(state: StateManager) -> None:
         )
 
         state.set_last_saved_hash(snapshot_hash)
+        st.session_state.pop(_K_SAVE_DEGRADED, None)
     except Exception:
-        pass  # Fire-and-forget — never block the UI.
+        st.session_state[_K_SAVE_DEGRADED] = True
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +574,14 @@ def _render_phase_init(state: StateManager) -> None:
         "Credentials are saved to the local `.env` file so the API backend can use them."
     )
 
+    # Surface restore diagnostics if a restore was attempted but failed.
+    restore_result = st.session_state.get(_K_RESTORE_RESULT)
+    if restore_result and restore_result.get("attempted") and not restore_result.get("success"):
+        st.warning(
+            f"Could not restore previous session: {restore_result.get('reason', 'unknown error')}. "
+            "Please enter your credentials to start a new session."
+        )
+
     # Pre-fill form fields from .env when available (dev convenience).
     env_creds = _read_env_credentials()
 
@@ -596,9 +644,14 @@ def _render_phase_init(state: StateManager) -> None:
                     openrouter_api_key=openrouter_api_key,
                 )
             except OSError as exc:
-                # Suppress in Docker where .env/.env.example don't exist.
-                if not Path("/.dockerenv").exists():
-                    st.warning(f"Could not save credentials to .env: {exc}")
+                st.warning(f"Could not save credentials to .env: {exc}")
+
+            # Also inject into os.environ so _read_env_credentials() can
+            # find them via the fallback path even if .env write failed.
+            os.environ["NEO4J_URI"] = neo4j_uri.strip()
+            os.environ["NEO4J_USERNAME"] = neo4j_user.strip()
+            os.environ["NEO4J_PASSWORD"] = neo4j_password
+            os.environ["OPENROUTER_API_KEY"] = openrouter_api_key
 
             # Tell the running API to reload its configuration.
             if _notify_api_reload(
@@ -707,6 +760,9 @@ def main() -> None:
 
     # --- Session save (fire-and-forget, dirty-check gated) -----------------
     _save_session(state)
+
+    if st.session_state.get(_K_SAVE_DEGRADED):
+        st.toast("Session persistence degraded — could not save to Redis.", icon="⚠️")
 
     # Render sidebar (returns utility view name or None for phase view).
     view_override = _render_sidebar(state)
