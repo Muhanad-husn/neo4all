@@ -969,36 +969,29 @@ def _render_agent_model_config(run_id: str) -> None:
                 f"P={data.get('model_p', '?')}"
             )
 
-    # Agent pipeline progress — reuse already-fetched status data.
-    _agent_pipeline_fragment(run_id, prefetched=status_data)
+    # Agent pipeline progress — fragment fetches its own data on each rerun.
+    _agent_pipeline_fragment(run_id)
 
 
 @st.fragment(run_every=timedelta(seconds=3))
-def _agent_pipeline_fragment(
-    run_id: str,
-    prefetched: dict[str, Any] | None = None,
-) -> None:
+def _agent_pipeline_fragment(run_id: str) -> None:
     """Fragment wrapper around agent pipeline progress with auto-refresh.
 
-    When jobs are actively running, the fragment self-reruns every 3 s
-    (fragment-scoped — does not cause a full page rebuild).
+    Always fetches fresh status data on each rerun so the progress display
+    stays current.  Reruns every 3 s (fragment-scoped — does not cause a
+    full page rebuild).
     """
-    _render_agent_pipeline_progress(run_id, prefetched=prefetched)
+    _render_agent_pipeline_progress(run_id)
 
 
-def _render_agent_pipeline_progress(
-    run_id: str,
-    prefetched: dict[str, Any] | None = None,
-) -> None:
+def _render_agent_pipeline_progress(run_id: str) -> None:
     """Fetch and display per-candidate agent pipeline status."""
     st.markdown("**Agent Pipeline Progress**")
 
     if st.button("Refresh progress", key="refresh_agent_progress"):
         st.rerun()
 
-    data = prefetched if prefetched is not None else _fetch(
-        f"/api/curation/agents/status/{run_id}"
-    )
+    data = _fetch(f"/api/curation/agents/status/{run_id}")
 
     if data is None:
         st.caption("No agent pipeline telemetry available.")

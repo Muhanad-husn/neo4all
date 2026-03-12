@@ -7,7 +7,8 @@ single overview. All data fetched from the backend — no business logic.
 Sections:
   - Phase indicator (reusable component)
   - Run summary metrics (documents, entities, jobs, proposals)
-  - Extraction progress bar
+  - Ingestion pipeline summary (document table with chunk counts)
+  - Extraction progress bar (auto-refreshes every 2 s)
   - Graph statistics by type (nodes and edges) with bar charts
   - Recent activity log feed
 
@@ -28,6 +29,7 @@ Backend endpoints consumed:
 """
 
 import os
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -89,6 +91,41 @@ def _render_run_summary(
     c2.metric("Entities", entity_count)
     c3.metric("Jobs", job_total)
     c4.metric("Proposals", proposal_count)
+
+
+def _render_ingestion_summary(
+    run_id: str,
+    doc_data: dict[str, Any] | None,
+) -> None:
+    """Render a compact ingestion pipeline summary with per-document chunk counts."""
+    st.subheader("Ingestion Pipeline")
+
+    if doc_data is None:
+        st.warning("Cannot reach API — ingestion data unavailable.")
+        return
+
+    documents: list[dict[str, Any]] = doc_data.get("documents", [])
+    total_count: int = doc_data.get("total_count", len(documents))
+
+    if not documents:
+        st.info("No documents ingested yet for this run.")
+        return
+
+    total_chunks = sum(d.get("chunk_count", 0) for d in documents)
+
+    c1, c2 = st.columns(2)
+    c1.metric("Documents Ingested", total_count)
+    c2.metric("Total Chunks", total_chunks)
+
+    rows = [
+        {
+            "Doc ID": (d.get("doc_id") or "")[:16] + "\u2026",
+            "Chunks": d.get("chunk_count", 0),
+            "Ingested At": d.get("created_at", "\u2014"),
+        }
+        for d in documents
+    ]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _render_extraction_progress(job_data: dict[str, Any] | None) -> None:
@@ -191,8 +228,19 @@ def _fragment_run_summary(run_id: str, state: StateManager) -> None:
 
 
 @st.fragment
+def _fragment_ingestion_summary(run_id: str) -> None:
+    """Fragment: fetches and renders ingestion pipeline summary independently."""
+    doc_data = _fetch(f"/api/documents/{run_id}")
+    _render_ingestion_summary(run_id, doc_data)
+
+
+@st.fragment(run_every=timedelta(seconds=2))
 def _fragment_extraction_progress(run_id: str) -> None:
-    """Fragment: fetches and renders extraction progress independently."""
+    """Fragment: fetches and renders extraction progress independently.
+
+    Auto-refreshes every 2 s so extraction progress streams live, matching the
+    extraction page's polling behaviour.
+    """
     job_data = _fetch(f"/api/monitoring/jobs/{run_id}")
     _render_extraction_progress(job_data)
 
@@ -231,6 +279,8 @@ def main() -> None:
     # Each section is an independent fragment that fetches its own data.
     # If one API call is slow, other sections still render promptly.
     _fragment_run_summary(run_id, state)
+    st.divider()
+    _fragment_ingestion_summary(run_id)
     st.divider()
     _fragment_extraction_progress(run_id)
     st.divider()
