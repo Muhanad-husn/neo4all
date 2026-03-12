@@ -32,6 +32,7 @@ Backend endpoints consumed:
   GET  /api/monitoring/agents/{run_id}
 """
 
+import time
 from typing import Any
 
 import streamlit as st
@@ -964,7 +965,23 @@ def _render_agent_model_config(run_id: str) -> None:
             )
 
     # Agent pipeline progress — reuse already-fetched status data.
-    _render_agent_pipeline_progress(run_id, prefetched=status_data)
+    _agent_pipeline_fragment(run_id, prefetched=status_data)
+
+
+_AGENT_POLL_INTERVAL_S: int = 3
+
+
+@st.fragment
+def _agent_pipeline_fragment(
+    run_id: str,
+    prefetched: dict[str, Any] | None = None,
+) -> None:
+    """Fragment wrapper around agent pipeline progress with auto-refresh.
+
+    When jobs are actively running, the fragment self-reruns every 3 s
+    (fragment-scoped — does not cause a full page rebuild).
+    """
+    _render_agent_pipeline_progress(run_id, prefetched=prefetched)
 
 
 def _render_agent_pipeline_progress(
@@ -1045,3 +1062,8 @@ def _render_agent_pipeline_progress(
                     cid = j.get("candidate_id", "")[:16]
                     err = j.get("error") or "Unknown error"
                     st.markdown(f"- `{cid}…` — {err}")
+
+    # Auto-poll while jobs are running (fragment-scoped rerun).
+    if running > 0:
+        time.sleep(_AGENT_POLL_INTERVAL_S)
+        st.rerun()

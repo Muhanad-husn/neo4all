@@ -13,7 +13,7 @@ Architecture:
 """
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import streamlit as st
 
@@ -55,12 +55,13 @@ def _severity_dot(level: str) -> str:
     return ":blue[●]"
 
 
+@st.fragment(run_every=timedelta(seconds=15))
 def render_activity_feed(run_id: str | None) -> None:
     """Render the activity feed inside a sidebar expander.
 
-    Fetches curated log entries from the backend and displays them as
-    compact single-line items with severity indicators and relative
-    timestamps.
+    Decorated with @st.fragment(run_every=15s) so it refreshes on its own
+    timer, decoupled from full-page reruns.  During extraction polling the
+    sidebar no longer refetches every 2 seconds.
 
     Args:
         run_id: Current session run_id for scoping. May be None.

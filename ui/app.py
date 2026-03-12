@@ -455,7 +455,7 @@ def _render_sidebar(state: StateManager) -> str | None:
     view_override: str | None = None
 
     with st.sidebar:
-        st.image(str(_LOGO_DARK), width=160)
+        st.image(_load_logo(str(_LOGO_DARK)), width=160)
         st.caption("AI-Powered Graph Curation")
         st.divider()
 
@@ -570,7 +570,7 @@ def _render_phase_init(state: StateManager) -> None:
     """
     col_logo, col_title = st.columns([1, 4])
     with col_logo:
-        st.image(str(_LOGO_DARK), width=120)
+        st.image(_load_logo(str(_LOGO_DARK)), width=120)
     with col_title:
         st.title("neo4all")
         st.caption("Phase 0 — Session Initialization")
@@ -731,11 +731,17 @@ def _route_utility_view(view: str) -> None:
         st.error(f"Unknown view: {view!r}")
 
 
+@st.cache_resource
+def _load_logo(path: str) -> Image.Image:
+    """Load a logo image once and cache across reruns."""
+    return Image.open(path)
+
+
 def main() -> None:
     """Application entry point, called by Streamlit on every script rerun."""
     st.set_page_config(
         page_title="neo4all",
-        page_icon=Image.open(_LOGO_LIGHT),
+        page_icon=_load_logo(str(_LOGO_LIGHT)),
         layout="wide",
         initial_sidebar_state="expanded",
     )

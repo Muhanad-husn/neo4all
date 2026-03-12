@@ -302,6 +302,47 @@ def _render_summary_section(
 # ---------------------------------------------------------------------------
 
 
+@st.fragment
+def _extraction_monitor(run_id: str) -> None:
+    """Fragment that polls extraction status and self-reruns.
+
+    Only this fragment refreshes every 2 s while extraction is running —
+    the rest of the page (sidebar, trigger section, header) stays stable.
+    """
+    status = _fetch(f"/api/extraction/status/{run_id}")
+
+    # --- Progress section ---
+    _render_progress_section(status)
+
+    # --- Summary + entity preview: shown only when all jobs are resolved ---
+    if _is_done(status):
+        st.divider()
+        results = _fetch(f"/api/extraction/results/{run_id}")
+        _render_summary_section(status, results)
+
+        # Offer phase advancement only while still in Phase.EXTRACTION
+        state = StateManager.get()
+        if state.phase == Phase.EXTRACTION:
+            st.divider()
+
+            def _do_advance() -> None:
+                """on_click callback — runs BEFORE the next render cycle."""
+                s = StateManager.get()
+                if s.phase == Phase.EXTRACTION:
+                    s.advance_phase(Phase.CURATION)
+
+            st.button(
+                "Proceed to Curation →",
+                type="primary",
+                on_click=_do_advance,
+            )
+
+    # --- Auto-poll while jobs are running (fragment-scoped rerun) ---
+    if _is_running(status):
+        time.sleep(_POLL_INTERVAL_S)
+        st.rerun()
+
+
 def main() -> None:
     """Extraction page entry point, called by Streamlit on every script rerun."""
     # NOTE: st.set_page_config() is called by app.py before routing here.
@@ -342,43 +383,16 @@ def main() -> None:
         "Extracted entities are validated and written to Neo4j via MERGE."
     )
 
-    # --- Fetch current extraction status (every render) ---
+    # --- Fetch current extraction status for trigger section ---
     status = _fetch(f"/api/extraction/status/{run_id}")
 
-    # --- Trigger section ---
+    # --- Trigger section (needs full-page rerun on button click) ---
     _render_trigger_section(run_id, status)
 
     st.divider()
 
-    # --- Progress section ---
-    _render_progress_section(status)
-
-    # --- Summary + entity preview: shown only when all jobs are resolved ---
-    if _is_done(status):
-        st.divider()
-        results = _fetch(f"/api/extraction/results/{run_id}")
-        _render_summary_section(status, results)
-
-        # Offer phase advancement only while still in Phase.EXTRACTION
-        if state.phase == Phase.EXTRACTION:
-            st.divider()
-
-            def _do_advance() -> None:
-                """on_click callback — runs BEFORE the next render cycle."""
-                s = StateManager.get()
-                if s.phase == Phase.EXTRACTION:
-                    s.advance_phase(Phase.CURATION)
-
-            st.button(
-                "Proceed to Curation →",
-                type="primary",
-                on_click=_do_advance,
-            )
-
-    # --- Auto-poll while jobs are running (2-second interval) ---
-    if _is_running(status):
-        time.sleep(_POLL_INTERVAL_S)
-        st.rerun()
+    # --- Monitor fragment: progress + summary + auto-poll (fragment-scoped) ---
+    _extraction_monitor(run_id)
 
 
 if __name__ == "__main__":

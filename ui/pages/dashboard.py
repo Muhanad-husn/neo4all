@@ -210,6 +210,45 @@ def _render_recent_activity(log_data: dict[str, Any] | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+@st.fragment
+def _fragment_run_summary(run_id: str, state: StateManager) -> None:
+    """Fragment: fetches and renders the run summary metrics independently."""
+    doc_data = _fetch(f"/api/documents/{run_id}")
+    node_data = _fetch(f"/api/graph/nodes/{run_id}/count")
+    job_data = _fetch(f"/api/monitoring/jobs/{run_id}")
+    proposal_data = _fetch(f"/api/curation/proposals/{run_id}")
+    _render_run_summary(state, doc_data, node_data, job_data, proposal_data)
+
+
+@st.fragment
+def _fragment_extraction_progress(run_id: str) -> None:
+    """Fragment: fetches and renders extraction progress independently."""
+    job_data = _fetch(f"/api/monitoring/jobs/{run_id}")
+    _render_extraction_progress(job_data)
+
+
+@st.fragment
+def _fragment_graph_stats(run_id: str) -> None:
+    """Fragment: fetches and renders graph statistics independently."""
+    node_data = _fetch(f"/api/graph/nodes/{run_id}/count")
+    edge_data = _fetch(f"/api/graph/edges/{run_id}/count")
+    _render_graph_stats(node_data, edge_data)
+
+
+@st.fragment
+def _fragment_proposal_summary(run_id: str) -> None:
+    """Fragment: fetches and renders proposal summary independently."""
+    proposal_data = _fetch(f"/api/curation/proposals/{run_id}")
+    _render_proposal_summary(proposal_data)
+
+
+@st.fragment
+def _fragment_recent_activity() -> None:
+    """Fragment: fetches and renders recent activity independently."""
+    log_data = _fetch("/api/monitoring/logs/recent", params={"limit": 10})
+    _render_recent_activity(log_data)
+
+
 def main() -> None:
     """Dashboard page entry point."""
     st.title("Dashboard")
@@ -223,25 +262,20 @@ def main() -> None:
         st.info("Start a session to see dashboard data.")
         return
 
-    st.caption(f"Run: `{state.run_id}`")
+    run_id = state.run_id
+    st.caption(f"Run: `{run_id}`")
 
-    # Fetch all data in sequence (Streamlit is single-threaded).
-    doc_data = _fetch(f"/api/documents/{state.run_id}")
-    node_data = _fetch(f"/api/graph/nodes/{state.run_id}/count")
-    edge_data = _fetch(f"/api/graph/edges/{state.run_id}/count")
-    job_data = _fetch(f"/api/monitoring/jobs/{state.run_id}")
-    proposal_data = _fetch(f"/api/curation/proposals/{state.run_id}")
-    log_data = _fetch("/api/monitoring/logs/recent", params={"limit": 10})
-
-    _render_run_summary(state, doc_data, node_data, job_data, proposal_data)
+    # Each section is an independent fragment that fetches its own data.
+    # If one API call is slow, other sections still render promptly.
+    _fragment_run_summary(run_id, state)
     st.divider()
-    _render_extraction_progress(job_data)
+    _fragment_extraction_progress(run_id)
     st.divider()
-    _render_graph_stats(node_data, edge_data)
+    _fragment_graph_stats(run_id)
     st.divider()
-    _render_proposal_summary(proposal_data)
+    _fragment_proposal_summary(run_id)
     st.divider()
-    _render_recent_activity(log_data)
+    _fragment_recent_activity()
 
 
 if __name__ == "__main__":
