@@ -509,6 +509,32 @@ async def run_agent_pipeline(
             ],
         )
 
+    # 2b. Suppress pairwise candidates that belong to a chain group.
+    #     The group candidate handles the entire chain atomically.
+    suppressed_count = 0
+    active_candidates: list[Candidate] = []
+    for c in candidates:
+        if c.collision_context.get("suppressed_by_group"):
+            suppressed_count += 1
+        else:
+            active_candidates.append(c)
+
+    if suppressed_count > 0:
+        logger.info(
+            "agent_pipeline_chain_suppressed",
+            run_id=run_id,
+            suppressed_count=suppressed_count,
+            active_count=len(active_candidates),
+        )
+    candidates = active_candidates
+
+    if not candidates:
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="success",
+            jobs_enqueued=0,
+        )
+
     # 3. Build AgentConfig with optional model overrides.
     settings = get_settings()
     base_cfg = settings.AGENT_CONFIG

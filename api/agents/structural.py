@@ -32,19 +32,34 @@ def compute_structural_recommendation(
     method = candidate.detection_method
     ctype = str(candidate.candidate_type)
 
-    # ----- conflict group override ----------------------------------------
-    # When the candidate belongs to a duplicate chain (connected component
-    # with >2 nodes), the conflict detector annotates it with
-    # preferred_action=canonicalize.  Honour this to avoid merge conflicts
-    # between interdependent candidates.
-    if ctx.get("preferred_action") == "canonicalize":
+    # ----- group merge (duplicate chain) ------------------------------------
+    # Synthetic group candidate created by the chain conflict detector.
+    # All nodes in the chain should be merged into the most-connected survivor.
+    if candidate.detection_method == "duplicate_chain_group":
+        survivor = ctx.get("survivor_key", "?")
+        group_size = ctx.get("conflict_group_size", "?")
         return StructuralRecommendation(
-            suggested_action="canonicalize",
+            suggested_action="merge",
             confidence=0.90,
             reasoning=(
-                f"Node appears in a chain of {ctx.get('conflict_group_size', '?')} "
-                f"overlapping duplicate candidates. Canonicalize all to avoid "
-                f"merge conflicts between interdependent candidates."
+                f"Duplicate chain of {group_size} overlapping nodes detected. "
+                f"Merge all into survivor '{survivor}' (highest degree: "
+                f"{ctx.get('survivor_degree', '?')}). Individual pairwise "
+                f"candidates are suppressed in favour of this atomic group merge."
+            ),
+        )
+
+    # ----- suppressed pairwise (part of a chain group) --------------------
+    # Pairwise candidates that belong to a chain are suppressed — the group
+    # candidate handles them.  Defer so the agent pipeline skips them.
+    if ctx.get("suppressed_by_group"):
+        return StructuralRecommendation(
+            suggested_action="defer",
+            confidence=1.0,
+            reasoning=(
+                f"This pairwise candidate is part of a duplicate chain and "
+                f"is handled by group candidate {ctx['suppressed_by_group'][:16]}…. "
+                f"Deferring to avoid redundant proposals."
             ),
         )
 

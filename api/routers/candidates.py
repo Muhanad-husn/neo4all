@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.graph.reader import GraphReader, get_graph_reader
-from api.models.candidate import Candidate, CandidateType
+from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
 from api.models.responses import BaseResponse, ErrorDetail
 from api.observability.logger import get_logger
 from api.schema.models import SchemaVersion
@@ -303,12 +303,38 @@ class _UnionFind:
             self._parent[ra] = rb
 
 
-def _annotate_conflict_groups(candidates: list[Candidate]) -> None:
-    """Annotate duplicate candidates that form chains with conflict group info.
+def _pick_survivor(
+    members: set[str],
+    degree_map: dict[str, int],
+) -> str:
+    """Pick the most-connected node in a component as merge survivor.
 
-    Mutates collision_context dicts in-place (safe because collision_context
-    is excluded from candidate_id and the dict is mutable on frozen models).
+    Ties are broken by lexicographic sort of dedupe_key for determinism.
     """
+    return max(
+        sorted(members),  # sort first for deterministic tie-breaking
+        key=lambda k: degree_map.get(k, 0),
+    )
+
+
+def _annotate_conflict_groups(
+    candidates: list[Candidate],
+    degree_map: dict[str, int] | None = None,
+) -> list[Candidate]:
+    """Detect duplicate chains and create synthetic group-merge candidates.
+
+    For each connected component with >2 nodes:
+    1. Create a synthetic group candidate (detection_method=duplicate_chain_group)
+       with all component nodes in involved_element_refs, survivor first.
+    2. Mark pairwise candidates in the chain as suppressed
+       (collision_context["suppressed_by_group"] = group candidate_id).
+
+    Returns the list of newly-created group candidates (caller appends them).
+    Mutates collision_context dicts in-place on existing candidates.
+    """
+    if degree_map is None:
+        degree_map = {}
+
     duplicate_types = {
         CandidateType.exact_node_duplicate,
         CandidateType.exact_rel_duplicate,
@@ -321,7 +347,7 @@ def _annotate_conflict_groups(candidates: list[Candidate]) -> None:
         if c.candidate_type in duplicate_types and len(c.involved_element_refs) >= 2
     ]
     if not dup_candidates:
-        return
+        return []
 
     # Build union-find from ref pairs.
     uf = _UnionFind()
@@ -339,26 +365,60 @@ def _annotate_conflict_groups(candidates: list[Candidate]) -> None:
         root = uf.find(ref)
         components[root].add(ref)
 
-    # Annotate candidates in multi-node components (>2 nodes = chain).
-    for c in dup_candidates:
-        roots = {uf.find(ref) for ref in c.involved_element_refs}
-        for root in roots:
-            component_size = len(components[root])
-            if component_size > 2:
-                c.collision_context["conflict_group_size"] = component_size
-                c.collision_context["preferred_action"] = "canonicalize"
-                break
+    # Identify chain components (>2 nodes).
+    chain_components: dict[str, set[str]] = {
+        root: members
+        for root, members in components.items()
+        if len(members) > 2
+    }
 
-    chain_count = sum(1 for comp in components.values() if len(comp) > 2)
-    if chain_count > 0:
-        logger.info(
-            "conflict_groups_detected",
-            chain_count=chain_count,
-            annotated_candidates=sum(
-                1 for c in dup_candidates
-                if c.collision_context.get("preferred_action") == "canonicalize"
-            ),
+    if not chain_components:
+        return []
+
+    # Build a group candidate for each chain component.
+    # Use the first pairwise candidate in the chain for run_id / schema_version.
+    first_dup = dup_candidates[0]
+    group_candidates: list[Candidate] = []
+
+    for root, members in chain_components.items():
+        survivor = _pick_survivor(members, degree_map)
+        # Order: survivor first, rest sorted for determinism.
+        ordered_refs = (survivor,) + tuple(sorted(members - {survivor}))
+
+        group = Candidate(
+            run_id=first_dup.run_id,
+            schema_version=first_dup.schema_version,
+            candidate_type=CandidateType.probable_duplicate,
+            candidate_lane=CandidateLane.node,
+            involved_element_refs=ordered_refs,
+            severity=Severity.high,
+            detection_method="duplicate_chain_group",
+            collision_context={
+                "conflict_group_size": len(members),
+                "survivor_key": survivor,
+                "survivor_degree": degree_map.get(survivor, 0),
+                "component_members": list(sorted(members)),
+            },
         )
+        group_candidates.append(group)
+
+        # Mark pairwise candidates in this chain as suppressed.
+        for c in dup_candidates:
+            if any(uf.find(ref) == root for ref in c.involved_element_refs):
+                c.collision_context["suppressed_by_group"] = group.candidate_id
+                c.collision_context["conflict_group_size"] = len(members)
+
+    logger.info(
+        "conflict_groups_detected",
+        chain_count=len(chain_components),
+        group_candidates_created=len(group_candidates),
+        suppressed_pairwise=sum(
+            1 for c in dup_candidates
+            if c.collision_context.get("suppressed_by_group")
+        ),
+    )
+
+    return group_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -603,12 +663,18 @@ async def generate_candidates(
     # 5c. Connected-component conflict detection (stage 1 only).
     #     For duplicate-type candidates, build a union-find over
     #     involved_element_refs pairs.  When a connected component has
-    #     >2 nodes (a chain like A↔M↔R↔B), annotate all candidates in
-    #     that component with preferred_action=canonicalize so the agent
-    #     pipeline treats the whole chain atomically.
+    #     >2 nodes (a chain like A↔M↔R↔B), create a synthetic group
+    #     candidate for the whole chain and suppress individual pairwise
+    #     candidates so the agent pipeline merges all nodes atomically.
     # ------------------------------------------------------------------
     if stage in (1, None):
-        _annotate_conflict_groups(unique)
+        # Build degree lookup for survivor selection (most-connected wins).
+        degree_map: dict[str, int] = {}
+        for d in degrees.degrees:
+            degree_map[d.dedupe_key] = d.in_degree + d.out_degree
+
+        group_candidates = _annotate_conflict_groups(unique, degree_map)
+        unique.extend(group_candidates)
 
     candidates_out = [_to_candidate_out(c) for c in unique]
 

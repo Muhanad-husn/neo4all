@@ -417,6 +417,10 @@ class ProposalComposerAgent:
         # For relationship-lane candidates (canonical_violation, exact_rel_duplicate),
         # the collision_context identifies the relationship dedupe_key explicitly.
         # All other refs in involved_element_refs are endpoint nodes.
+        #
+        # For group merge candidates (duplicate_chain_group), the refs are
+        # already ordered: survivor first (set during candidate generation).
+        # The diff builder uses targets[0] as the merge survivor.
         rel_dk: str | None = None
         if candidate.candidate_lane == CandidateLane.relationship:
             rel_dk = candidate.collision_context.get("rel_dedupe_key") or (
