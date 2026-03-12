@@ -138,70 +138,117 @@ def _dismiss_stale_proposals(run_id: str) -> None:
     StateManager.get().dismiss_proposals_batch(ids)
 
 
+def _run_stage_detection(
+    run_id: str, stage: int | None, label: str
+) -> None:
+    """Run candidate detection for a specific stage and display results."""
+    with st.spinner(f"Running {label} detection…"):
+        payload: dict[str, Any] = {"run_id": run_id}
+        if stage is not None:
+            payload["stage"] = stage
+        data, err = _post(
+            "/api/curation/candidates/generate",
+            payload,
+        )
+
+    if err or data is None:
+        st.error(
+            f"Candidate generation failed: {err or 'No response from API.'}"
+        )
+        return
+
+    if data.get("status") == "error":
+        for e in data.get("errors", []):
+            code = e.get("code", "")
+            if code == "schema_not_locked":
+                st.error(
+                    "Domain schema is not locked. Complete Phase 1 "
+                    "(Domain Schema) before generating candidates."
+                )
+            else:
+                st.error(f"[{code}] {e.get('message')}")
+        return
+
+    total: int = data.get("total_count", 0)
+    counts: list[dict[str, Any]] = data.get("counts_by_type", [])
+    sv: str = data.get("schema_version", "")
+
+    if total == 0:
+        st.success(f"{label} detection complete — no candidates found.")
+    else:
+        st.success(f"{label} detection complete — {total} candidate(s) found.")
+
+    if counts:
+        st.markdown("**Candidates by detector type:**")
+        cols = st.columns(max(len(counts), 1))
+        for col, entry in zip(cols, counts):
+            type_label = _TYPE_LABELS.get(
+                entry["candidate_type"], entry["candidate_type"]
+            )
+            col.metric(type_label, entry["count"])
+
+    if sv:
+        st.caption(f"Schema version: `{sv[:16]}…`")
+
+    # Dismiss stale proposals after regeneration.
+    _dismiss_stale_proposals(run_id)
+    st.rerun()
+
+
 def _render_trigger_section(run_id: str) -> None:
-    """Render the candidate generation trigger button and inline count summary."""
+    """Render staged candidate generation tabs with per-stage generate buttons."""
     st.subheader("Generate Candidates")
     st.caption(
-        "Runs all five deterministic detectors against the current Neo4j graph "
-        "for this run.  Zero-LLM — results are fully reproducible.  Cached for "
-        "5 minutes; re-click to force a fresh detection pass after the TTL expires."
+        "Staged detection pipeline: resolve duplicates first, then canonical "
+        "violations, then structural issues. Each stage runs against the "
+        "current graph state. Zero-LLM — results are fully reproducible."
     )
 
-    if st.button(
-        "Generate Candidates",
-        type="primary",
-        help="Runs exact-dup, probable-dup, canonical-violation, and structural-anomaly detectors.",
-    ):
-        with st.spinner("Running candidate detection…"):
-            data, err = _post(
-                "/api/curation/candidates/generate",
-                {"run_id": run_id},
-            )
+    tab_dup, tab_canon, tab_struct = st.tabs([
+        "Stage 1: Duplicates",
+        "Stage 2: Canonical Violations",
+        "Stage 3: Structural Issues",
+    ])
 
-        if err or data is None:
-            st.error(
-                f"Candidate generation failed: {err or 'No response from API.'}"
-            )
-            return
+    with tab_dup:
+        st.caption(
+            "Runs exact node/rel duplicate and probable duplicate detectors. "
+            "Duplicate chains are automatically detected and annotated for "
+            "canonicalization."
+        )
+        if st.button(
+            "Detect Duplicates",
+            type="primary",
+            key="gen_stage_1",
+            help="Runs ExactNodeDuplicate, ExactRelDuplicate, and ProbableDuplicate detectors.",
+        ):
+            _run_stage_detection(run_id, stage=1, label="Duplicate")
 
-        if data.get("status") == "error":
-            for e in data.get("errors", []):
-                code = e.get("code", "")
-                if code == "schema_not_locked":
-                    st.error(
-                        "Domain schema is not locked. Complete Phase 1 "
-                        "(Domain Schema) before generating candidates."
-                    )
-                else:
-                    st.error(f"[{code}] {e.get('message')}")
-            return
+    with tab_canon:
+        st.caption(
+            "Runs canonical violation detector (direction & inverse violations). "
+            "Best run after duplicate resolution so the graph is cleaner."
+        )
+        if st.button(
+            "Detect Canonical Violations",
+            type="primary",
+            key="gen_stage_2",
+            help="Runs CanonicalViolationDetector against the current graph.",
+        ):
+            _run_stage_detection(run_id, stage=2, label="Canonical violation")
 
-        total: int = data.get("total_count", 0)
-        counts: list[dict[str, Any]] = data.get("counts_by_type", [])
-        sv: str = data.get("schema_version", "")
-
-        if total == 0:
-            st.success("Detection complete — no candidates found in this run.")
-        else:
-            st.success(f"Detection complete — {total} candidate(s) found.")
-
-        if counts:
-            st.markdown("**Candidates by detector type:**")
-            cols = st.columns(max(len(counts), 1))
-            for col, entry in zip(cols, counts):
-                label = _TYPE_LABELS.get(
-                    entry["candidate_type"], entry["candidate_type"]
-                )
-                col.metric(label, entry["count"])
-
-        if sv:
-            st.caption(f"Schema version: `{sv[:16]}…`")
-
-        # Dismiss all existing proposals — regenerated candidates invalidate
-        # prior proposals.  Proposals remain in S3 for audit; this is UI-only.
-        _dismiss_stale_proposals(run_id)
-
-        st.rerun()
+    with tab_struct:
+        st.caption(
+            "Runs structural anomaly detectors (orphans, missing provenance, "
+            "qualifier gaps). Best run after canonical violations are resolved."
+        )
+        if st.button(
+            "Detect Structural Issues",
+            type="primary",
+            key="gen_stage_3",
+            help="Runs StructuralAnomalyDetector (degree_outlier excluded).",
+        ):
+            _run_stage_detection(run_id, stage=3, label="Structural issue")
 
 
 def _render_severity_badges(severity_counts: dict[str, int]) -> None:

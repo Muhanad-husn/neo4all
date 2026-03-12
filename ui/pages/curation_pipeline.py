@@ -932,6 +932,18 @@ def _render_agent_model_config(run_id: str) -> None:
         ):
             _confirm_stop_pipeline()
 
+    # Collect candidate IDs from all loaded candidate groups for targeted pipeline runs.
+    # When the UI has loaded candidates (from any stage), pass their IDs so the
+    # pipeline processes only the currently visible candidates.
+    _all_candidate_ids: list[str] = []
+    candidates_data = _fetch(f"/api/curation/candidates/{run_id}")
+    if candidates_data and candidates_data.get("status") != "error":
+        for g in candidates_data.get("groups", []):
+            for c in g.get("candidates", []):
+                cid = c.get("candidate_id", "")
+                if cid:
+                    _all_candidate_ids.append(cid)
+
     # Trigger button.
     if st.button(
         "Curate",
@@ -951,6 +963,8 @@ def _render_agent_model_config(run_id: str) -> None:
             "model_b": model_b.strip() or None,
             "model_p": model_p.strip() or None,
         }
+        if _all_candidate_ids:
+            payload["candidate_ids"] = _all_candidate_ids
 
         with st.spinner("Enqueuing agent pipeline jobs..."):
             data, err = _post("/api/curation/agents/run", payload)

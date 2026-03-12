@@ -487,7 +487,9 @@ class StructuralAnomalyDetector:
         """Run all sub-detectors and return the merged candidate list."""
         candidates: list[Candidate] = []
         candidates.extend(self._orphan_candidates(run_id, schema_version, orphans))
-        candidates.extend(self._degree_outlier_candidates(run_id, schema_version, degrees))
+        # degree_outlier excluded from pipeline output — these require deep
+        # investigation and should not enter the agent pipeline.  The method
+        # is retained for potential future informational use.
         candidates.extend(self._provenance_candidates(run_id, schema_version, nodes, rels))
         if schema is not None:
             candidates.extend(self._qualifier_candidates(run_id, schema_version, nodes, schema))

@@ -277,52 +277,28 @@ async def get_agent_config() -> AgentConfigResponse:
 async def get_pipeline_status(run_id: str) -> PipelineStatusResponse:
     """Return the pipeline status for all candidates in a run.
 
-    Reads per-candidate status from Redis (``CacheKey.agent_job``).  First
-    loads the candidate list from cache to know which candidates to query,
-    then reads each candidate's pipeline status.
+    Scans Redis for all ``agent_job:{run_id}:*`` keys directly, so it
+    works correctly regardless of which stage(s) were used to generate
+    candidates.  Does not depend on a single candidate cache key.
 
     Always returns HTTP 200.  Returns an empty list when no pipeline jobs
     exist for this run (fail-open per SKILL-D R-D13).
     """
-    import hashlib
-
-    from api.schema.models import SchemaVersion
     from api.worker.jobs_agents import AgentPipelineJobStatus
 
     cache = get_cache_client()
 
-    # Resolve schema to find the candidate cache key.
-    schema: SchemaVersion | None = await cache.get(
-        CacheKey.schema(run_id=run_id), model=SchemaVersion
-    )
-    if schema is None:
+    # Scan all agent job status keys for this run (works across stages).
+    keys = await cache.scan_keys(CacheKey.agent_job_prefix(run_id))
+
+    if not keys:
         return PipelineStatusResponse(run_id=run_id, status="success")
 
-    dhash_payload = f"{schema.version_hash}:all_detectors_v1"
-    dhash = hashlib.sha256(dhash_payload.encode("utf-8")).hexdigest()[:32]
-    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
-
-    from pydantic import BaseModel as _BM
-
-    class _CandidateListCache(_BM):
-        candidates: list[dict[str, Any]]
-        schema_version: str
-
-    cached: _CandidateListCache | None = await cache.get(
-        cache_key, model=_CandidateListCache
-    )
-    if cached is None or not cached.candidates:
-        return PipelineStatusResponse(run_id=run_id, status="success")
-
-    # Read pipeline status for each candidate.
+    # Read pipeline status for each key.
     jobs: list[PipelineJobOut] = []
-    for c in cached.candidates:
-        cid = c.get("candidate_id", "")
-        if not cid:
-            continue
+    for key in keys:
         status: AgentPipelineJobStatus | None = await cache.get(
-            CacheKey.agent_job(run_id=run_id, candidate_id=cid),
-            model=AgentPipelineJobStatus,
+            key, model=AgentPipelineJobStatus
         )
         if status is not None:
             jobs.append(PipelineJobOut(
@@ -430,22 +406,39 @@ async def run_agent_pipeline(
             ],
         )
 
-    # 2. Load cached candidates.
-    dhash_payload = f"{schema.version_hash}:all_detectors_v1"
-    dhash = hashlib.sha256(dhash_payload.encode("utf-8")).hexdigest()[:32]
-    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
-
-    # Use a minimal model to read the cache (same shape as candidates router).
+    # 2. Load cached candidates — scan all stage cache keys.
     from pydantic import BaseModel as _BM
 
     class _CandidateListCache(_BM):
         candidates: list[dict[str, Any]]
         schema_version: str
 
-    cached: _CandidateListCache | None = await cache.get(
-        cache_key, model=_CandidateListCache
-    )
-    if cached is None or not cached.candidates:
+    # Try all stage variants (None, 1, 2, 3) to collect candidates from
+    # any stage that has been generated.
+    raw_candidates: list[dict[str, Any]] = []
+    for stage_val in (None, 1, 2, 3):
+        stage_tag = f"_stage{stage_val}" if stage_val is not None else ""
+        dhash_payload = f"{schema.version_hash}:all_detectors_v1{stage_tag}"
+        dhash = hashlib.sha256(dhash_payload.encode("utf-8")).hexdigest()[:32]
+        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+
+        cached: _CandidateListCache | None = await cache.get(
+            cache_key, model=_CandidateListCache
+        )
+        if cached is not None and cached.candidates:
+            raw_candidates.extend(cached.candidates)
+
+    # Deduplicate by candidate_id across stages.
+    seen_ids: set[str] = set()
+    deduped_candidates: list[dict[str, Any]] = []
+    for c in raw_candidates:
+        cid = c.get("candidate_id", "")
+        if cid and cid not in seen_ids:
+            seen_ids.add(cid)
+            deduped_candidates.append(c)
+    raw_candidates = deduped_candidates
+
+    if not raw_candidates:
         logger.warning("agent_pipeline_no_candidates", run_id=run_id)
         response.status_code = 404
         return RunAgentPipelineResponse(
@@ -463,7 +456,6 @@ async def run_agent_pipeline(
         )
 
     # Filter to requested candidate IDs if specified.
-    raw_candidates = cached.candidates
     if request.candidate_ids:
         requested = set(request.candidate_ids)
         raw_candidates = [c for c in raw_candidates if c.get("candidate_id") in requested]

@@ -32,6 +32,22 @@ def compute_structural_recommendation(
     method = candidate.detection_method
     ctype = str(candidate.candidate_type)
 
+    # ----- conflict group override ----------------------------------------
+    # When the candidate belongs to a duplicate chain (connected component
+    # with >2 nodes), the conflict detector annotates it with
+    # preferred_action=canonicalize.  Honour this to avoid merge conflicts
+    # between interdependent candidates.
+    if ctx.get("preferred_action") == "canonicalize":
+        return StructuralRecommendation(
+            suggested_action="canonicalize",
+            confidence=0.90,
+            reasoning=(
+                f"Node appears in a chain of {ctx.get('conflict_group_size', '?')} "
+                f"overlapping duplicate candidates. Canonicalize all to avoid "
+                f"merge conflicts between interdependent candidates."
+            ),
+        )
+
     # ----- exact_node_duplicate -------------------------------------------
     if ctype == "exact_node_duplicate":
         count = ctx.get("duplicate_count", 2)

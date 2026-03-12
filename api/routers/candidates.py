@@ -70,16 +70,18 @@ _SEVERITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low":
 # ---------------------------------------------------------------------------
 
 
-def _detection_hash(schema_version: str) -> str:
+def _detection_hash(schema_version: str, stage: int | None = None) -> str:
     """Deterministic 32-char hash of detection parameters.
 
-    Encodes schema_version + "all_detectors_v1" sentinel so that:
-    - The same schema always produces the same hash (stable across restarts).
-    - A future change to detector set or schema would produce a different key.
+    Encodes schema_version + "all_detectors_v1" sentinel (plus optional
+    stage tag) so that:
+    - The same schema + stage always produces the same hash.
+    - Different stages produce different cache keys.
 
     Returns the first 32 hex chars of the SHA-256 digest.
     """
-    payload = f"{schema_version}:all_detectors_v1"
+    stage_tag = f"_stage{stage}" if stage is not None else ""
+    payload = f"{schema_version}:all_detectors_v1{stage_tag}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
@@ -89,9 +91,19 @@ def _detection_hash(schema_version: str) -> str:
 
 
 class GenerateCandidatesRequest(BaseModel):
-    """Request body for POST /api/curation/candidates/generate."""
+    """Request body for POST /api/curation/candidates/generate.
+
+    Attributes:
+        run_id: Governed run to detect candidates for.
+        stage:  Optional staged detection pass.
+                1 = duplicates (exact node/rel + probable),
+                2 = canonical violations,
+                3 = structural anomalies.
+                None = all detectors (backward compatible).
+    """
 
     run_id: str
+    stage: int | None = None
 
 
 class GenerateScopedCandidatesRequest(BaseModel):
@@ -267,6 +279,89 @@ def _build_groups(
 
 
 # ---------------------------------------------------------------------------
+# Union-find for duplicate chain conflict detection
+# ---------------------------------------------------------------------------
+
+
+class _UnionFind:
+    """Minimal union-find (disjoint set) for grouping duplicate chain nodes."""
+
+    def __init__(self) -> None:
+        self._parent: dict[str, str] = {}
+
+    def find(self, x: str) -> str:
+        if x not in self._parent:
+            self._parent[x] = x
+        while self._parent[x] != x:
+            self._parent[x] = self._parent[self._parent[x]]  # path compression
+            x = self._parent[x]
+        return x
+
+    def union(self, a: str, b: str) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self._parent[ra] = rb
+
+
+def _annotate_conflict_groups(candidates: list[Candidate]) -> None:
+    """Annotate duplicate candidates that form chains with conflict group info.
+
+    Mutates collision_context dicts in-place (safe because collision_context
+    is excluded from candidate_id and the dict is mutable on frozen models).
+    """
+    duplicate_types = {
+        CandidateType.exact_node_duplicate,
+        CandidateType.exact_rel_duplicate,
+        CandidateType.probable_duplicate,
+    }
+
+    # Collect only duplicate candidates with >=2 refs (pairwise).
+    dup_candidates = [
+        c for c in candidates
+        if c.candidate_type in duplicate_types and len(c.involved_element_refs) >= 2
+    ]
+    if not dup_candidates:
+        return
+
+    # Build union-find from ref pairs.
+    uf = _UnionFind()
+    for c in dup_candidates:
+        refs = list(c.involved_element_refs)
+        for i in range(len(refs) - 1):
+            uf.union(refs[i], refs[i + 1])
+
+    # Find component sizes.
+    components: dict[str, set[str]] = defaultdict(set)
+    all_refs: set[str] = set()
+    for c in dup_candidates:
+        all_refs.update(c.involved_element_refs)
+    for ref in all_refs:
+        root = uf.find(ref)
+        components[root].add(ref)
+
+    # Annotate candidates in multi-node components (>2 nodes = chain).
+    for c in dup_candidates:
+        roots = {uf.find(ref) for ref in c.involved_element_refs}
+        for root in roots:
+            component_size = len(components[root])
+            if component_size > 2:
+                c.collision_context["conflict_group_size"] = component_size
+                c.collision_context["preferred_action"] = "canonicalize"
+                break
+
+    chain_count = sum(1 for comp in components.values() if len(comp) > 2)
+    if chain_count > 0:
+        logger.info(
+            "conflict_groups_detected",
+            chain_count=chain_count,
+            annotated_candidates=sum(
+                1 for c in dup_candidates
+                if c.collision_context.get("preferred_action") == "canonicalize"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # POST /api/curation/candidates/generate
 # ---------------------------------------------------------------------------
 
@@ -309,7 +404,27 @@ async def generate_candidates(
     - ``503 Service Unavailable`` — Neo4j read failed.
     """
     run_id = request.run_id
-    logger.info("candidate_generation_requested", run_id=run_id)
+    stage = request.stage
+    logger.info("candidate_generation_requested", run_id=run_id, stage=stage)
+
+    # ------------------------------------------------------------------
+    # 0. Validate stage parameter
+    # ------------------------------------------------------------------
+    if stage is not None and stage not in {1, 2, 3}:
+        response.status_code = 422
+        return GenerateCandidatesResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="invalid_stage",
+                    message=(
+                        f"stage must be 1 (duplicates), 2 (canonical), "
+                        f"3 (structural), or null (all). Got: {stage}"
+                    ),
+                )
+            ],
+        )
 
     # ------------------------------------------------------------------
     # 1. Verify schema is locked (CLAUDE.md §4.4 fail-closed)
@@ -340,7 +455,7 @@ async def generate_candidates(
     # ------------------------------------------------------------------
     # 2. Check candidate cache — idempotent re-call within TTL
     # ------------------------------------------------------------------
-    dhash = _detection_hash(schema.version_hash)
+    dhash = _detection_hash(schema.version_hash, stage=stage)
     cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
 
     cached: _CandidateListCache | None = await cache.get(
@@ -383,53 +498,60 @@ async def generate_candidates(
         )
 
     # ------------------------------------------------------------------
-    # 4. Run all five detectors (zero-LLM, deterministic)
+    # 4. Run detectors — stage-aware dispatch
+    #    stage=1: duplicates, stage=2: canonical, stage=3: structural,
+    #    stage=None: all detectors (backward compatible)
     # ------------------------------------------------------------------
     all_candidates: list[Candidate] = []
 
-    all_candidates.extend(
-        ExactNodeDuplicateDetector().detect(
-            run_id=run_id,
-            schema_version=schema.version_hash,
-            nodes=nodes,
+    if stage in (1, None):
+        all_candidates.extend(
+            ExactNodeDuplicateDetector().detect(
+                run_id=run_id,
+                schema_version=schema.version_hash,
+                nodes=nodes,
+            )
         )
-    )
-    all_candidates.extend(
-        ExactRelDuplicateDetector().detect(
-            run_id=run_id,
-            schema_version=schema.version_hash,
-            rels=rels,
+        all_candidates.extend(
+            ExactRelDuplicateDetector().detect(
+                run_id=run_id,
+                schema_version=schema.version_hash,
+                rels=rels,
+            )
         )
-    )
-    all_candidates.extend(
-        ProbableDuplicateDetector().detect(
-            run_id=run_id,
-            schema_version=schema.version_hash,
-            nodes=nodes,
-            schema=schema,
-            rels=rels,
+        all_candidates.extend(
+            ProbableDuplicateDetector().detect(
+                run_id=run_id,
+                schema_version=schema.version_hash,
+                nodes=nodes,
+                schema=schema,
+                rels=rels,
+            )
         )
-    )
-    all_candidates.extend(
-        CanonicalViolationDetector().detect(
-            run_id=run_id,
-            schema_version=schema.version_hash,
-            rels=rels,
-            nodes=nodes,
-            schema=schema,
+
+    if stage in (2, None):
+        all_candidates.extend(
+            CanonicalViolationDetector().detect(
+                run_id=run_id,
+                schema_version=schema.version_hash,
+                rels=rels,
+                nodes=nodes,
+                schema=schema,
+            )
         )
-    )
-    all_candidates.extend(
-        StructuralAnomalyDetector().detect(
-            run_id=run_id,
-            schema_version=schema.version_hash,
-            nodes=nodes,
-            rels=rels,
-            orphans=orphans,
-            degrees=degrees,
-            schema=schema,
+
+    if stage in (3, None):
+        all_candidates.extend(
+            StructuralAnomalyDetector().detect(
+                run_id=run_id,
+                schema_version=schema.version_hash,
+                nodes=nodes,
+                rels=rels,
+                orphans=orphans,
+                degrees=degrees,
+                schema=schema,
+            )
         )
-    )
 
     # ------------------------------------------------------------------
     # 5a. Suppress overlapping candidates: remove orphan_node anomalies
@@ -476,6 +598,17 @@ async def generate_candidates(
         if c.candidate_id not in seen:
             seen.add(c.candidate_id)
             unique.append(c)
+
+    # ------------------------------------------------------------------
+    # 5c. Connected-component conflict detection (stage 1 only).
+    #     For duplicate-type candidates, build a union-find over
+    #     involved_element_refs pairs.  When a connected component has
+    #     >2 nodes (a chain like A↔M↔R↔B), annotate all candidates in
+    #     that component with preferred_action=canonicalize so the agent
+    #     pipeline treats the whole chain atomically.
+    # ------------------------------------------------------------------
+    if stage in (1, None):
+        _annotate_conflict_groups(unique)
 
     candidates_out = [_to_candidate_out(c) for c in unique]
 
@@ -547,13 +680,27 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
             schema_version="",
         )
 
-    dhash = _detection_hash(schema.version_hash)
-    cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
+    # Collect candidates from all stage cache keys (None, 1, 2, 3).
+    all_cached_candidates: list[CandidateOut] = []
+    for stage_val in (None, 1, 2, 3):
+        dhash = _detection_hash(schema.version_hash, stage=stage_val)
+        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
 
-    cached: _CandidateListCache | None = await cache.get(
-        cache_key, model=_CandidateListCache
-    )
-    if cached is None or not cached.candidates:
+        cached: _CandidateListCache | None = await cache.get(
+            cache_key, model=_CandidateListCache
+        )
+        if cached is not None and cached.candidates:
+            all_cached_candidates.extend(cached.candidates)
+
+    # Deduplicate by candidate_id across stages.
+    seen_ids: set[str] = set()
+    deduped: list[CandidateOut] = []
+    for c in all_cached_candidates:
+        if c.candidate_id not in seen_ids:
+            seen_ids.add(c.candidate_id)
+            deduped.append(c)
+
+    if not deduped:
         logger.debug("candidates_list_empty", run_id=run_id)
         return ListCandidatesResponse(
             run_id=run_id,
@@ -565,8 +712,8 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
 
     result = _build_groups(
         run_id=run_id,
-        candidates=cached.candidates,
-        schema_version=cached.schema_version,
+        candidates=deduped,
+        schema_version=schema.version_hash,
     )
 
     logger.info(

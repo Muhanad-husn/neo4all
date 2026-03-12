@@ -121,26 +121,24 @@ def test_orphan_candidate_detected() -> None:
     assert "Person::orphan_pete::sv_fixture" in c.involved_element_refs
 
 
-def test_degree_outlier_hub_detected() -> None:
-    """hub_org (degree=10) exceeds the 3-sigma threshold computed from 11 records → detected."""
+def test_degree_outlier_excluded_from_detect() -> None:
+    """degree_outlier is excluded from detect() output — requires deep investigation."""
     nodes, rels, orphans, degrees, schema = _fixture_inputs()
     candidates = _DETECTOR.detect(_RUN_ID, _SV, nodes, rels, orphans, degrees, schema)
 
     outlier_candidates = _by_method(candidates, "degree_outlier")
-    assert len(outlier_candidates) == 1
-
-    c = outlier_candidates[0]
-    assert "Organization::hub_org::sv_fixture" in c.involved_element_refs
-    assert c.collision_context["total_degree"] == 10
+    assert len(outlier_candidates) == 0
 
 
-def test_degree_outlier_hub_exceeds_threshold() -> None:
-    """Verify the hub total_degree > threshold stored in collision_context."""
-    nodes, rels, orphans, degrees, schema = _fixture_inputs()
-    candidates = _DETECTOR.detect(_RUN_ID, _SV, nodes, rels, orphans, degrees, schema)
+def test_degree_outlier_method_still_works() -> None:
+    """The _degree_outlier_candidates method itself still produces results."""
+    from api.services.curation.candidates import StructuralAnomalyDetector
 
-    c = _by_method(candidates, "degree_outlier")[0]
-    assert c.collision_context["total_degree"] > c.collision_context["threshold"]
+    _, _, _, degrees, _ = _fixture_inputs()
+    results = StructuralAnomalyDetector._degree_outlier_candidates(_RUN_ID, _SV, degrees)
+    assert len(results) == 1
+    assert results[0].collision_context["total_degree"] == 10
+    assert results[0].collision_context["total_degree"] > results[0].collision_context["threshold"]
 
 
 def test_missing_provenance_node_detected() -> None:
