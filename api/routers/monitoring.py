@@ -41,9 +41,10 @@ from fastapi import APIRouter, Query
 from api.common.arq_pool import QUEUE_NAME, get_arq_pool
 from api.config import get_settings
 from api.models.responses import ErrorDetail
-from api.observability.logger import get_logger, get_recent_logs
+from api.observability.logger import get_activity_feed, get_logger, get_recent_logs
 from api.observability.metrics import get_metrics
 from api.routers.models import (
+    ActivityFeedResponse,
     ExtendedHealthResponse,
     JobStatusResponse,
     LogsRecentResponse,
@@ -147,6 +148,34 @@ async def get_recent_log_entries(
         entries=entries,
         total=len(entries),
         level_filter=level,
+    )
+
+
+@router.get("/logs/activity", response_model=ActivityFeedResponse)
+async def get_activity_feed_entries(
+    run_id: str | None = Query(
+        default=None,
+        description="Optional run_id to scope entries to the current session.",
+    ),
+    limit: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of entries to return (newest first).",
+    ),
+) -> ActivityFeedResponse:
+    """Return curated, user-relevant activity entries from the ring buffer.
+
+    Filters by a whitelist of user-relevant event names and always includes
+    WARNING/ERROR/CRITICAL entries. Designed for the sidebar activity feed.
+    """
+    entries = get_activity_feed(run_id=run_id, limit=limit)
+
+    return ActivityFeedResponse(
+        run_id=run_id or "",
+        status="success",
+        entries=entries,
+        total=len(entries),
     )
 
 

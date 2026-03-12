@@ -72,6 +72,17 @@ class LogsRecentResponse(BaseResponse):
     level_filter: str | None
 
 
+class ActivityFeedResponse(BaseResponse):
+    """Response model for GET /api/monitoring/logs/activity.
+
+    Returns curated, user-relevant log entries from the ring buffer.
+    Reuses the same entries shape as LogsRecentResponse.
+    """
+
+    entries: list[dict[str, Any]]
+    total: int
+
+
 class RunSummaryResponse(BaseResponse):
     """Response model for GET /api/monitoring/run/{run_id}.
 

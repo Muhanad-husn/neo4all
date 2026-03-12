@@ -52,6 +52,30 @@ _LEVEL_RANKS: dict[str, int] = {
     "critical": 50,
 }
 
+# ---------------------------------------------------------------------------
+# Activity feed — curated event whitelist for sidebar display
+# ---------------------------------------------------------------------------
+_USER_ACTIVITY_EVENTS: set[str] = {
+    "schema_locked",
+    "extraction_start",
+    "extraction_run_requested",
+    "job_start",
+    "job_complete",
+    "job_failed",
+    "candidate_generation_requested",
+    "candidates_generated",
+    "agent_pipeline_started",
+    "agent_pipeline_complete",
+    "curation_proposal_created",
+    "curation_proposal_approved",
+    "curation_proposal_rejected",
+    "diff_applied",
+    "diff_apply_failed",
+    "ingestion_started",
+    "ingestion_complete",
+    "credentials_refreshed",
+}
+
 
 # ---------------------------------------------------------------------------
 # Processors
@@ -198,3 +222,49 @@ def get_recent_logs(
         ]
 
     return snapshot[:limit]
+
+
+def get_activity_feed(
+    run_id: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return user-relevant activity entries from the ring buffer.
+
+    Filters by a curated whitelist of event names at INFO level, and always
+    includes WARNING/ERROR/CRITICAL entries regardless of event name.
+
+    When *run_id* is provided, only entries matching that run_id (or entries
+    without a run_id field, e.g. infrastructure warnings) are returned.
+
+    Args:
+        run_id: Optional session run_id to scope entries.
+        limit:  Maximum number of entries to return (newest first).
+
+    Returns:
+        List of log record dicts, newest first.
+    """
+    with _BUFFER_LOCK:
+        snapshot = list(_LOG_BUFFER)
+
+    result: list[dict[str, Any]] = []
+    for entry in snapshot:
+        if len(result) >= limit:
+            break
+
+        level_str = str(entry.get("level", "")).lower()
+        level_rank = _LEVEL_RANKS.get(level_str, 0)
+        event_name = str(entry.get("event", ""))
+
+        # Always include WARNING+ entries; otherwise check whitelist.
+        if level_rank < 30 and event_name not in _USER_ACTIVITY_EVENTS:
+            continue
+
+        # Scope by run_id when provided.
+        if run_id:
+            entry_run_id = entry.get("run_id")
+            if entry_run_id is not None and entry_run_id != run_id:
+                continue
+
+        result.append(entry)
+
+    return result
