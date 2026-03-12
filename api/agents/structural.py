@@ -99,7 +99,7 @@ def _recommend_probable_duplicate(
     if val_a and val_b and val_a.lower() == val_b.lower():
         return StructuralRecommendation(
             suggested_action="canonicalize",
-            confidence=min(0.95, max(jw, 0.85)),
+            confidence=min(0.95, max(jw, 0.90)),
             reasoning=(
                 f"Values '{val_a}' and '{val_b}' differ only in letter "
                 f"casing (similarity: {jw:.2f}). Standardise to canonical form."
@@ -147,33 +147,7 @@ def _recommend_probable_duplicate(
             ),
         )
 
-    # Moderate similarity + shared context → merge
-    if jw >= 0.85 and cj > 0:
-        conf = round(0.60 + min(cj, 0.15), 2)
-        return StructuralRecommendation(
-            suggested_action="merge",
-            confidence=conf,
-            reasoning=(
-                f"Moderate similarity between '{val_a}' and '{val_b}' "
-                f"(similarity: {jw:.2f}) with shared graph neighbours "
-                f"(context overlap: {cj:.2f}). Likely the same entity."
-            ),
-        )
-
-    # Moderate similarity, no shared context → canonicalize
-    if jw >= 0.85:
-        conf = round(0.50 + min(tok * 0.1, 0.10), 2)
-        return StructuralRecommendation(
-            suggested_action="canonicalize",
-            confidence=conf,
-            reasoning=(
-                f"Moderate similarity between '{val_a}' and '{val_b}' "
-                f"(similarity: {jw:.2f}, word overlap: {tok:.2f}). "
-                f"Standardise to canonical form."
-            ),
-        )
-
-    # Below thresholds (shouldn't happen — detector gate is 0.85)
+    # Below thresholds (shouldn't happen — detector gate is 0.90)
     return StructuralRecommendation(
         suggested_action="defer",
         confidence=0.30,

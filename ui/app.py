@@ -287,6 +287,70 @@ def _try_restore_session(state: StateManager) -> bool:
         return False
 
 
+def _reconcile_phase(state: StateManager) -> None:
+    """Advance the session phase if the backend is ahead of the saved state.
+
+    After a session restore, the saved phase may be stale — e.g., extraction
+    completed while the user was away but the phase is still EXTRACTION.
+    This function queries backend endpoints to detect completed phases and
+    advances the state accordingly.
+
+    Fails silently on any error — falls back to the saved phase.
+    """
+    try:
+        import httpx
+
+        client = httpx.Client(timeout=2.0)
+        run_id = state.run_id
+        if not run_id:
+            return
+
+        # If below INGESTION, check if schema is locked.
+        if state.phase.value < Phase.INGESTION.value:
+            try:
+                resp = client.get(f"{_API_BASE_URL}/api/schema/{run_id}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("locked"):
+                        vh = data.get("schema_version", {}).get("version_hash")
+                        if vh:
+                            state.set_schema_version(vh)
+                        state.advance_phase(Phase.INGESTION)
+            except Exception:
+                pass
+
+        # If below EXTRACTION, check if documents exist.
+        if state.phase.value < Phase.EXTRACTION.value:
+            try:
+                resp = client.get(f"{_API_BASE_URL}/api/documents/{run_id}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    docs = data.get("documents", [])
+                    if docs:
+                        state.advance_phase(Phase.EXTRACTION)
+            except Exception:
+                pass
+
+        # If below CURATION, check if extraction is complete.
+        if state.phase.value < Phase.CURATION.value:
+            try:
+                resp = client.get(
+                    f"{_API_BASE_URL}/api/extraction/status/{run_id}"
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    total = data.get("total_chunks", 0)
+                    pending = data.get("pending", 0)
+                    completed = data.get("completed", 0)
+                    if total > 0 and pending == 0 and completed > 0:
+                        state.advance_phase(Phase.CURATION)
+            except Exception:
+                pass
+
+    except Exception:
+        pass  # Fail silently — fall back to saved phase.
+
+
 def _save_session(state: StateManager) -> None:
     """Persist current session state to Redis via the API (fire-and-forget).
 
@@ -637,6 +701,8 @@ def main() -> None:
         if not st.session_state.get(_K_RESTORE_ATTEMPTED):
             st.session_state[_K_RESTORE_ATTEMPTED] = True
             if _try_restore_session(state):
+                _reconcile_phase(state)   # advance if backend is ahead
+                _save_session(state)      # persist reconciled phase to Redis
                 st.rerun()
 
     # --- Session save (fire-and-forget, dirty-check gated) -----------------

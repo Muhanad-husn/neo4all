@@ -2,3 +2,8 @@
 # Page routing is handled by if/elif dispatch in ui/app.py instead.
 [client]
 showSidebarNavigation = false
+
+# Reduce WebSocket disconnects in Docker (Change 3A).
+[server]
+enableCORS = false
+enableXsrfProtection = false

@@ -386,7 +386,7 @@ class RetrievalAugmentationAgent:
         evidence_assembly/v3 prompt values):
           - jaro_winkler >= 0.95:              +0.50
           - jaro_winkler >= 0.90:              +0.40
-          - jaro_winkler >= 0.85:              +0.30
+          - jaro_winkler >= 0.90:              +0.30
           - context_jaccard > 0:               +min(context_jaccard, 0.2)
           - token_overlap >= 0.5:              +0.05
 
@@ -412,7 +412,7 @@ class RetrievalAugmentationAgent:
                 score += 0.50
             elif jw >= 0.90:
                 score += 0.40
-            elif jw >= 0.85:
+            elif jw >= 0.90:
                 score += 0.30
             if cj > 0.0:
                 score += min(cj, 0.2)

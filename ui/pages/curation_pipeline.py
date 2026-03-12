@@ -966,37 +966,46 @@ def _render_agent_pipeline_progress(
     failed = sum(1 for j in jobs if j.get("stage") == "failed")
     deferred = sum(1 for j in jobs if j.get("stage") == "deferred")
     running = total - completed - failed - deferred
+    proposals_made = sum(1 for j in jobs if j.get("proposal_id"))
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
+    # Progress bar.
+    finished = completed + failed + deferred
+    fraction = finished / total if total > 0 else 0.0
+    st.progress(fraction, text=f"Progress: {finished} / {total} candidates processed")
+
+    # Compact metric cards.
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Completed", f"{completed}/{total}")
     c2.metric("Running", running)
-    c3.metric("Complete", completed)
-    c4.metric("Failed", failed)
+    c3.metric("Failed", failed)
+    c4.metric("Deferred", deferred)
+    c5.metric("Proposals", proposals_made)
 
-    # Stage badge mapping.
-    stage_badge: dict[str, str] = {
-        "queued": ":gray[QUEUED]",
-        "evidence_running": ":blue[EVIDENCE]",
-        "evidence_complete": ":blue[EVIDENCE OK]",
-        "retrieval_running": ":orange[RETRIEVAL]",
-        "retrieval_complete": ":orange[RETRIEVAL OK]",
-        "proposal_running": ":violet[PROPOSAL]",
-        "complete": ":green[COMPLETE]",
-        "failed": ":red[FAILED]",
-        "deferred": ":gray[DEFERRED]",
-    }
-
-    # Job list.
-    rows = [
-        {
-            "Candidate": j.get("candidate_id", "")[:14] + "...",
-            "Stage": stage_badge.get(j.get("stage", ""), j.get("stage", "")),
-            "Evidence": j.get("evidence_items", 0),
-            "Sufficient": "Yes" if j.get("evidence_sufficient") else "No",
-            "Retrieval Rounds": j.get("retrieval_rounds", 0),
-            "Proposal": (j.get("proposal_id") or "")[:14] + ("..." if j.get("proposal_id") else "-"),
-            "Error": j.get("error") or "-",
+    # Stage breakdown — one-line summary when jobs are actively running.
+    if running > 0:
+        _running_stages: dict[str, int] = {}
+        _stage_labels: dict[str, str] = {
+            "queued": "Queued",
+            "evidence_running": "Analyzing evidence",
+            "evidence_complete": "Evidence done",
+            "retrieval_running": "Retrieving",
+            "retrieval_complete": "Retrieval done",
+            "proposal_running": "Composing proposals",
         }
-        for j in jobs
-    ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+        for j in jobs:
+            stage = j.get("stage", "")
+            if stage in _stage_labels:
+                label = _stage_labels[stage]
+                _running_stages[label] = _running_stages.get(label, 0) + 1
+        if _running_stages:
+            parts = [f"{label}: **{count}**" for label, count in _running_stages.items()]
+            st.caption(" | ".join(parts))
+
+    # Collapsible failures section — only when failures exist.
+    if failed > 0:
+        with st.expander(f"Failed candidates ({failed})", expanded=False):
+            for j in jobs:
+                if j.get("stage") == "failed":
+                    cid = j.get("candidate_id", "")[:16]
+                    err = j.get("error") or "Unknown error"
+                    st.markdown(f"- `{cid}…` — {err}")

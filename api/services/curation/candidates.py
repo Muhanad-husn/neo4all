@@ -45,20 +45,20 @@ logger = get_logger(__name__)
 # Thresholds / constants
 # ---------------------------------------------------------------------------
 
-JW_THRESHOLD: float = 0.85
+JW_THRESHOLD: float = 0.90
 """Jaro-Winkler similarity threshold for probable duplicate detection.
 
-Lowered from 0.90 to 0.85 — candidates with JW in [0.85, 0.90) are only
-emitted when token overlap >= 0.5 (see ProbableDuplicateDetector).  This
-captures near-matches that the 0.90 threshold would miss while still
-requiring structural corroboration for lower-similarity pairs.
+Candidates with JW in [0.90, 0.95) are only emitted when token overlap
+>= 0.5 (see ProbableDuplicateDetector).  This filters out noisy
+near-matches while still capturing genuine duplicates with structural
+corroboration.
 """
 
-JW_SOFT_THRESHOLD: float = 0.90
+JW_SOFT_THRESHOLD: float = 0.95
 """Above this JW score, candidates are emitted unconditionally (no token gate)."""
 
 TOKEN_OVERLAP_GATE: float = 0.5
-"""Minimum token overlap required to emit candidates in the [JW_THRESHOLD, JW_SOFT_THRESHOLD) band."""
+"""Minimum token overlap required to emit candidates in the [0.90, 0.95) band."""
 
 DEGREE_OUTLIER_SIGMA: float = 3.0
 """Standard-deviation multiplier for flagging degree outliers."""
@@ -236,7 +236,7 @@ class ProbableDuplicateDetector:
                     if jw < JW_THRESHOLD:
                         continue
                     tok = _token_overlap(val_a, val_b)
-                    # Soft gate: JW in [0.85, 0.90) requires token overlap >= 0.5
+                    # Soft gate: JW in [0.90, 0.95) requires token overlap >= 0.5
                     if jw < JW_SOFT_THRESHOLD and tok < TOKEN_OVERLAP_GATE:
                         continue
                     context_score = _jaccard(
