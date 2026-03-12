@@ -9,7 +9,6 @@ Sections:
   - Run summary metrics (documents, entities, jobs, proposals)
   - Extraction progress bar
   - Graph statistics by type (nodes and edges) with bar charts
-  - Proposal status breakdown with resolution progress bar
   - Recent activity log feed
 
 Architecture rules:
@@ -152,35 +151,6 @@ def _render_graph_stats(
             st.info("No edge data.")
 
 
-def _render_proposal_summary(proposal_data: dict[str, Any] | None) -> None:
-    """Render proposal status breakdown with resolution progress bar."""
-    st.subheader("Proposal Summary")
-
-    if proposal_data is None:
-        st.warning("Cannot reach API — proposal data unavailable.")
-        return
-
-    proposals: list[dict[str, Any]] = proposal_data.get("proposals", [])
-    total = len(proposals)
-    approved = sum(1 for p in proposals if p.get("status") == "approved")
-    rejected = sum(
-        1 for p in proposals if p.get("status") in ("rejected", "failed")
-    )
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total", total)
-    c2.metric("Approved", approved)
-    c3.metric("Rejected / Failed", rejected)
-
-    if total > 0:
-        resolved = approved + rejected
-        frac = resolved / total
-        pending = total - resolved
-        st.progress(frac, text=f"{int(frac * 100)}% resolved  ({resolved} / {total})")
-        if pending > 0:
-            st.caption(f"{pending} proposal(s) still pending.")
-
-
 def _render_recent_activity(log_data: dict[str, Any] | None) -> None:
     """Render last 10 log entries as a compact table."""
     st.subheader("Recent Activity")
@@ -236,13 +206,6 @@ def _fragment_graph_stats(run_id: str) -> None:
 
 
 @st.fragment
-def _fragment_proposal_summary(run_id: str) -> None:
-    """Fragment: fetches and renders proposal summary independently."""
-    proposal_data = _fetch(f"/api/curation/proposals/{run_id}")
-    _render_proposal_summary(proposal_data)
-
-
-@st.fragment
 def _fragment_recent_activity() -> None:
     """Fragment: fetches and renders recent activity independently."""
     log_data = _fetch("/api/monitoring/logs/recent", params={"limit": 10})
@@ -272,8 +235,6 @@ def main() -> None:
     _fragment_extraction_progress(run_id)
     st.divider()
     _fragment_graph_stats(run_id)
-    st.divider()
-    _fragment_proposal_summary(run_id)
     st.divider()
     _fragment_recent_activity()
 

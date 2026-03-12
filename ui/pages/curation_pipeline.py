@@ -32,7 +32,7 @@ Backend endpoints consumed:
   GET  /api/monitoring/agents/{run_id}
 """
 
-import time
+from datetime import timedelta
 from typing import Any
 
 import streamlit as st
@@ -197,6 +197,7 @@ def _render_proposal_form(
         st.success(
             f"Proposal created: `{pid[:16]}…`  |  State: {data.get('state', 'pending')}"
         )
+        StateManager.get().mark_candidate_submitted(candidate_id)
         st.rerun()
 
 
@@ -777,12 +778,16 @@ def _render_candidate_detail_section(
     st.divider()
 
     # --- Proposal form ---
-    st.markdown("**Create Proposal for this Candidate**")
-    st.caption(
-        "Human proposals follow the same governed pipeline as AI proposals — "
-        "no bypass.  All mutations require approval before execution."
-    )
-    _render_proposal_form(candidate, run_id, actor)
+    sm = StateManager.get()
+    if selected_id in sm.submitted_candidates:
+        st.success("Proposal submitted for this candidate.")
+    else:
+        st.markdown("**Create Proposal for this Candidate**")
+        st.caption(
+            "Human proposals follow the same governed pipeline as AI proposals — "
+            "no bypass.  All mutations require approval before execution."
+        )
+        _render_proposal_form(candidate, run_id, actor)
 
 
 # ===========================================================================
@@ -968,10 +973,7 @@ def _render_agent_model_config(run_id: str) -> None:
     _agent_pipeline_fragment(run_id, prefetched=status_data)
 
 
-_AGENT_POLL_INTERVAL_S: int = 3
-
-
-@st.fragment
+@st.fragment(run_every=timedelta(seconds=3))
 def _agent_pipeline_fragment(
     run_id: str,
     prefetched: dict[str, Any] | None = None,
@@ -1063,7 +1065,3 @@ def _render_agent_pipeline_progress(
                     err = j.get("error") or "Unknown error"
                     st.markdown(f"- `{cid}…` — {err}")
 
-    # Auto-poll while jobs are running (fragment-scoped rerun).
-    if running > 0:
-        time.sleep(_AGENT_POLL_INTERVAL_S)
-        st.rerun()

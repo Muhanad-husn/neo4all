@@ -28,7 +28,7 @@ Backend endpoints consumed:
 """
 
 import os
-import time
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -43,7 +43,6 @@ from ui.state import StateManager
 
 _API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
 _REQUEST_TIMEOUT: float = 10.0
-_POLL_INTERVAL_S: int = 2
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +301,7 @@ def _render_summary_section(
 # ---------------------------------------------------------------------------
 
 
-@st.fragment
+@st.fragment(run_every=timedelta(seconds=2))
 def _extraction_monitor(run_id: str) -> None:
     """Fragment that polls extraction status and self-reruns.
 
@@ -337,10 +336,6 @@ def _extraction_monitor(run_id: str) -> None:
                 on_click=_do_advance,
             )
 
-    # --- Auto-poll while jobs are running (fragment-scoped rerun) ---
-    if _is_running(status):
-        time.sleep(_POLL_INTERVAL_S)
-        st.rerun()
 
 
 def main() -> None:

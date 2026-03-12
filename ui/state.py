@@ -70,6 +70,8 @@ _K_LAST_SAVED_HASH = "_sm_last_saved_hash"    # str | None
 _K_DISMISSED_PROPOSALS = "_sm_dismissed_proposals"  # set[str]
 # Pending confirmations — auto-passed tokens for two-click high-risk approval.
 _K_PENDING_CONFIRMATIONS = "_sm_pending_confirmations"  # dict[str, str]
+# Submitted candidates — tracks which candidates have had proposals submitted this session.
+_K_SUBMITTED_CANDIDATES = "_sm_submitted_candidates"  # set[str]
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -127,6 +129,7 @@ class StateManager:
             _K_LAST_SAVED_HASH: None,
             _K_DISMISSED_PROPOSALS: set(),
             _K_PENDING_CONFIRMATIONS: {},
+            _K_SUBMITTED_CANDIDATES: set(),
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -209,6 +212,11 @@ class StateManager:
     def dismissed_proposals(self) -> set[str]:
         """Set of proposal IDs dismissed from the UI queue."""
         return st.session_state[_K_DISMISSED_PROPOSALS]
+
+    @property
+    def submitted_candidates(self) -> set[str]:
+        """Set of candidate IDs that have had proposals submitted this session."""
+        return st.session_state[_K_SUBMITTED_CANDIDATES]
 
     # ------------------------------------------------------------------
     # Panel mode tracking
@@ -391,6 +399,12 @@ class StateManager:
         confirmations.pop(proposal_id, None)
         st.session_state[_K_PENDING_CONFIRMATIONS] = confirmations
 
+    def mark_candidate_submitted(self, candidate_id: str) -> None:
+        """Record that a proposal has been submitted for a candidate this session."""
+        submitted = set(st.session_state[_K_SUBMITTED_CANDIDATES])
+        submitted.add(candidate_id)
+        st.session_state[_K_SUBMITTED_CANDIDATES] = submitted
+
     # ------------------------------------------------------------------
     # Session persistence
     # ------------------------------------------------------------------
@@ -462,3 +476,4 @@ class StateManager:
         st.session_state[_K_LAST_SAVED_HASH] = None
         st.session_state[_K_DISMISSED_PROPOSALS] = set()
         st.session_state[_K_PENDING_CONFIRMATIONS] = {}
+        st.session_state[_K_SUBMITTED_CANDIDATES] = set()

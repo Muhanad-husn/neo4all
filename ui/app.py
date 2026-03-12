@@ -453,20 +453,64 @@ def _render_sidebar(state: StateManager) -> str | None:
         The selected utility view name, or None for the default phase view.
     """
     view_override: str | None = None
+    current_phase = state.phase
 
     with st.sidebar:
+        # 1. Logo
         st.image(_load_logo(str(_LOGO_DARK)), width=160)
+        # 2. Caption
         st.caption("AI-Powered Graph Curation")
+
+        # 3. New Session button
+        if state.run_id:
+            if st.button("New Session", type="secondary", key="_nav_new_session"):
+                # Best-effort cleanup of persisted session in Redis.
+                try:
+                    import httpx
+
+                    user_hash = _derive_user_hash(
+                        state.neo4j_uri or "", state.neo4j_user or ""
+                    )
+                    httpx.Client(timeout=2.0).delete(
+                        f"{_API_BASE_URL}/api/session/{user_hash}"
+                    )
+                except Exception:
+                    pass
+
+                state.reset()
+                st.session_state.pop(_K_RESTORE_ATTEMPTED, None)
+                st.rerun()
+
+        # 4. Divider
         st.divider()
 
-        # Activity feed — top of sidebar, always visible when session exists.
+        # 5. Activity feed
         if state.run_id:
             render_activity_feed(state.run_id)
+            # 6. Divider
             st.divider()
 
-        # Phase progression indicators.
+        # 7. View selector
+        if state.run_id:
+            view_options = ["Current Phase", "Dashboard"]
+            if current_phase.value >= Phase.CURATION.value:
+                view_options.append("Graph Explorer")
+
+            selected_view = st.radio(
+                "View",
+                options=view_options,
+                index=0,
+                key="_nav_view_radio",
+                label_visibility="collapsed",
+            )
+            if selected_view != "Current Phase":
+                view_override = selected_view
+
+            # 8. Divider
+            st.divider()
+
+        # 9. Phase progression indicators.
         st.subheader("Phases")
-        current_phase = state.phase
         phase_labels = {
             Phase.INIT: "Session Init",
             Phase.SCHEMA: "Schema",
@@ -483,27 +527,10 @@ def _render_sidebar(state: StateManager) -> str | None:
                 marker = ":gray[○]"
             st.markdown(f"{marker} **{p.value}** {phase_labels[p]}")
 
+        # 10. Divider
         st.divider()
 
-        # View selector — utility pages accessible once a session exists.
-        if state.run_id:
-            view_options = ["Current Phase", "Dashboard"]
-            if current_phase.value >= Phase.CURATION.value:
-                view_options.append("Graph Explorer")
-
-            selected_view = st.radio(
-                "View",
-                options=view_options,
-                index=0,
-                key="_nav_view_radio",
-                label_visibility="collapsed",
-            )
-            if selected_view != "Current Phase":
-                view_override = selected_view
-
-            st.divider()
-
-        # Compact run summary.
+        # 11. Run State section
         st.subheader("Run State")
         run_id = state.run_id
         if run_id:
@@ -531,27 +558,6 @@ def _render_sidebar(state: StateManager) -> str | None:
                 st.write(_fmt_duration(elapsed))
         else:
             st.info("No active run.\nComplete Phase 0 to begin.")
-
-        # "New Session" — only shown when there is an active run.
-        if state.run_id:
-            st.divider()
-            if st.button("New Session", type="secondary", key="_nav_new_session"):
-                # Best-effort cleanup of persisted session in Redis.
-                try:
-                    import httpx
-
-                    user_hash = _derive_user_hash(
-                        state.neo4j_uri or "", state.neo4j_user or ""
-                    )
-                    httpx.Client(timeout=2.0).delete(
-                        f"{_API_BASE_URL}/api/session/{user_hash}"
-                    )
-                except Exception:
-                    pass
-
-                state.reset()
-                st.session_state.pop(_K_RESTORE_ATTEMPTED, None)
-                st.rerun()
 
     return view_override
 
