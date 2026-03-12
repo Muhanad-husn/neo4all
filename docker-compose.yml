@@ -24,6 +24,9 @@ services:
     restart: unless-stopped
 
   worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
     image: muhanaddocker/neo4all-worker:latest
     command: arq-worker
     environment:
