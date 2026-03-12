@@ -904,6 +904,28 @@ def _render_agent_model_config(run_id: str) -> None:
         _is_actively_running(j) for j in pipeline_jobs
     )
 
+    # Stop button — shown when pipeline is actively running.
+    if pipeline_busy:
+        @st.dialog("Stop Agent Pipeline")
+        def _confirm_stop_pipeline() -> None:
+            st.warning(
+                "Are you sure? This will cancel all running and queued "
+                "agent pipeline jobs. Already-complete proposals are preserved."
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Confirm", type="primary", key="confirm_stop_pipeline"):
+                    _post("/api/curation/agents/cancel", {"run_id": run_id})
+                    st.rerun()
+            with col2:
+                if st.button("Keep Running", key="keep_pipeline_running"):
+                    st.rerun()
+
+        if st.button(
+            "Stop Pipeline", type="secondary", key="stop_agent_pipeline"
+        ):
+            _confirm_stop_pipeline()
+
     # Trigger button.
     if st.button(
         "Curate",
@@ -978,11 +1000,12 @@ def _render_agent_pipeline_progress(
     completed = sum(1 for j in jobs if j.get("stage") == "complete")
     failed = sum(1 for j in jobs if j.get("stage") == "failed")
     deferred = sum(1 for j in jobs if j.get("stage") == "deferred")
-    running = total - completed - failed - deferred
+    cancelled = sum(1 for j in jobs if j.get("stage") == "cancelled")
+    running = total - completed - failed - deferred - cancelled
     proposals_made = sum(1 for j in jobs if j.get("proposal_id"))
 
     # Progress bar.
-    finished = completed + failed + deferred
+    finished = completed + failed + deferred + cancelled
     fraction = finished / total if total > 0 else 0.0
     st.progress(fraction, text=f"Progress: {finished} / {total} candidates processed")
 

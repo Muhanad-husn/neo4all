@@ -127,6 +127,25 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
             f"Extraction in progress — {pending} chunk(s) remaining. "
             "This page refreshes automatically every 2 s."
         )
+
+        @st.dialog("Stop Extraction")
+        def _confirm_stop_extraction() -> None:
+            st.warning(
+                "Are you sure? This will cancel all running and queued "
+                "extraction jobs. Already-complete chunks are preserved."
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Confirm", type="primary", key="confirm_stop"):
+                    _post("/api/extraction/cancel", {"run_id": run_id})
+                    st.rerun()
+            with col2:
+                if st.button("Keep Running", key="keep_running"):
+                    st.rerun()
+
+        if st.button("Stop Extraction", type="secondary", key="stop_extraction"):
+            _confirm_stop_extraction()
+
         return
 
     if _is_done(status):

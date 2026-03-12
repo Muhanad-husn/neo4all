@@ -76,7 +76,7 @@ class ChunkJobStatus(BaseModel):
     run_id: str
     chunk_id: str
     doc_id: str
-    status: Literal["queued", "running", "complete", "failed"]
+    status: Literal["queued", "running", "complete", "failed", "cancelled"]
     error: str | None = None
     nodes_created: int = 0
     nodes_matched: int = 0

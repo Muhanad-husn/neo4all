@@ -97,7 +97,7 @@ class AgentPipelineJobStatus(BaseModel):
         "evidence_running", "evidence_complete",
         "retrieval_running", "retrieval_complete",
         "proposal_running",
-        "complete", "failed", "deferred",
+        "complete", "failed", "deferred", "cancelled",
     ]
     error: str | None = None
     proposal_id: str | None = None

@@ -141,6 +141,87 @@ class PipelineStatusResponse(BaseResponse):
     total: int = 0
 
 
+class AgentCancelRequest(BaseModel):
+    """Request body for POST /agents/cancel."""
+
+    run_id: str
+
+
+class AgentCancelResponse(BaseResponse):
+    """Response for POST /agents/cancel.
+
+    Attributes:
+        jobs_cancelled: Number of agent jobs whose stage was overwritten to "cancelled".
+    """
+
+    jobs_cancelled: int = 0
+
+
+# ---------------------------------------------------------------------------
+# POST /agents/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/agents/cancel",
+    response_model=AgentCancelResponse,
+    summary="Cancel all running/queued agent pipeline jobs for a run",
+)
+async def cancel_agent_pipeline(
+    request: AgentCancelRequest,
+) -> AgentCancelResponse:
+    """Cancel all non-terminal agent pipeline jobs for a run.
+
+    Scans Redis for all agent job status keys matching the run, and overwrites
+    any jobs in non-terminal stages with ``"cancelled"``.  Already-complete,
+    failed, or deferred jobs are left untouched.
+
+    Cancelled jobs allow the pipeline to be re-triggered with different models.
+    """
+    from datetime import UTC, datetime
+
+    from api.worker.jobs_agents import AgentPipelineJobStatus
+
+    run_id = request.run_id
+    logger.info("agent_pipeline_cancel_requested", run_id=run_id)
+
+    cache = get_cache_client()
+    keys = await cache.scan_keys(CacheKey.agent_job_prefix(run_id))
+    jobs_cancelled = 0
+    now = datetime.now(UTC).isoformat()
+
+    _terminal_stages = {"complete", "failed", "deferred", "cancelled"}
+
+    for key in keys:
+        job: AgentPipelineJobStatus | None = await cache.get(
+            key, model=AgentPipelineJobStatus
+        )
+        if job is None:
+            continue
+        if job.stage not in _terminal_stages:
+            cancelled_job = AgentPipelineJobStatus(
+                run_id=job.run_id,
+                candidate_id=job.candidate_id,
+                stage="cancelled",
+                started_at=job.started_at,
+                updated_at=now,
+            )
+            await cache.set(key, cancelled_job, ttl=86400)
+            jobs_cancelled += 1
+
+    logger.info(
+        "agent_pipeline_cancel_complete",
+        run_id=run_id,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+    return AgentCancelResponse(
+        run_id=run_id,
+        status="success",
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /agents/config
 # ---------------------------------------------------------------------------

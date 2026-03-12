@@ -154,6 +154,26 @@ class CacheKey:
         return f"confirm:{token}"
 
     @staticmethod
+    def job_status_prefix(run_id: str) -> str:
+        """Prefix for all extraction job status keys belonging to a run.
+
+        Pattern: job:{run_id}:
+
+        Used by the cancel endpoint to scan and overwrite non-terminal jobs.
+        """
+        return f"job:{run_id}:"
+
+    @staticmethod
+    def agent_job_prefix(run_id: str) -> str:
+        """Prefix for all agent pipeline job status keys belonging to a run.
+
+        Pattern: agent_job:{run_id}:
+
+        Used by the cancel endpoint to scan and overwrite non-terminal jobs.
+        """
+        return f"agent_job:{run_id}:"
+
+    @staticmethod
     def agent_job(run_id: str, candidate_id: str) -> str:
         """Key for per-candidate agent pipeline job status.
 

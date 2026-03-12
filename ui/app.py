@@ -34,6 +34,7 @@ import streamlit as st
 from PIL import Image
 
 from api.models.run import Phase
+from ui.components.activity_feed import render_activity_feed
 from ui.state import StateManager
 
 # ---------------------------------------------------------------------------
@@ -458,6 +459,11 @@ def _render_sidebar(state: StateManager) -> str | None:
         st.caption("AI-Powered Graph Curation")
         st.divider()
 
+        # Activity feed — top of sidebar, always visible when session exists.
+        if state.run_id:
+            render_activity_feed(state.run_id)
+            st.divider()
+
         # Phase progression indicators.
         st.subheader("Phases")
         current_phase = state.phase
@@ -732,6 +738,12 @@ def main() -> None:
         page_icon=Image.open(_LOGO_LIGHT),
         layout="wide",
         initial_sidebar_state="expanded",
+    )
+
+    # Hide the default Streamlit "Deploy" button from the toolbar.
+    st.markdown(
+        '<style>[data-testid="stAppDeployButton"] {display: none;}</style>',
+        unsafe_allow_html=True,
     )
 
     # StateManager.get() seeds defaults on first load and returns a live view.

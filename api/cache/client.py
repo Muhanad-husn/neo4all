@@ -185,6 +185,28 @@ class CacheClient:
             logger.warning("cache_delete_error", key=key, error=str(exc))
             return False
 
+    async def scan_keys(self, prefix: str) -> list[str]:
+        """Return all keys matching a prefix (uses SCAN, not KEYS).
+
+        Args:
+            prefix: Key prefix to match. E.g. "job:{run_id}:".
+
+        Returns:
+            List of matching keys, or empty list on error.
+
+        Log events:
+            cache_scan_error  WARNING — prefix, error
+        """
+        try:
+            client = self._get_client()
+            keys: list[str] = []
+            async for key in client.scan_iter(match=f"{prefix}*"):
+                keys.append(key if isinstance(key, str) else key.decode())
+            return keys
+        except Exception as exc:
+            logger.warning("cache_scan_error", prefix=prefix, error=str(exc))
+            return []
+
     async def invalidate_prefix(self, prefix: str) -> int:
         """Delete all keys matching a prefix (uses SCAN, not KEYS).
 

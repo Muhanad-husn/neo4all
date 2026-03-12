@@ -199,6 +199,7 @@ class ExtractionStatusResponse(BaseResponse):
                       (derived from DocumentManifest.chunk_ids).
         completed:    Chunks whose job status is "complete" in Redis.
         failed:       Chunks whose job status is "failed" in Redis.
+        cancelled:    Chunks whose job status is "cancelled" in Redis.
         queued:       Chunks with "queued" or "running" status in Redis
                       (enqueued but not yet resolved).
         pending:      Chunks with no Redis entry — not yet enqueued.
@@ -207,8 +208,25 @@ class ExtractionStatusResponse(BaseResponse):
     total_chunks: int = 0
     completed: int = 0
     failed: int = 0
+    cancelled: int = 0
     queued: int = 0
     pending: int = 0
+
+
+class ExtractionCancelRequest(BaseModel):
+    """Request body for POST /api/extraction/cancel."""
+
+    run_id: str
+
+
+class ExtractionCancelResponse(BaseResponse):
+    """Response for POST /api/extraction/cancel.
+
+    Attributes:
+        jobs_cancelled: Number of jobs whose status was overwritten to "cancelled".
+    """
+
+    jobs_cancelled: int = 0
 
 
 class ExtractionResultsResponse(BaseResponse):
@@ -375,6 +393,67 @@ async def run_extraction(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/extraction/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/cancel",
+    response_model=ExtractionCancelResponse,
+    summary="Cancel all running/queued extraction jobs for a run",
+)
+async def cancel_extraction(
+    request: ExtractionCancelRequest,
+) -> ExtractionCancelResponse:
+    """Cancel all non-terminal extraction jobs for a run.
+
+    Scans Redis for all job status keys matching the run, and overwrites
+    any jobs in ``"queued"`` or ``"running"`` state with ``"cancelled"``.
+    Already-complete or already-failed jobs are left untouched.
+
+    Cancelled jobs are eligible for re-processing on a subsequent
+    POST /api/extraction/run call (only ``"complete"`` jobs are skipped).
+    """
+    from datetime import UTC, datetime
+
+    run_id = request.run_id
+    logger.info("extraction_cancel_requested", run_id=run_id)
+
+    cache = get_cache_client()
+    keys = await cache.scan_keys(CacheKey.job_status_prefix(run_id))
+    jobs_cancelled = 0
+    now = datetime.now(UTC).isoformat()
+
+    for key in keys:
+        job: ChunkJobStatus | None = await cache.get(key, model=ChunkJobStatus)
+        if job is None:
+            continue
+        if job.status in ("queued", "running"):
+            cancelled_job = ChunkJobStatus(
+                run_id=job.run_id,
+                chunk_id=job.chunk_id,
+                doc_id=job.doc_id,
+                status="cancelled",
+                started_at=job.started_at,
+                completed_at=now,
+            )
+            await cache.set(key, cancelled_job, ttl=_JOB_STATUS_TTL_S)
+            jobs_cancelled += 1
+
+    logger.info(
+        "extraction_cancel_complete",
+        run_id=run_id,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+    return ExtractionCancelResponse(
+        run_id=run_id,
+        status="success",
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /api/extraction/status/{run_id}
 # ---------------------------------------------------------------------------
 
@@ -445,6 +524,7 @@ async def get_extraction_status(
     cache = get_cache_client()
     completed = 0
     failed = 0
+    cancelled = 0
     queued = 0  # chunks with "queued" or "running" status (enqueued, not resolved)
 
     for chunk_id in all_chunk_ids:
@@ -458,10 +538,12 @@ async def get_extraction_status(
             completed += 1
         elif job_status.status == "failed":
             failed += 1
+        elif job_status.status == "cancelled":
+            cancelled += 1
         else:
             queued += 1  # "queued" or "running"
 
-    pending = total_chunks - completed - failed - queued
+    pending = total_chunks - completed - failed - cancelled - queued
 
     logger.info(
         "extraction_status_success",
@@ -469,6 +551,7 @@ async def get_extraction_status(
         total_chunks=total_chunks,
         completed=completed,
         failed=failed,
+        cancelled=cancelled,
         queued=queued,
         pending=pending,
     )
@@ -479,6 +562,7 @@ async def get_extraction_status(
         total_chunks=total_chunks,
         completed=completed,
         failed=failed,
+        cancelled=cancelled,
         queued=queued,
         pending=pending,
     )
