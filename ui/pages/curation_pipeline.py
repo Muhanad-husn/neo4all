@@ -32,7 +32,7 @@ Backend endpoints consumed:
   GET  /api/monitoring/agents/{run_id}
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import streamlit as st
@@ -1078,13 +1078,12 @@ def _render_agent_model_config(run_id: str) -> None:
     _agent_pipeline_fragment(run_id)
 
 
-@st.fragment(run_every=timedelta(seconds=3))
+@st.fragment
 def _agent_pipeline_fragment(run_id: str) -> None:
-    """Fragment wrapper around agent pipeline progress with auto-refresh.
+    """Fragment wrapper around agent pipeline progress.
 
-    Always fetches fresh status data on each rerun so the progress display
-    stays current.  Reruns every 3 s (fragment-scoped — does not cause a
-    full page rebuild).
+    Fetches fresh status data on each rerun.  Use the manual 'Refresh
+    progress' button to update the display.
     """
     _render_agent_pipeline_progress(run_id)
 
