@@ -75,7 +75,7 @@ cd neo4all
 cp .env.example .env   # fill in your Neo4j Aura + OpenRouter credentials
 
 # 2. Pull latest images and launch everything
-docker compose pull
+docker compose pull   # Dont run this if you have pulled the images earlier
 docker compose up -d
 
 # 3. Open the app
