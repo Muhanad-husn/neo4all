@@ -17,7 +17,7 @@ A **session-based, AI-assisted web application** that transforms documents into 
 ├── .github/
 │   └── workflows/       # CI pipeline (GitHub Actions)
 ├── ui/                  # Streamlit frontend (UI layer only — no business logic)
-│   ├── components/      # Reusable UI widgets (phase indicator, etc.)
+│   ├── components/      # Reusable UI widgets (phase indicator, dashboard tabs, charts, etc.)
 │   └── pages/           # Per-phase page modules
 ├── api/                 # FastAPI backend (all business logic)
 │   ├── common/          # Shared utilities (ARQ pool singleton)
@@ -55,7 +55,7 @@ A **session-based, AI-assisted web application** that transforms documents into 
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Streamlit |
+| Frontend | Streamlit + Plotly |
 | Backend | Python 3.12 / FastAPI |
 | Worker | ARQ + Redis |
 | Graph DB | Neo4j Aura |

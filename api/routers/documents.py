@@ -248,6 +248,8 @@ async def ingest_document(
         parser_config_hash=_compute_parser_config_hash(),
         chunk_ids=tuple(c.chunk_id for c in chunks),
         timestamp=datetime.now(UTC),
+        parser_used=result.document.parser_used,
+        source_identity=req.source_identity,
     )
 
     try:
@@ -341,6 +343,8 @@ async def list_documents(
             doc_id=m.doc_id,
             chunk_count=len(m.chunk_ids),
             created_at=m.timestamp,
+            parser_used=m.parser_used,
+            source_identity=m.source_identity,
         )
         for m in manifests
     ]

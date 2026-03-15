@@ -175,6 +175,7 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
         payload: dict[str, Any] = {"run_id": run_id}
         if extraction_model and extraction_model.strip():
             payload["model"] = extraction_model.strip()
+            StateManager.get().set_extraction_model(extraction_model.strip())
         with st.spinner("Enqueueing extraction jobs…"):
             data, err = _post("/api/extraction/run", payload)
 

@@ -85,6 +85,8 @@ class DocumentSummary(BaseModel):
     doc_id: str
     chunk_count: int
     created_at: datetime
+    parser_used: str = ""
+    source_identity: str = ""
 
 
 class ChunkOut(BaseModel):

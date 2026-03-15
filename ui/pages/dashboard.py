@@ -1,399 +1,28 @@
 """
-ui/pages/dashboard.py — Run summary dashboard (SPEC-08 S-08.6).
+ui/pages/dashboard.py — Tabbed run dashboard (SPEC-08 S-08.6).
 
-Read-only page that aggregates data from existing API endpoints into a
-single overview. All data fetched from the backend — no business logic.
+Thin orchestrator that dispatches to per-tab renderer modules. All data
+fetched from the backend — no business logic (CLAUDE.md §4.1, SKILL-B R-B3).
 
-Sections (ordered):
-  1. Run Summary metrics
-  2. Worker / Cache status
-  3. Ingestion pipeline summary
-  4. Extraction progress (auto-refreshes every 2 s)
-  5. Curation summary (auto-refreshes every 5 s)
-  6. Graph statistics by type
-  7. Recent activity log feed (run-scoped, filterable)
-
-Architecture rules:
-  - No business logic — pure data display (CLAUDE.md §4.1, SKILL-B R-B3).
-  - All session state via StateManager.get() (CLAUDE.md §8).
-  - No st.session_state access outside StateManager.
-  - API calls via httpx (synchronous client — Streamlit is single-threaded).
-  - Sections hide gracefully when backend endpoints are unreachable.
-
-Backend endpoints consumed:
-  GET /api/documents/{run_id}
-  GET /api/graph/nodes/{run_id}/count
-  GET /api/graph/edges/{run_id}/count
-  GET /api/monitoring/jobs/{run_id}
-  GET /api/monitoring/workers
-  GET /api/monitoring/cache
-  GET /api/curation/candidates/{run_id}
-  GET /api/curation/proposals/{run_id}
-  GET /api/curation/agents/status/{run_id}
-  GET /api/monitoring/logs/activity?run_id=&limit=
+Tabs:
+  0. Overview  — run summary, worker/cache, recent activity
+  1. Schema    — locked domain schema (read-only)
+  2. Ingestion — documents, parser tiers, chunk expanders, quality charts
+  3. Extraction — progress gauge, per-chunk entity breakdown, model info
+  4. Curation  — candidates, proposals, agent pipeline, telemetry, rejections
+  5. Graph     — node/edge count charts (Plotly)
 """
 
-import os
-from datetime import timedelta
-from typing import Any
-
-import httpx
-import pandas as pd
 import streamlit as st
 
-from ui.components.activity_feed import _relative_time, _severity_dot
-from ui.components.monitoring_helpers import (
-    render_entity_yield_metrics,
-    render_failed_chunks_expander,
-    render_worker_cache_row,
-)
+from ui.components.dashboard_curation import render_curation_tab
+from ui.components.dashboard_extraction import render_extraction_tab
+from ui.components.dashboard_graph import render_graph_tab
+from ui.components.dashboard_ingestion import render_ingestion_tab
+from ui.components.dashboard_overview import render_overview_tab
+from ui.components.dashboard_schema import render_schema_tab
 from ui.components.phase_indicator import render_phase_indicator
 from ui.state import StateManager
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-_API_BASE_URL: str = os.environ.get("API_BASE_URL", "http://localhost:8000")
-_REQUEST_TIMEOUT: float = 5.0
-
-
-# ---------------------------------------------------------------------------
-# Backend fetch helper
-# ---------------------------------------------------------------------------
-
-
-def _fetch(path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """GET {_API_BASE_URL}{path} and return parsed JSON.
-
-    Returns None on any error so callers can degrade gracefully.
-    """
-    try:
-        with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
-            response = client.get(f"{_API_BASE_URL}{path}", params=params)
-            response.raise_for_status()
-            return response.json()  # type: ignore[no-any-return]
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Section renderers — pure presentation, no state mutations
-# ---------------------------------------------------------------------------
-
-
-def _render_run_summary(
-    state: StateManager,
-    doc_data: dict[str, Any] | None,
-    node_data: dict[str, Any] | None,
-    job_data: dict[str, Any] | None,
-    proposal_data: dict[str, Any] | None,
-) -> None:
-    """Render 4-column summary metrics for the current run."""
-    st.subheader("Run Summary")
-
-    doc_count = len(doc_data.get("documents", [])) if doc_data else "\u2014"
-    entity_count = node_data.get("total", "\u2014") if node_data else "\u2014"
-    job_total = job_data.get("total", "\u2014") if job_data else "\u2014"
-    proposal_count = len(proposal_data.get("proposals", [])) if proposal_data else "\u2014"
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Documents", doc_count)
-    c2.metric("Entities", entity_count)
-    c3.metric("Jobs", job_total)
-    c4.metric("Proposals", proposal_count)
-
-
-def _render_ingestion_summary(
-    run_id: str,
-    doc_data: dict[str, Any] | None,
-) -> None:
-    """Render a compact ingestion pipeline summary with per-document chunk counts."""
-    st.subheader("Ingestion Pipeline")
-
-    if doc_data is None:
-        st.warning("Cannot reach API \u2014 ingestion data unavailable.")
-        return
-
-    documents: list[dict[str, Any]] = doc_data.get("documents", [])
-    total_count: int = doc_data.get("total_count", len(documents))
-
-    if not documents:
-        st.info("No documents ingested yet for this run.")
-        return
-
-    total_chunks = sum(d.get("chunk_count", 0) for d in documents)
-
-    c1, c2 = st.columns(2)
-    c1.metric("Documents Ingested", total_count)
-    c2.metric("Total Chunks", total_chunks)
-
-    rows = [
-        {
-            "Doc ID": (d.get("doc_id") or "")[:16] + "\u2026",
-            "Chunks": d.get("chunk_count", 0),
-            "Ingested At": d.get("created_at", "\u2014"),
-        }
-        for d in documents
-    ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-
-
-def _render_extraction_progress(job_data: dict[str, Any] | None) -> None:
-    """Render extraction progress bar with completed/failed/pending metrics."""
-    st.subheader("Extraction Progress")
-
-    if job_data is None:
-        st.warning("Cannot reach API \u2014 extraction progress unavailable.")
-        return
-
-    total: int = job_data.get("total", 0)
-    completed: int = job_data.get("completed", 0)
-    failed: int = job_data.get("failed", 0)
-    pending: int = job_data.get("pending", 0)
-
-    if total == 0:
-        st.info("No extraction jobs found for this run.")
-        return
-
-    resolved = completed + failed
-    frac = resolved / total
-
-    st.progress(frac, text=f"{int(frac * 100)}% resolved  ({resolved} / {total} chunks)")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Completed", completed)
-    c2.metric("Failed", failed)
-    c3.metric("Pending", pending)
-
-    # Entity yield and failed chunk details from per-job data.
-    jobs_list: list[dict[str, Any]] = job_data.get("jobs", [])
-    if jobs_list:
-        render_entity_yield_metrics(jobs_list)
-        if failed > 0:
-            render_failed_chunks_expander(jobs_list)
-
-
-def _render_curation_summary(
-    candidates_data: dict[str, Any] | None,
-    proposals_data: dict[str, Any] | None,
-    agent_status_data: dict[str, Any] | None,
-) -> None:
-    """Render curation pipeline summary: candidates, proposals, agent progress."""
-    st.subheader("Curation Summary")
-
-    # --- Candidate counts ---
-    if candidates_data is not None and candidates_data.get("status") != "error":
-        groups: list[dict[str, Any]] = candidates_data.get("groups", [])
-        all_candidates = [c for g in groups for c in g.get("candidates", [])]
-        total_cands = len(all_candidates)
-
-        if total_cands > 0:
-            # Count by type.
-            type_counts: dict[str, int] = {}
-            for c in all_candidates:
-                ctype = c.get("candidate_type", "unknown")
-                type_counts[ctype] = type_counts.get(ctype, 0) + 1
-
-            st.markdown("**Candidates**")
-            cols = st.columns(min(len(type_counts) + 1, 6))
-            cols[0].metric("Total", total_cands)
-            for i, (ctype, count) in enumerate(type_counts.items()):
-                if i + 1 < len(cols):
-                    cols[i + 1].metric(ctype.replace("_", " ").title(), count)
-        else:
-            st.info("No candidates generated yet.")
-    else:
-        st.caption("Candidate data unavailable.")
-
-    # --- Proposal state breakdown ---
-    if proposals_data is not None and proposals_data.get("status") != "error":
-        proposals: list[dict[str, Any]] = proposals_data.get("proposals", [])
-        if proposals:
-            state_counts: dict[str, int] = {}
-            for p in proposals:
-                s = p.get("state", "unknown")
-                state_counts[s] = state_counts.get(s, 0) + 1
-
-            st.markdown("**Proposals**")
-            cols = st.columns(min(len(state_counts) + 1, 6))
-            cols[0].metric("Total", len(proposals))
-            for i, (state, count) in enumerate(state_counts.items()):
-                if i + 1 < len(cols):
-                    cols[i + 1].metric(state.title(), count)
-
-    # --- Agent pipeline progress ---
-    if agent_status_data is not None and agent_status_data.get("status") != "error":
-        jobs: list[dict[str, Any]] = agent_status_data.get("jobs", [])
-        if jobs:
-            total = len(jobs)
-            agent_completed = sum(1 for j in jobs if j.get("stage") == "complete")
-            agent_failed = sum(1 for j in jobs if j.get("stage") == "failed")
-            agent_deferred = sum(1 for j in jobs if j.get("stage") == "deferred")
-            agent_cancelled = sum(1 for j in jobs if j.get("stage") == "cancelled")
-            finished = agent_completed + agent_failed + agent_deferred + agent_cancelled
-            running = total - finished
-
-            st.markdown("**Agent Pipeline**")
-            fraction = finished / total if total > 0 else 0.0
-            st.progress(fraction, text=f"{finished} / {total} candidates processed")
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Completed", agent_completed)
-            c2.metric("Running", running)
-            c3.metric("Failed", agent_failed)
-            c4.metric("Deferred", agent_deferred)
-
-
-def _render_graph_stats(
-    node_data: dict[str, Any] | None,
-    edge_data: dict[str, Any] | None,
-) -> None:
-    """Render node/edge type breakdowns as bar charts."""
-    st.subheader("Graph Statistics")
-
-    if node_data is None and edge_data is None:
-        st.warning("Cannot reach API \u2014 graph statistics unavailable.")
-        return
-
-    left, right = st.columns(2)
-
-    with left:
-        st.markdown("**Node Counts by Type**")
-        by_type = node_data.get("by_type", []) if node_data else []
-        if by_type:
-            df = pd.DataFrame(by_type).rename(columns={"type": "Type", "count": "Count"})
-            st.bar_chart(df, x="Type", y="Count")
-        else:
-            st.info("No node data.")
-
-    with right:
-        st.markdown("**Edge Counts by Type**")
-        by_type = edge_data.get("by_type", []) if edge_data else []
-        if by_type:
-            df = pd.DataFrame(by_type).rename(columns={"type": "Type", "count": "Count"})
-            st.bar_chart(df, x="Type", y="Count")
-        else:
-            st.info("No edge data.")
-
-
-def _render_recent_activity(
-    run_id: str,
-    log_data: dict[str, Any] | None,
-    level_filter: str = "All",
-) -> None:
-    """Render run-scoped activity with severity dots, relative timestamps, and level filter."""
-    st.subheader("Recent Activity")
-
-    if log_data is None:
-        st.warning("Cannot reach API \u2014 recent logs unavailable.")
-        return
-
-    entries: list[dict[str, Any]] = log_data.get("entries", [])
-    if not entries:
-        st.info("No recent activity for this run.")
-        return
-
-    # Apply level filter.
-    if level_filter != "All":
-        entries = [e for e in entries if e.get("level", "").upper() == level_filter.upper()]
-
-    if not entries:
-        st.info(f"No {level_filter} entries found.")
-        return
-
-    for entry in entries[:20]:
-        level = str(entry.get("level", "info"))
-        event = str(entry.get("event", "unknown")).replace("_", " ")
-        timestamp = entry.get("timestamp", "")
-        rel_time = _relative_time(timestamp)
-        dot = _severity_dot(level)
-        line = f"{dot} {event}"
-        if rel_time:
-            line += f"  :gray[{rel_time}]"
-        st.markdown(line)
-
-
-# ---------------------------------------------------------------------------
-# Fragment wrappers
-# ---------------------------------------------------------------------------
-
-
-@st.fragment
-def _fragment_run_summary(run_id: str, state: StateManager) -> None:
-    """Fragment: fetches and renders the run summary metrics independently."""
-    doc_data = _fetch(f"/api/documents/{run_id}")
-    node_data = _fetch(f"/api/graph/nodes/{run_id}/count")
-    job_data = _fetch(f"/api/monitoring/jobs/{run_id}")
-    proposal_data = _fetch(f"/api/curation/proposals/{run_id}")
-    _render_run_summary(state, doc_data, node_data, job_data, proposal_data)
-
-
-@st.fragment
-def _fragment_worker_cache_status() -> None:
-    """Fragment: fetches and renders worker and cache status independently."""
-    st.subheader("Worker & Cache")
-    worker_data = _fetch("/api/monitoring/workers")
-    cache_data = _fetch("/api/monitoring/cache")
-    render_worker_cache_row(worker_data, cache_data)
-
-
-@st.fragment
-def _fragment_ingestion_summary(run_id: str) -> None:
-    """Fragment: fetches and renders ingestion pipeline summary independently."""
-    doc_data = _fetch(f"/api/documents/{run_id}")
-    _render_ingestion_summary(run_id, doc_data)
-
-
-@st.fragment(run_every=timedelta(seconds=2))
-def _fragment_extraction_progress(run_id: str) -> None:
-    """Fragment: fetches and renders extraction progress independently.
-
-    Auto-refreshes every 2 s so extraction progress streams live, matching the
-    extraction page's polling behaviour.
-    """
-    job_data = _fetch(f"/api/monitoring/jobs/{run_id}")
-    _render_extraction_progress(job_data)
-
-
-@st.fragment(run_every=timedelta(seconds=5))
-def _fragment_curation_summary(run_id: str) -> None:
-    """Fragment: fetches and renders curation summary independently.
-
-    Auto-refreshes every 5 s to show agent pipeline progress.
-    """
-    candidates_data = _fetch(f"/api/curation/candidates/{run_id}")
-    proposals_data = _fetch(f"/api/curation/proposals/{run_id}")
-    agent_status_data = _fetch(f"/api/curation/agents/status/{run_id}")
-    _render_curation_summary(candidates_data, proposals_data, agent_status_data)
-
-
-@st.fragment
-def _fragment_graph_stats(run_id: str) -> None:
-    """Fragment: fetches and renders graph statistics independently."""
-    node_data = _fetch(f"/api/graph/nodes/{run_id}/count")
-    edge_data = _fetch(f"/api/graph/edges/{run_id}/count")
-    _render_graph_stats(node_data, edge_data)
-
-
-@st.fragment
-def _fragment_recent_activity(run_id: str) -> None:
-    """Fragment: fetches and renders run-scoped recent activity independently."""
-    level_filter = st.selectbox(
-        "Filter by level",
-        ["All", "INFO", "WARNING", "ERROR"],
-        key="dashboard_activity_level_filter",
-    )
-    log_data = _fetch(
-        "/api/monitoring/logs/activity",
-        params={"run_id": run_id, "limit": 20},
-    )
-    _render_recent_activity(run_id, log_data, level_filter=level_filter)
-
-
-# ---------------------------------------------------------------------------
-# Page entry point
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -412,21 +41,20 @@ def main() -> None:
     run_id = state.run_id
     st.caption(f"Run: `{run_id}`")
 
-    # Sections ordered: Run Summary -> Worker/Cache -> Ingestion -> Extraction
-    #                    -> Curation -> Graph Stats -> Recent Activity
-    _fragment_run_summary(run_id, state)
-    st.divider()
-    _fragment_worker_cache_status()
-    st.divider()
-    _fragment_ingestion_summary(run_id)
-    st.divider()
-    _fragment_extraction_progress(run_id)
-    st.divider()
-    _fragment_curation_summary(run_id)
-    st.divider()
-    _fragment_graph_stats(run_id)
-    st.divider()
-    _fragment_recent_activity(run_id)
+    tabs = st.tabs(["Overview", "Schema", "Ingestion", "Extraction", "Curation", "Graph"])
+
+    with tabs[0]:
+        render_overview_tab(run_id, state)
+    with tabs[1]:
+        render_schema_tab(run_id)
+    with tabs[2]:
+        render_ingestion_tab(run_id)
+    with tabs[3]:
+        render_extraction_tab(run_id)
+    with tabs[4]:
+        render_curation_tab(run_id)
+    with tabs[5]:
+        render_graph_tab(run_id)
 
 
 if __name__ == "__main__":

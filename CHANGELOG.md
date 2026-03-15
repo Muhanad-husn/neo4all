@@ -2,6 +2,28 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.4] - 2026-03-15
+
+### Added
+- Tabbed dashboard with 6 tabs: Overview, Schema, Ingestion, Extraction, Curation, Graph
+- Plotly interactive charts replacing basic `st.bar_chart` (gauges, donuts, stacked bars, horizontal bars)
+- Schema tab: read-only locked schema display with node/edge type tables and property count donut chart
+- Ingestion tab: parser tier distribution chart, document table with parser and source columns, per-document chunk expanders, quality flag distribution donut
+- Extraction tab: completion gauge, per-chunk entity stacked bar chart, model info display, auto-refresh every 2s
+- Curation tab: candidate archive with summary table and type chart, proposal history with state donut and class bar charts, agent pipeline progress with auto-refresh every 5s and model info, agent telemetry table with token usage chart, exclusions/rejections filter
+- Graph tab: Plotly horizontal bar charts for node/edge counts by type (sorted descending)
+- Shared `api_fetch.py` helper replacing duplicated `_fetch()` patterns across UI modules
+- Shared `plotly_helpers.py` with consistent chart factories (`bar_chart`, `donut_chart`, `gauge_chart`, `stacked_bar`)
+- `parser_used` and `source_identity` fields on `DocumentManifest` and `DocumentSummary` models (backward-compatible defaults)
+- `extraction_model` property and setter on `StateManager` for tracking LLM model selection
+- `plotly>=5.20.0,<6.0.0` dependency
+
+### Changed
+- Dashboard page rewritten from 434-line monolith to ~55-line thin tab dispatcher with 6 dedicated tab modules (R-B7)
+- `DocumentManifest` now carries `parser_used` and `source_identity` from ingestion through to the list endpoint
+
+---
+
 ## [1.0.3] - 2026-03-15
 
 ### Added

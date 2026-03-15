@@ -74,6 +74,8 @@ _K_PENDING_CONFIRMATIONS = "_sm_pending_confirmations"  # dict[str, str]
 _K_SUBMITTED_CANDIDATES = "_sm_submitted_candidates"  # set[str]
 # Phase re-entry — records which phase the user came from when navigating backward.
 _K_REENTRY_SOURCE = "_sm_reentry_source"  # Phase | None
+# Extraction model — tracks the LLM model selected by the user for extraction.
+_K_EXTRACTION_MODEL = "_sm_extraction_model"  # str | None
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -133,6 +135,7 @@ class StateManager:
             _K_PENDING_CONFIRMATIONS: {},
             _K_SUBMITTED_CANDIDATES: set(),
             _K_REENTRY_SOURCE: None,
+            _K_EXTRACTION_MODEL: None,
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -220,6 +223,11 @@ class StateManager:
     def submitted_candidates(self) -> set[str]:
         """Set of candidate IDs that have had proposals submitted this session."""
         return st.session_state[_K_SUBMITTED_CANDIDATES]
+
+    @property
+    def extraction_model(self) -> str | None:
+        """LLM model selected by the user for extraction, or None."""
+        return st.session_state[_K_EXTRACTION_MODEL]
 
     @property
     def reentry_source(self) -> Phase | None:
@@ -449,6 +457,10 @@ class StateManager:
         confirmations.pop(proposal_id, None)
         st.session_state[_K_PENDING_CONFIRMATIONS] = confirmations
 
+    def set_extraction_model(self, model: str) -> None:
+        """Record the LLM model selected for extraction."""
+        st.session_state[_K_EXTRACTION_MODEL] = model
+
     def mark_candidate_submitted(self, candidate_id: str) -> None:
         """Record that a proposal has been submitted for a candidate this session."""
         submitted = set(st.session_state[_K_SUBMITTED_CANDIDATES])
@@ -533,3 +545,4 @@ class StateManager:
         st.session_state[_K_PENDING_CONFIRMATIONS] = {}
         st.session_state[_K_SUBMITTED_CANDIDATES] = set()
         st.session_state[_K_REENTRY_SOURCE] = None
+        st.session_state[_K_EXTRACTION_MODEL] = None

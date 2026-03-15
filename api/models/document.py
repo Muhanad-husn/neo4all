@@ -347,6 +347,8 @@ class DocumentManifest(BaseModel):
     parser_config_hash: str
     chunk_ids: tuple[str, ...]
     timestamp: datetime
+    parser_used: str = ""
+    source_identity: str = ""
 
     @field_validator("doc_id", "run_id")
     @classmethod
