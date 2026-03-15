@@ -184,8 +184,9 @@ async def evidence_assembly_job(
         correlation_id: Propagated from the originating HTTP request (SKILL-D R-D2).
 
     Chain logic:
-        - evidence sufficient   -> enqueue proposal_composition_job
-        - evidence insufficient -> enqueue retrieval_augmentation_job
+        - evidence sufficient                            -> enqueue proposal_composition_job
+        - evidence insufficient + ENABLE_AGENT_B=True   -> enqueue retrieval_augmentation_job
+        - evidence insufficient + ENABLE_AGENT_B=False  -> enqueue proposal_composition_job
     """
     from api.agents.evidence import EvidenceAssemblyAgent
     from api.agents.orchestrator import OrchestratorDecision

@@ -379,7 +379,7 @@ Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhan
 | [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs)                  |
 | [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui)         | `Dockerfile.ui`     | Streamlit frontend (UI only)                                   |
 
-**Tags:** `1.0.4`, `latest`
+**Tags:** `1.0.5`, `latest`
 
 All images use CPU-only PyTorch (~3 GB each) instead of the default CUDA build (~13 GB). The embedding model (`all-MiniLM-L6-v2`) runs identically on CPU.
 
@@ -501,7 +501,7 @@ The next milestone extends this with *evidence-only* ingestion directly from the
 
 ---
 
-## Known Limitations (v1.0.4)
+## Known Limitations (v1.0.5)
 
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)
