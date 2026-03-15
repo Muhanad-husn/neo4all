@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["monitoring"])
 
-_VERSION = "0.1.0"
+_VERSION = "1.0.4"
 
 def _observe_response_time(endpoint: str, start: float) -> None:
     """Record endpoint response duration in the in-memory histogram.
