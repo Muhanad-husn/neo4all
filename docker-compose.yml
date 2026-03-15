@@ -65,6 +65,9 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -92,5 +95,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  redis_data:
   qdrant_data:
   rustfs_data:
