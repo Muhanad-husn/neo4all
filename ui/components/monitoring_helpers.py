@@ -12,6 +12,7 @@ Architecture rules:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,30 +44,50 @@ def format_duration(started_at: str | None, completed_at: str | None) -> str:
         return ""
 
 
-def render_failed_chunks_expander(jobs: list[dict[str, Any]]) -> None:
+def render_failed_chunks_expander(
+    jobs: list[dict[str, Any]],
+    run_id: str | None = None,
+    fetch_text_fn: Callable[[str, str], str | None] | None = None,
+) -> None:
     """Show an expander listing failed extraction chunks with error details.
 
     Filters to status=='failed' jobs and displays chunk_id, doc_id prefix,
     and the error message for each.
+
+    Args:
+        jobs: Per-chunk job details list.
+        run_id: Current run ID (needed for chunk text fetch).
+        fetch_text_fn: Optional callback ``(run_id, chunk_id) -> text | None``
+            to retrieve the source text of a failed chunk for review.
     """
     failed = [j for j in jobs if j.get("status") == "failed"]
     if not failed:
         return
 
     with st.expander(f"Failed chunks ({len(failed)})", expanded=False):
-        for j in failed:
-            chunk_id = (j.get("chunk_id") or "")[:16]
+        for idx, j in enumerate(failed):
+            chunk_id = j.get("chunk_id") or ""
+            chunk_id_short = chunk_id[:16]
             doc_id = (j.get("doc_id") or "")[:16]
             error = j.get("error") or "Unknown error"
-            st.markdown(f"- `{chunk_id}…` (doc `{doc_id}…`) — {error}")
+            st.markdown(f"- `{chunk_id_short}…` (doc `{doc_id}…`) — {error}")
+
+            if fetch_text_fn is not None and run_id and chunk_id:
+                btn_key = f"view_chunk_text_{idx}_{chunk_id_short}"
+                if st.button("View chunk text", key=btn_key):
+                    text = fetch_text_fn(run_id, chunk_id)
+                    if text:
+                        st.code(text, language=None)
+                    else:
+                        st.caption("Could not retrieve chunk text.")
 
 
 def render_entity_yield_metrics(jobs: list[dict[str, Any]]) -> None:
     """Sum nodes_created and edges_created from completed jobs and render as metrics.
 
-    Only counts jobs with status=='completed'.
+    Only counts jobs with status=='complete'.
     """
-    completed = [j for j in jobs if j.get("status") == "completed"]
+    completed = [j for j in jobs if j.get("status") == "complete"]
     if not completed:
         return
 

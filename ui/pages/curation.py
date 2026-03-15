@@ -443,6 +443,11 @@ def main() -> None:
             on_click=lambda: StateManager.get().reenter_phase(Phase.INGESTION),
             help="Return to ingestion to add more documents. Existing work is preserved.",
         )
+        st.button(
+            "Back to Extraction",
+            on_click=lambda: StateManager.get().reenter_phase(Phase.EXTRACTION),
+            help="Return to extraction to review and re-run failed chunks.",
+        )
 
     st.title("Phase 4: Curation")
     st.caption(

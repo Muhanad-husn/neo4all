@@ -318,11 +318,13 @@ class StateManager:
         allowed = {
             (Phase.CURATION, Phase.INGESTION),
             (Phase.EXTRACTION, Phase.INGESTION),
+            (Phase.CURATION, Phase.EXTRACTION),
         }
         if (current, target) not in allowed:
             raise ValueError(
                 f"Re-entry rejected: {current.name} → {target.name}. "
-                f"Allowed re-entry paths: CURATION→INGESTION, EXTRACTION→INGESTION."
+                f"Allowed re-entry paths: CURATION→INGESTION, "
+                f"EXTRACTION→INGESTION, CURATION→EXTRACTION."
             )
 
         st.session_state[_K_REENTRY_SOURCE] = current

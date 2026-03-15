@@ -177,7 +177,7 @@ Users can navigate backward from Curation (or Extraction) to Ingestion to add
 more documents within the same `run_id`. This is handled via `reenter_phase()`
 and `clear_reentry()` on `StateManager`.
 
-- **Allowed paths**: `CURATION → INGESTION`, `EXTRACTION → INGESTION`.
+- **Allowed paths**: `CURATION → INGESTION`, `EXTRACTION → INGESTION`, `CURATION → EXTRACTION`.
 - **`reentry_source`** property tracks where the user came from (`Phase | None`).
 - **Reconciliation is suppressed** during re-entry so the app does not auto-advance
   back to Curation.

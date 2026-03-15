@@ -314,7 +314,7 @@ def _render_summary_section(
 
     # Per-chunk entity breakdown table from job details.
     job_list = jobs.get("jobs", []) if isinstance(jobs, dict) else (jobs or [])
-    completed_jobs = [j for j in job_list if j.get("status") == "completed"]
+    completed_jobs = [j for j in job_list if j.get("status") == "complete"]
     if completed_jobs:
         st.markdown("**Per-Chunk Entity Breakdown**")
         rows = [
@@ -339,46 +339,107 @@ def _render_summary_section(
 # ---------------------------------------------------------------------------
 
 
-@st.fragment(run_every=timedelta(seconds=2))
-def _extraction_monitor(run_id: str) -> None:
-    """Fragment that polls extraction status and self-reruns.
+def _fetch_chunk_text(run_id: str, chunk_id: str) -> str | None:
+    """Fetch the source text of a chunk for review."""
+    data = _fetch(f"/api/documents/{run_id}/chunk/{chunk_id}/text")
+    if data and data.get("status") == "success":
+        return data.get("text")
+    return None
 
-    Only this fragment refreshes every 2 s while extraction is running —
-    the rest of the page (sidebar, trigger section, header) stays stable.
-    Fetches per-chunk job details alongside status for entity yield and
-    failure diagnostics.
+
+@st.fragment(run_every=timedelta(seconds=2))
+def _extraction_progress_fragment(run_id: str) -> None:
+    """Auto-refreshing fragment for active extraction progress only.
+
+    Polls every 2 s while extraction is running. Renders progress bar,
+    chunk metrics, and entity yield. Stops being relevant once extraction
+    completes — the done-state rendering happens at page level to avoid
+    widget instability from auto-refresh.
     """
     status = _fetch(f"/api/extraction/status/{run_id}")
     jobs = _fetch(f"/api/monitoring/jobs/{run_id}")
-
-    # --- Progress section ---
     _render_progress_section(status, jobs=jobs)
 
-    # --- Summary + entity breakdown: shown only when all jobs are resolved ---
-    if _is_done(status):
-        st.divider()
-        results = _fetch(f"/api/extraction/results/{run_id}")
-        _render_summary_section(status, results, jobs=jobs)
 
-        # Offer phase advancement only while still in Phase.EXTRACTION
-        state = StateManager.get()
-        if state.phase == Phase.EXTRACTION:
-            st.divider()
-            is_reentry = state.reentry_source is not None
+def _render_failed_review(
+    status: dict[str, Any] | None,
+    jobs: list[dict[str, Any]] | None,
+    run_id: str,
+) -> None:
+    """Render failed chunk review with optional text display.
 
-            def _do_advance() -> None:
-                """on_click callback — runs BEFORE the next render cycle."""
-                s = StateManager.get()
-                if s.phase == Phase.EXTRACTION:
-                    s.clear_reentry()
-                    s.advance_phase(Phase.CURATION)
+    Shown only when extraction is done and there are failures.
+    Renders at page level (no auto-refresh) so expanders and buttons
+    are stable.
+    """
+    failed: int = status.get("failed", 0) if status else 0
+    if failed == 0:
+        return
 
+    job_list = jobs.get("jobs", []) if isinstance(jobs, dict) else (jobs or [])
+    if not job_list:
+        return
+
+    render_failed_chunks_expander(
+        job_list,
+        run_id=run_id,
+        fetch_text_fn=_fetch_chunk_text,
+    )
+
+
+def _render_decision_section(
+    run_id: str,
+    status: dict[str, Any] | None,
+) -> None:
+    """Render end-of-extraction decision buttons (rerun / proceed).
+
+    Shown only when extraction is done and phase is still EXTRACTION.
+    Renders at page level for widget stability.
+    """
+    state = StateManager.get()
+    if state.phase != Phase.EXTRACTION:
+        return
+
+    failed: int = status.get("failed", 0) if status else 0
+    is_reentry = state.reentry_source is not None
+
+    def _do_advance() -> None:
+        """on_click callback — runs BEFORE the next render cycle."""
+        s = StateManager.get()
+        if s.phase == Phase.EXTRACTION:
+            s.clear_reentry()
+            s.advance_phase(Phase.CURATION)
+
+    if failed > 0:
+        st.warning(
+            f"{failed} chunk(s) failed extraction. You can re-run to retry "
+            "failed chunks, or proceed to Curation with partial results."
+        )
+        col_rerun, col_proceed = st.columns(2)
+        with col_rerun:
+            st.markdown("**Re-run failed chunks**")
+            st.caption("Re-enqueue only failed chunks (already-complete chunks are skipped).")
+            if st.button("Re-run Extraction", key="decision_rerun"):
+                payload: dict[str, Any] = {"run_id": run_id}
+                with st.spinner("Enqueueing extraction jobs…"):
+                    _post("/api/extraction/run", payload)
+                st.rerun()
+        with col_proceed:
+            st.markdown("**Proceed with partial results**")
+            st.caption("Continue to Curation with successfully extracted entities.")
             st.button(
                 "Return to Curation →" if is_reentry else "Proceed to Curation →",
                 type="primary",
                 on_click=_do_advance,
+                key="decision_proceed",
             )
-
+    else:
+        st.button(
+            "Return to Curation →" if is_reentry else "Proceed to Curation →",
+            type="primary",
+            on_click=_do_advance,
+            key="decision_proceed",
+        )
 
 
 def main() -> None:
@@ -418,11 +479,17 @@ def main() -> None:
     st.title("Phase 3: AI-Assisted Extraction")
 
     if state.reentry_source is not None:
-        st.info(
-            "Processing new documents added during re-entry. "
-            "Only new chunks will be extracted — previously completed chunks are skipped.",
-            icon="↩",
-        )
+        if state.reentry_source == Phase.CURATION:
+            st.info(
+                "Returned from Curation to review and re-run failed extraction chunks.",
+                icon="↩",
+            )
+        else:
+            st.info(
+                "Processing new documents added during re-entry. "
+                "Only new chunks will be extracted — previously completed chunks are skipped.",
+                icon="↩",
+            )
     else:
         st.caption(
             "Chunks are sent to the LLM with the locked domain schema. "
@@ -437,8 +504,28 @@ def main() -> None:
 
     st.divider()
 
-    # --- Monitor fragment: progress + summary + auto-poll (fragment-scoped) ---
-    _extraction_monitor(run_id)
+    # --- Active extraction: auto-refreshing fragment ---
+    if _is_running(status):
+        _extraction_progress_fragment(run_id)
+
+    # --- Done state: static rendering at page level (no auto-refresh) ---
+    elif _is_done(status):
+        # Re-fetch status and jobs at page level for stable rendering.
+        done_status = _fetch(f"/api/extraction/status/{run_id}")
+        done_jobs = _fetch(f"/api/monitoring/jobs/{run_id}")
+
+        _render_progress_section(done_status, jobs=done_jobs)
+
+        st.divider()
+        results = _fetch(f"/api/extraction/results/{run_id}")
+        _render_summary_section(done_status, results, jobs=done_jobs)
+
+        # Failed chunk text review (stable, no auto-refresh).
+        _render_failed_review(done_status, done_jobs, run_id)
+
+        # Decision buttons: rerun / proceed.
+        st.divider()
+        _render_decision_section(run_id, done_status)
 
 
 if __name__ == "__main__":

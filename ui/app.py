@@ -388,7 +388,8 @@ def _reconcile_phase(state: StateManager) -> None:
                     total = data.get("total_chunks", 0)
                     pending = data.get("pending", 0)
                     completed = data.get("completed", 0)
-                    if total > 0 and pending == 0 and completed > 0:
+                    failed = data.get("failed", 0)
+                    if total > 0 and pending == 0 and completed > 0 and failed == 0:
                         state.advance_phase(Phase.CURATION)
             except Exception:
                 pass
