@@ -32,7 +32,7 @@ Backend endpoints consumed:
   GET  /api/monitoring/agents/{run_id}
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import streamlit as st
@@ -648,23 +648,34 @@ def _render_batch_actions(
             st.rerun()
 
 
+@st.fragment(run_every=timedelta(seconds=5))
+def _proposal_queue_fragment(run_id: str, actor: str) -> None:
+    """Auto-refreshing fragment wrapper for the proposal queue.
+
+    Refreshes every 5 s so proposals created by Agent-P appear
+    automatically without manual refresh.  Only this fragment
+    re-renders — the rest of the page stays stable.
+    """
+    _render_proposal_queue_inner(run_id, actor)
+
+
 def _render_proposal_queue(run_id: str, actor: str) -> None:
+    """Entry point called from the main curation page — delegates to fragment."""
+    _proposal_queue_fragment(run_id, actor)
+
+
+def _render_proposal_queue_inner(run_id: str, actor: str) -> None:
     """Fetch and display all proposals for a run with per-proposal action panels."""
     st.subheader("Proposal Queue")
 
-    btn_col1, btn_col2 = st.columns([1, 1])
-    with btn_col1:
-        if st.button("Refresh proposals", key="refresh_proposals"):
+    if st.button("Clear all proposals", key="clear_all_proposals", type="secondary"):
+        resp, err = _delete(f"/api/curation/proposals/{run_id}")
+        if err or resp is None:
+            st.error(f"Failed to clear proposals: {err or 'No response.'}")
+        else:
+            StateManager.get().clear_dismissed_proposals()
+            st.success("All proposals cleared.")
             st.rerun()
-    with btn_col2:
-        if st.button("Clear all proposals", key="clear_all_proposals", type="secondary"):
-            resp, err = _delete(f"/api/curation/proposals/{run_id}")
-            if err or resp is None:
-                st.error(f"Failed to clear proposals: {err or 'No response.'}")
-            else:
-                StateManager.get().clear_dismissed_proposals()
-                st.success("All proposals cleared.")
-                st.rerun()
 
     data = _fetch(f"/api/curation/proposals/{run_id}")
 
@@ -1078,12 +1089,13 @@ def _render_agent_model_config(run_id: str) -> None:
     _agent_pipeline_fragment(run_id)
 
 
-@st.fragment
+@st.fragment(run_every=timedelta(seconds=3))
 def _agent_pipeline_fragment(run_id: str) -> None:
     """Fragment wrapper around agent pipeline progress.
 
-    Fetches fresh status data on each rerun.  Use the manual 'Refresh
-    progress' button to update the display.
+    Auto-refreshes every 3 s so the user sees live progress while the
+    agent pipeline is running.  Only this fragment re-renders — the rest
+    of the page stays stable.
     """
     _render_agent_pipeline_progress(run_id)
 
@@ -1091,9 +1103,6 @@ def _agent_pipeline_fragment(run_id: str) -> None:
 def _render_agent_pipeline_progress(run_id: str) -> None:
     """Fetch and display per-candidate agent pipeline status."""
     st.markdown("**Agent Pipeline Progress**")
-
-    if st.button("Refresh progress", key="refresh_agent_progress"):
-        st.rerun()
 
     data = _fetch(f"/api/curation/agents/status/{run_id}")
 
@@ -1185,6 +1194,10 @@ def _render_agent_pipeline_progress(run_id: str) -> None:
         if _running_stages:
             parts = [f"{label}: **{count}**" for label, count in _running_stages.items()]
             st.caption(" | ".join(parts))
+
+    # Live-update indicator.
+    if running > 0:
+        st.caption(":blue[Pipeline running — auto-refreshes every 3 s.]")
 
     # Collapsible failures section — only when failures exist.
     if failed > 0:
