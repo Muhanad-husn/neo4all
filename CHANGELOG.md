@@ -2,6 +2,20 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.5] - 2026-03-15
+
+### Added
+- DELETE `/api/documents/{run_id}/{doc_id}` endpoint to remove an ingested document (manifest, Qdrant chunks, extraction job statuses) so users can re-upload a corrected version
+- `_sync_delete_object` S3 helper in `api/storage/artifacts_helpers.py` (idempotent, treats NoSuchKey as success)
+- `ArtifactsService.delete_manifest()` method (S3 + Redis cache cleanup)
+- `VectorIndexer.delete_chunks_by_ids()` method (evidence-only, never raises)
+- `DeleteDocumentResponse` Pydantic model
+- "Delete & Re-upload" popover button per document in the ingestion chunk viewer (visible only during Phase 2)
+- Recommendation banner in chunk viewer advising users to convert file formats for better chunk quality
+- Unit tests for delete document feature (`tests/unit/test_delete_document.py`)
+
+---
+
 ## [1.0.4] - 2026-03-15
 
 ### Added

@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["health"])
 
-_VERSION = "1.0.4"
+_VERSION = "1.0.5"
 
 
 @router.get("/health", response_model=HealthResponse)

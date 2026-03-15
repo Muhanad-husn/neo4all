@@ -266,6 +266,51 @@ class VectorIndexer:
         )
 
     # ------------------------------------------------------------------
+    # Public: delete chunks by IDs
+    # ------------------------------------------------------------------
+
+    async def delete_chunks_by_ids(self, run_id: str, chunk_ids: list[str]) -> int:
+        """Delete chunk points from Qdrant by their deterministic IDs.
+
+        Evidence-only contract: never raises — logs ERROR on failure and
+        returns 0 (CLAUDE.md §4.1).
+
+        Args:
+            run_id:    Governed run identifier (determines collection name).
+            chunk_ids: List of 64-char SHA-256 chunk identifiers to delete.
+
+        Returns:
+            Count of chunk IDs submitted for deletion (0 on failure).
+
+        Log events:
+            chunks_deleted         INFO  — run_id, count
+            chunk_deletion_failed  ERROR — run_id, error
+        """
+        if not chunk_ids:
+            return 0
+
+        collection = f"chunks_{run_id}"
+        point_ids = [_chunk_id_to_point_id(cid) for cid in chunk_ids]
+
+        try:
+            from qdrant_client.models import PointIdsList  # type: ignore[import-untyped]
+
+            client = self._get_qdrant_client()
+            await client.delete(
+                collection_name=collection,
+                points_selector=PointIdsList(points=point_ids),
+            )
+            logger.info("chunks_deleted", run_id=run_id, count=len(point_ids))
+            return len(point_ids)
+        except Exception as exc:
+            logger.error(
+                "chunk_deletion_failed",
+                run_id=run_id,
+                error=str(exc),
+            )
+            return 0
+
+    # ------------------------------------------------------------------
     # Public: chunk retrieval (evidence-only read path)
     # ------------------------------------------------------------------
 

@@ -36,7 +36,7 @@ from api.observability.middleware import CorrelationMiddleware
 
 logger = get_logger(__name__)
 
-_VERSION = "1.0.4"
+_VERSION = "1.0.5"
 
 
 @asynccontextmanager

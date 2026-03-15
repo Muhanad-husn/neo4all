@@ -187,7 +187,11 @@ def _render_document_list(run_id: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _render_chunk_viewer(run_id: str, documents: list[dict[str, Any]]) -> None:
+def _render_chunk_viewer(
+    run_id: str,
+    documents: list[dict[str, Any]],
+    phase: Phase | None = None,
+) -> None:
     """Render per-document chunk manifests in collapsible expanders.
 
     Each document is represented by one st.expander. Opening it fetches chunk
@@ -199,6 +203,7 @@ def _render_chunk_viewer(run_id: str, documents: list[dict[str, Any]]) -> None:
     Args:
         run_id:    Governed run identifier.
         documents: Document dicts returned by _render_document_list.
+        phase:     Current Phase value; passed through to chunk renderer.
     """
     if not documents:
         return
@@ -210,6 +215,13 @@ def _render_chunk_viewer(run_id: str, documents: list[dict[str, Any]]) -> None:
         ":orange[Yellow rows] = low OCR confidence or low text density."
     )
 
+    st.info(
+        "If chunk quality is unsatisfactory, consider converting your file to a "
+        "different format (e.g., save as Markdown or DOCX) before re-uploading. "
+        "The parser produces better structural chunks from well-formatted documents.",
+        icon="\U0001f4a1",
+    )
+
     expand_all = st.toggle("Expand all documents", key="expand_all_chunks")
 
     for doc in documents:
@@ -219,7 +231,7 @@ def _render_chunk_viewer(run_id: str, documents: list[dict[str, Any]]) -> None:
         label = f"`{doc_id[:16]}…` — {chunk_count} {chunk_noun}"
 
         with st.expander(label, expanded=expand_all):
-            _render_single_doc_chunks(run_id=run_id, doc_id=doc_id)
+            _render_single_doc_chunks(run_id=run_id, doc_id=doc_id, phase=phase)
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +386,7 @@ def main() -> None:
     # second GET /api/documents/{run_id} call within the same render cycle.
     documents = _render_document_list(run_id)
     st.divider()
-    _render_chunk_viewer(run_id, documents)
+    _render_chunk_viewer(run_id, documents, phase=state.phase)
 
     # ── Proceed ──────────────────────────────────────────────────────────────
     _render_proceed_section(state, has_docs=bool(documents))

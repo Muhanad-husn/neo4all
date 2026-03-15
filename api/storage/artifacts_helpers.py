@@ -12,6 +12,7 @@ Sync I/O wrappers
 -----------------
   _sync_put_object(client, bucket, key, body, content_type)  → None | raise StorageError
   _sync_get_object(client, bucket, key)                      → bytes | None | raise StorageError
+  _sync_delete_object(client, bucket, key)                   → None | raise StorageError
 
 All sync wrappers are designed to be called via ``asyncio.to_thread``
 from async callers. They never perform async I/O themselves.
@@ -62,6 +63,30 @@ def _sync_put_object(
         raise StorageError(
             code="s3_put_failed",
             message=f"S3 put failed for key {key!r}: {exc}",
+        ) from exc
+
+
+def _sync_delete_object(client: Any, bucket: str, key: str) -> None:
+    """DELETE object from S3; raise StorageError on any boto3 failure.
+
+    Treats NoSuchKey as success (idempotent delete).
+    """
+    from api.storage.artifacts import StorageError
+
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in ("NoSuchKey", "404"):
+            return  # Already absent — idempotent success
+        raise StorageError(
+            code="s3_delete_failed",
+            message=f"S3 delete failed for key {key!r}: {exc}",
+        ) from exc
+    except BotoCoreError as exc:
+        raise StorageError(
+            code="s3_delete_failed",
+            message=f"S3 delete failed for key {key!r}: {exc}",
         ) from exc
 
 

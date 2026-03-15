@@ -43,6 +43,7 @@ from api.observability.logger import get_logger
 from api.storage.artifacts_helpers import (
     _manifest_key,
     _raw_document_key,
+    _sync_delete_object,
     _sync_get_object,
     _sync_put_object,
 )
@@ -275,6 +276,48 @@ class ArtifactsService:
             )
 
         return key
+
+    # ------------------------------------------------------------------
+    # delete_manifest
+    # ------------------------------------------------------------------
+
+    async def delete_manifest(self, run_id: str, doc_id: str) -> None:
+        """Delete a document manifest from S3 and Redis cache.
+
+        Idempotent: succeeds even if the manifest does not exist.
+
+        Args:
+            run_id: Governed run identifier.
+            doc_id: 64-char deterministic document identifier.
+
+        Raises:
+            StorageError: On S3 delete failure (not on cache failure).
+
+        Log events:
+            manifest_deleted  INFO  — run_id, doc_id, s3_key
+        """
+        key = _manifest_key(run_id, doc_id)
+        try:
+            await asyncio.to_thread(
+                _sync_delete_object, self._client, self._bucket, key
+            )
+        except StorageError as exc:
+            logger.error(
+                "storage_error",
+                run_id=run_id,
+                doc_id=doc_id,
+                s3_key=key,
+                error=exc.message,
+                operation="delete_manifest",
+            )
+            raise
+
+        # Invalidate Redis cache entry.
+        cache = get_cache_client()
+        cache_key = CacheKey.manifest(run_id=run_id, doc_id=doc_id)
+        await cache.delete(cache_key)
+
+        logger.info("manifest_deleted", run_id=run_id, doc_id=doc_id, s3_key=key)
 
     # ------------------------------------------------------------------
     # list_manifests_for_run

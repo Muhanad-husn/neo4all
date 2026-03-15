@@ -243,11 +243,12 @@ FastAPI auto-generates interactive docs at:
 
 #### Documents (Phase 2)
 
-| Method | Path                                      | Description                                        |
-| ------ | ----------------------------------------- | -------------------------------------------------- |
-| POST   | `/api/documents/ingest`                   | Parse, chunk, and index an uploaded document       |
-| GET    | `/api/documents/{run_id}`                 | List all successfully ingested documents for a run |
-| GET    | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights |
+| Method | Path                                      | Description                                               |
+| ------ | ----------------------------------------- | --------------------------------------------------------- |
+| POST   | `/api/documents/ingest`                   | Parse, chunk, and index an uploaded document              |
+| GET    | `/api/documents/{run_id}`                 | List all successfully ingested documents for a run        |
+| DELETE | `/api/documents/{run_id}/{doc_id}`        | Delete document manifest, chunks, and job statuses        |
+| GET    | `/api/documents/{run_id}/{doc_id}/chunks` | Return chunk metadata with quality flag highlights        |
 
 #### Extraction (Phase 3)
 

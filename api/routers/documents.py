@@ -1,6 +1,7 @@
 """
 api/routers/documents.py — POST /api/documents/ingest,
-GET /api/documents/{run_id}, GET /api/documents/{run_id}/{doc_id}/chunks,
+GET /api/documents/{run_id}, DELETE /api/documents/{run_id}/{doc_id},
+GET /api/documents/{run_id}/{doc_id}/chunks,
 GET /api/documents/{run_id}/chunk/{chunk_id}/text
 (SPEC-03 S-03.6).
 
@@ -47,10 +48,13 @@ from api.routers.documents_helpers import (
     _compute_quality_summary,
     _text_to_elements,
 )
+from api.cache.client import get_cache_client
+from api.cache.keys import CacheKey
 from api.routers.documents_models import (
     ChunkOut,
     ChunkTextResponse,
     ChunksResponse,
+    DeleteDocumentResponse,
     DocumentSummary,
     IngestDocumentRequest,
     IngestDocumentResponse,
@@ -360,6 +364,125 @@ async def list_documents(
         status="success",
         documents=documents,
         total_count=len(documents),
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/documents/{run_id}/{doc_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/{run_id}/{doc_id}",
+    response_model=DeleteDocumentResponse,
+    summary="Delete an ingested document and its associated chunks and job statuses",
+    responses={
+        404: {
+            "model": DeleteDocumentResponse,
+            "description": "No manifest found for doc_id in this run",
+        },
+        503: {
+            "model": DeleteDocumentResponse,
+            "description": "S3 storage unavailable",
+        },
+    },
+)
+async def delete_document(
+    run_id: str,
+    doc_id: str,
+    response: Response,
+    artifacts: ArtifactsService = Depends(get_artifacts_service),
+    indexer: VectorIndexer = Depends(get_vector_indexer),
+) -> DeleteDocumentResponse:
+    """Delete an ingested document's manifest, chunks, and job statuses.
+
+    Clears: Qdrant chunk points, extraction job status keys (Redis),
+    manifest (S3 + Redis). Raw document bytes in S3 are retained for
+    audit trail (immutable artifacts per CLAUDE.md).
+    """
+    logger.info("delete_document_requested", run_id=run_id, doc_id=doc_id)
+
+    # --- Retrieve manifest to get chunk_ids ---
+    try:
+        manifest = await artifacts.retrieve_manifest(run_id, doc_id)
+    except StorageError as exc:
+        logger.error(
+            "delete_document_storage_error",
+            run_id=run_id,
+            doc_id=doc_id,
+            error=exc.message,
+        )
+        response.status_code = 503
+        return DeleteDocumentResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code=exc.code, message=exc.message)],
+        )
+
+    if manifest is None:
+        logger.warning("delete_document_not_found", run_id=run_id, doc_id=doc_id)
+        response.status_code = 404
+        return DeleteDocumentResponse(
+            run_id=run_id,
+            status="error",
+            doc_id=doc_id,
+            errors=[
+                ErrorDetail(
+                    code="document_not_found",
+                    message=(
+                        f"No manifest found for doc_id={doc_id!r} in run {run_id!r}."
+                    ),
+                )
+            ],
+        )
+
+    chunk_ids = list(manifest.chunk_ids)
+
+    # --- Delete chunks from Qdrant ---
+    chunks_deleted = await indexer.delete_chunks_by_ids(run_id, chunk_ids)
+
+    # --- Delete extraction job statuses from Redis ---
+    cache = get_cache_client()
+    jobs_cleared = 0
+    for chunk_id in chunk_ids:
+        key = CacheKey.job_status(run_id=run_id, chunk_id=chunk_id)
+        if await cache.delete(key):
+            jobs_cleared += 1
+
+    # --- Delete manifest from S3 + Redis ---
+    try:
+        await artifacts.delete_manifest(run_id, doc_id)
+    except StorageError as exc:
+        logger.error(
+            "delete_document_manifest_error",
+            run_id=run_id,
+            doc_id=doc_id,
+            error=exc.message,
+        )
+        response.status_code = 503
+        return DeleteDocumentResponse(
+            run_id=run_id,
+            status="error",
+            doc_id=doc_id,
+            chunks_deleted=chunks_deleted,
+            jobs_cleared=jobs_cleared,
+            errors=[ErrorDetail(code=exc.code, message=exc.message)],
+        )
+
+    logger.info(
+        "delete_document_complete",
+        run_id=run_id,
+        doc_id=doc_id,
+        chunks_deleted=chunks_deleted,
+        jobs_cleared=jobs_cleared,
+    )
+
+    return DeleteDocumentResponse(
+        run_id=run_id,
+        status="success",
+        doc_id=doc_id,
+        chunks_deleted=chunks_deleted,
+        jobs_cleared=jobs_cleared,
     )
 
 

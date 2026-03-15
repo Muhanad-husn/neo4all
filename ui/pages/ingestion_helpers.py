@@ -88,6 +88,21 @@ def _post_ingest(
         return None
 
 
+def _delete_document(run_id: str, doc_id: str) -> dict[str, Any] | None:
+    """Send DELETE to /api/documents/{run_id}/{doc_id}.
+
+    Returns parsed JSON on any HTTP response, None on network failure.
+    """
+    try:
+        with httpx.Client(timeout=_REQUEST_TIMEOUT_FAST) as client:
+            response = client.delete(
+                f"{_API_BASE_URL}/api/documents/{run_id}/{doc_id}",
+            )
+            return response.json()  # type: ignore[no-any-return]
+    except Exception:
+        return None
+
+
 def _get(path: str) -> dict[str, Any] | None:
     """GET from the backend API and return parsed JSON on success, else None.
 
@@ -340,7 +355,11 @@ def _handle_ingest(
 # ---------------------------------------------------------------------------
 
 
-def _render_single_doc_chunks(run_id: str, doc_id: str) -> None:
+def _render_single_doc_chunks(
+    run_id: str,
+    doc_id: str,
+    phase: Any = None,
+) -> None:
     """Fetch and render chunk metadata for a single document.
 
     Calls GET /api/documents/{run_id}/{doc_id}/chunks. Renders a quality flag
@@ -348,9 +367,13 @@ def _render_single_doc_chunks(run_id: str, doc_id: str) -> None:
     DataFrame. Uses pandas Styler to apply row-level background colors
     without modifying any data.
 
+    When phase is Phase.INGESTION, a "Delete & Re-upload" button is shown
+    after the chunk table so the user can remove this document and try again.
+
     Args:
         run_id: Governed run identifier.
         doc_id: Full 64-character doc_id of the target document.
+        phase:  Current Phase value; delete button shown only during INGESTION.
     """
     with st.spinner("Loading chunks\u2026"):
         data = _get(f"/api/documents/{run_id}/{doc_id}/chunks")
@@ -416,3 +439,30 @@ def _render_single_doc_chunks(run_id: str, doc_id: str) -> None:
             ),
         },
     )
+
+    # --- Delete button (only during Ingestion phase) ---
+    from api.models.run import Phase
+
+    if phase == Phase.INGESTION:
+        btn_key = f"del_{doc_id[:16]}"
+
+        with st.popover("Delete & Re-upload", help="Remove this document so you can re-upload a corrected version."):
+            st.warning(
+                "This will delete the document's manifest, chunks, and "
+                "job statuses. Raw bytes are retained for audit."
+            )
+            if st.button("Confirm delete", key=btn_key, type="primary"):
+                with st.spinner("Deleting document\u2026"):
+                    result = _delete_document(run_id, doc_id)
+                if result is None:
+                    st.error("Cannot reach the backend API.")
+                elif result.get("status") == "error":
+                    _show_api_errors(result)
+                else:
+                    cd = result.get("chunks_deleted", 0)
+                    jc = result.get("jobs_cleared", 0)
+                    st.success(
+                        f"Document deleted \u2014 {cd} chunks removed, "
+                        f"{jc} job statuses cleared."
+                    )
+                    st.rerun()

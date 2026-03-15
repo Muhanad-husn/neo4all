@@ -2,12 +2,13 @@
 api/routers/documents_models.py — Pydantic request/response models for document
 ingestion endpoints (SKILL-A R-A1, R-A2, R-A5).
 
-Three endpoint contracts are defined here and co-located with the route
+Four endpoint contracts are defined here and co-located with the route
 handler (SKILL-A R-A5):
 
-  POST /api/documents/ingest              → IngestDocumentRequest  / IngestDocumentResponse
-  GET  /api/documents/{run_id}            → (path param only)      / ListDocumentsResponse
-  GET  /api/documents/{run_id}/{doc_id}/chunks → (path params only) / ChunksResponse
+  POST   /api/documents/ingest                    → IngestDocumentRequest  / IngestDocumentResponse
+  GET    /api/documents/{run_id}                   → (path param only)      / ListDocumentsResponse
+  DELETE /api/documents/{run_id}/{doc_id}          → (path params only)     / DeleteDocumentResponse
+  GET    /api/documents/{run_id}/{doc_id}/chunks   → (path params only)     / ChunksResponse
 
 Shared payload types
 --------------------
@@ -228,6 +229,20 @@ class ChunksResponse(BaseResponse):
 # ---------------------------------------------------------------------------
 # GET /api/documents/{run_id}/chunk/{chunk_id}/text
 # ---------------------------------------------------------------------------
+
+
+class DeleteDocumentResponse(BaseResponse):
+    """Response for DELETE /api/documents/{run_id}/{doc_id}.
+
+    Attributes:
+        doc_id:         64-char SHA-256 deterministic identifier.
+        chunks_deleted: Number of chunk point IDs submitted for Qdrant deletion.
+        jobs_cleared:   Number of extraction job status keys cleared from cache.
+    """
+
+    doc_id: str = ""
+    chunks_deleted: int = 0
+    jobs_cleared: int = 0
 
 
 class ChunkTextResponse(BaseResponse):
