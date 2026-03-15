@@ -65,6 +65,7 @@ class RunAgentPipelineRequest(BaseModel):
     model_a: str | None = None
     model_b: str | None = None
     model_p: str | None = None
+    confirm_archive: bool = False
 
 
 class RunAgentPipelineResponse(BaseResponse):
@@ -81,6 +82,8 @@ class RunAgentPipelineResponse(BaseResponse):
     model_a: str = ""
     model_b: str = ""
     model_p: str = ""
+    existing_proposal_count: int = 0
+    pending_archive: bool = False
 
 
 class AgentModelConfigOut(BaseModel):
@@ -404,6 +407,44 @@ async def run_agent_pipeline(
                     ),
                 )
             ],
+        )
+
+    # 1b. Check for existing proposals — require explicit confirmation to archive.
+    from api.proposals.service import ProposalService
+
+    proposal_svc = ProposalService()
+    existing_proposals = await proposal_svc.list_for_run(run_id)
+
+    if existing_proposals and not request.confirm_archive:
+        logger.info(
+            "agent_pipeline_pending_archive",
+            run_id=run_id,
+            existing_count=len(existing_proposals),
+        )
+        response.status_code = 409
+        return RunAgentPipelineResponse(
+            run_id=run_id,
+            status="error",
+            existing_proposal_count=len(existing_proposals),
+            pending_archive=True,
+            errors=[
+                ErrorDetail(
+                    code="pending_archive",
+                    message=(
+                        f"There are {len(existing_proposals)} existing proposal(s) "
+                        "from a previous pipeline run. Set confirm_archive=true to "
+                        "archive them and proceed."
+                    ),
+                )
+            ],
+        )
+
+    if existing_proposals and request.confirm_archive:
+        archived_count = await proposal_svc.archive_for_run(run_id)
+        logger.info(
+            "agent_pipeline_proposals_archived",
+            run_id=run_id,
+            archived_count=archived_count,
         )
 
     # 2. Load cached candidates — scan all stage cache keys.

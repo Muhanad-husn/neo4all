@@ -41,8 +41,11 @@ from api.proposals.models import (
     allowed_transitions,
 )
 from api.proposals.storage import (
+    ArchiveManifest,
     ProposalStorageError,
     _ProposalIndex,
+    _archive_manifest_key,
+    _archive_s3_key,
     _proposal_s3_key,
     _sync_get_proposal,
     _sync_put_proposal,
@@ -395,6 +398,104 @@ class ProposalService:
             to_state=str(target),
         )
         return new_packet
+
+    # ------------------------------------------------------------------
+    # archive_for_run
+    # ------------------------------------------------------------------
+
+    async def archive_for_run(self, run_id: str) -> int:
+        """Archive all proposals for a run to a timestamped S3 prefix.
+
+        Copies each proposal to ``{run_id}/proposals_archive/{timestamp}/``,
+        writes an ArchiveManifest, then deletes the originals from S3 and
+        Redis.
+
+        Args:
+            run_id: Governed run identifier.
+
+        Returns:
+            Number of proposals archived.
+
+        Log events:
+            proposals_archive_started  INFO — run_id
+            proposals_archive_complete INFO — run_id, count, timestamp
+        """
+        from datetime import UTC, datetime
+
+        logger.info("proposals_archive_started", run_id=run_id)
+
+        index = await self._cache.get(
+            CacheKey.proposals_index(run_id), model=_ProposalIndex
+        )
+        if index is None or not index.proposal_ids:
+            logger.info("proposals_archive_complete", run_id=run_id, count=0, timestamp="")
+            return 0
+
+        # S3-safe timestamp (no colons).
+        timestamp = datetime.now(UTC).isoformat().replace(":", "-")
+
+        archived = 0
+        archived_ids: list[str] = []
+        for pid in index.proposal_ids:
+            # Read original from S3.
+            src_key = _proposal_s3_key(run_id, pid)
+            raw = await asyncio.to_thread(
+                _sync_get_proposal, self._client, self._bucket, src_key
+            )
+            if raw is None:
+                continue
+
+            # Write to archive prefix.
+            dst_key = _archive_s3_key(run_id, timestamp, pid)
+            await asyncio.to_thread(
+                _sync_put_proposal, self._client, self._bucket, dst_key, raw
+            )
+
+            # Delete original S3 object.
+            try:
+                await asyncio.to_thread(
+                    self._client.delete_object,
+                    Bucket=self._bucket,
+                    Key=src_key,
+                )
+            except Exception:
+                logger.warning(
+                    "proposal_archive_delete_error",
+                    proposal_id=pid,
+                    run_id=run_id,
+                )
+
+            # Delete Redis cache entry.
+            await self._cache.delete(CacheKey.proposal(pid))
+            archived += 1
+            archived_ids.append(pid)
+
+        # Write archive manifest.
+        manifest = ArchiveManifest(
+            run_id=run_id,
+            archived_at=timestamp,
+            proposal_count=archived,
+            proposal_ids=archived_ids,
+        )
+        manifest_key = _archive_manifest_key(run_id, timestamp)
+        await asyncio.to_thread(
+            _sync_put_proposal,
+            self._client,
+            self._bucket,
+            manifest_key,
+            manifest.model_dump_json().encode("utf-8"),
+        )
+
+        # Delete the proposals index from Redis.
+        await self._cache.delete(CacheKey.proposals_index(run_id))
+
+        logger.info(
+            "proposals_archive_complete",
+            run_id=run_id,
+            count=archived,
+            timestamp=timestamp,
+        )
+        return archived
 
     # ------------------------------------------------------------------
     # clear_for_run

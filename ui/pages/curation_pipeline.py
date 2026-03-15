@@ -1046,31 +1046,21 @@ def _render_agent_model_config(run_id: str) -> None:
                 if cid:
                     _all_candidate_ids.append(cid)
 
-    # Trigger button.
-    if st.button(
-        "Curate",
-        type="primary",
-        key="run_agent_pipeline",
-        disabled=pipeline_busy,
-        help=(
-            "Enqueues all detected candidates for processing by the AI agent chain. "
-            "Progress is shown below and in the Dashboard."
-        )
-        if not pipeline_busy
-        else "Pipeline is already running — wait for it to finish.",
-    ):
+    # Build the base payload for pipeline trigger calls.
+    def _build_pipeline_payload(confirm_archive: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "run_id": run_id,
             "model_a": model_a.strip() or None,
             "model_b": model_b.strip() or None,
             "model_p": model_p.strip() or None,
+            "confirm_archive": confirm_archive,
         }
         if _all_candidate_ids:
             payload["candidate_ids"] = _all_candidate_ids
+        return payload
 
-        with st.spinner("Enqueuing agent pipeline jobs..."):
-            data, err = _post("/api/curation/agents/run", payload)
-
+    def _handle_pipeline_response(data: dict[str, Any] | None, err: str | None) -> None:
+        """Display success/error for a pipeline trigger response."""
         if err or data is None:
             st.error(f"Pipeline trigger failed: {err or 'No response from API.'}")
         elif data.get("status") == "error":
@@ -1084,6 +1074,50 @@ def _render_agent_model_config(run_id: str) -> None:
                 f"B={data.get('model_b', '?')}, "
                 f"P={data.get('model_p', '?')}"
             )
+
+    @st.dialog("Archive Previous Proposals")
+    def _confirm_archive_proposals(proposal_count: int) -> None:
+        st.warning(
+            f"There are **{proposal_count}** existing proposal(s) from a previous "
+            "pipeline run. These will be archived before the new pipeline starts."
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Confirm & Run", type="primary", key="confirm_archive_run"):
+                with st.spinner("Archiving proposals and starting pipeline..."):
+                    data, err = _post(
+                        "/api/curation/agents/run",
+                        _build_pipeline_payload(confirm_archive=True),
+                    )
+                _handle_pipeline_response(data, err)
+                st.rerun()
+        with col2:
+            if st.button("Cancel", key="cancel_archive"):
+                st.rerun()
+
+    # Trigger button.
+    if st.button(
+        "Curate",
+        type="primary",
+        key="run_agent_pipeline",
+        disabled=pipeline_busy,
+        help=(
+            "Enqueues all detected candidates for processing by the AI agent chain. "
+            "Progress is shown below and in the Dashboard."
+        )
+        if not pipeline_busy
+        else "Pipeline is already running — wait for it to finish.",
+    ):
+        with st.spinner("Enqueuing agent pipeline jobs..."):
+            data, err = _post(
+                "/api/curation/agents/run",
+                _build_pipeline_payload(confirm_archive=False),
+            )
+
+        if data is not None and data.get("pending_archive"):
+            _confirm_archive_proposals(data.get("existing_proposal_count", 0))
+        else:
+            _handle_pipeline_response(data, err)
 
     # Agent pipeline progress — fragment fetches its own data on each rerun.
     _agent_pipeline_fragment(run_id)

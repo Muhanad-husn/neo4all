@@ -66,6 +66,25 @@ def _proposal_s3_key(run_id: str, proposal_id: str) -> str:
     return f"{run_id}/proposals/{proposal_id}.json"
 
 
+def _archive_s3_key(run_id: str, timestamp: str, proposal_id: str) -> str:
+    """S3 key for an archived proposal inside a timestamped prefix."""
+    return f"{run_id}/proposals_archive/{timestamp}/{proposal_id}.json"
+
+
+def _archive_manifest_key(run_id: str, timestamp: str) -> str:
+    """S3 key for the archive manifest."""
+    return f"{run_id}/proposals_archive/{timestamp}/manifest.json"
+
+
+class ArchiveManifest(BaseModel):
+    """Metadata written alongside archived proposals."""
+
+    run_id: str
+    archived_at: str
+    proposal_count: int
+    proposal_ids: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Synchronous S3 helpers — always run inside asyncio.to_thread
 # ---------------------------------------------------------------------------
