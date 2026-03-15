@@ -142,8 +142,8 @@ A Proposal Packet (from Agent-P) contains:
 | Approval Gate | Human | Approve / Reject / Defer |
 | Agent-C | Tools-only | Apply approved diff (no reasoning) |
 
-**Current flow**: Orchestrator → Agent-A → Structural Rec → Agent-P → Diff Builder → Approval Gate → Agent-C.
-Agent-B is skipped (registered but not enqueued). It will activate when curation-panel document ingestion is implemented, allowing users to add new evidence documents that Agent-B can search.
+**Current flow**: Orchestrator → Agent-A → Structural Rec → [Agent-B] → Agent-P → Diff Builder → Approval Gate → Agent-C.
+Agent-B is conditionally routed: when `ENABLE_AGENT_B=True` and Agent-A returns `sufficient=False`, the pipeline enqueues `retrieval_augmentation_job` (Agent-B) before proposal composition. Otherwise Agent-B is skipped and the pipeline goes directly to Agent-P. Default is `False` (skipped) for safe rollout.
 
 Agent-C requires: `run_id`, `schema_version`, valid `approval_id`, post-apply invariant checks.
 
@@ -246,6 +246,9 @@ ENABLE_DOCLING             # true/false — enable Docling tier (default true)
 ENABLE_UNSTRUCTURED        # true/false — enable Unstructured tier (default true)
 ENABLE_RAW_FALLBACK        # true/false — enable raw-text fallback tier (default true)
 EMBEDDING_MODEL            # sentence-transformers model name (default all-MiniLM-L6-v2)
+
+# Agent pipeline (SPEC-07)
+ENABLE_AGENT_B             # true/false — enable Agent-B retrieval augmentation (default false)
 
 # Dry-run mode (SPEC-08)
 DRY_RUN                    # true/false — skip graph mutations, log diffs to S3 (default false)

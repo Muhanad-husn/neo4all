@@ -1102,3 +1102,145 @@ class TestPipelineContinuity:
         output = _load_agent_proposal()
         # Should not raise — fixture has clean rationale.
         _guard_no_cypher_or_executable(output)
+
+
+# ===========================================================================
+# Agent-B routing decision tests (ENABLE_AGENT_B feature gate)
+# ===========================================================================
+
+
+class TestAgentBRoutingDecision:
+    """evidence_assembly_job routes to Agent-B or Agent-P based on flag + sufficiency."""
+
+    _PATCHES = (
+        "api.worker.jobs_agents.sync_credentials_from_redis",
+        "api.worker.jobs_agents.set_correlation_id",
+        "api.worker.jobs_agents._get_agent_job_status",
+        "api.worker.jobs_agents._set_agent_job_status",
+        "api.worker.jobs_agents._check_budget",
+    )
+
+    def _run_patches(
+        self,
+        report: EvidenceReport,
+        enable_agent_b: bool,
+    ) -> tuple[dict[str, Any], AsyncMock]:
+        """Return (ctx, mock_redis) with all necessary patches applied as a context manager stack."""
+        import contextlib
+
+        mock_redis = AsyncMock()
+        mock_redis.enqueue_job = AsyncMock()
+        ctx: dict[str, Any] = {"redis": mock_redis}
+
+        # Build a stack of patches.
+        stack = contextlib.ExitStack()
+        for p in self._PATCHES:
+            # set_correlation_id and _check_budget are synchronous.
+            is_async = p not in (
+                "api.worker.jobs_agents.set_correlation_id",
+                "api.worker.jobs_agents._check_budget",
+            )
+            m = stack.enter_context(
+                patch(p, new_callable=AsyncMock if is_async else MagicMock),
+            )
+            # _get_agent_job_status must return None (no prior run).
+            if p.endswith("_get_agent_job_status"):
+                m.return_value = None
+            # _check_budget must return True.
+            if p.endswith("_check_budget"):
+                m.return_value = True
+
+        # The job does a local `from api.agents.evidence import
+        # EvidenceAssemblyAgent`.  We inject a mock module into sys.modules
+        # so the import resolves without needing yaml/other heavy deps.
+        import sys
+
+        mock_evidence_mod = MagicMock()
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run = AsyncMock(return_value=report)
+        mock_evidence_mod.EvidenceAssemblyAgent.return_value = mock_agent_instance
+        stack.enter_context(
+            patch.dict(sys.modules, {"api.agents.evidence": mock_evidence_mod}),
+        )
+
+        # Patch get_settings inside the function body.
+        mock_settings = stack.enter_context(
+            patch("api.config.get_settings"),
+        )
+        settings_obj = MagicMock()
+        settings_obj.ENABLE_AGENT_B = enable_agent_b
+        mock_settings.return_value = settings_obj
+
+        return ctx, mock_redis, stack  # type: ignore[return-value]
+
+    @pytest.mark.asyncio
+    async def test_insufficient_and_enabled_routes_to_agent_b(self) -> None:
+        """insufficient + ENABLE_AGENT_B=True → enqueues retrieval_augmentation_job."""
+        from api.worker.jobs_agents import evidence_assembly_job
+
+        candidate = _make_candidate()
+        decision = _make_decision(candidate)
+        report = _make_evidence_report(
+            candidate, decision, sufficient=False, sufficiency_score=0.2,
+        )
+
+        ctx, mock_redis, stack = self._run_patches(report, enable_agent_b=True)
+        with stack:
+            await evidence_assembly_job(
+                ctx,
+                run_id=_RUN_ID,
+                candidate_json=candidate.model_dump_json(),
+                decision_json=decision.model_dump_json(),
+                correlation_id="test-corr-001",
+            )
+
+        mock_redis.enqueue_job.assert_called_once()
+        assert mock_redis.enqueue_job.call_args[0][0] == "retrieval_augmentation_job"
+
+    @pytest.mark.asyncio
+    async def test_insufficient_and_disabled_routes_to_proposal(self) -> None:
+        """insufficient + ENABLE_AGENT_B=False → enqueues proposal_composition_job."""
+        from api.worker.jobs_agents import evidence_assembly_job
+
+        candidate = _make_candidate()
+        decision = _make_decision(candidate)
+        report = _make_evidence_report(
+            candidate, decision, sufficient=False, sufficiency_score=0.2,
+        )
+
+        ctx, mock_redis, stack = self._run_patches(report, enable_agent_b=False)
+        with stack:
+            await evidence_assembly_job(
+                ctx,
+                run_id=_RUN_ID,
+                candidate_json=candidate.model_dump_json(),
+                decision_json=decision.model_dump_json(),
+                correlation_id="test-corr-002",
+            )
+
+        mock_redis.enqueue_job.assert_called_once()
+        assert mock_redis.enqueue_job.call_args[0][0] == "proposal_composition_job"
+
+    @pytest.mark.asyncio
+    async def test_sufficient_and_enabled_routes_to_proposal(self) -> None:
+        """sufficient + ENABLE_AGENT_B=True → enqueues proposal_composition_job."""
+        from api.worker.jobs_agents import evidence_assembly_job
+
+        candidate = _make_candidate()
+        decision = _make_decision(candidate)
+        report = _make_evidence_report(
+            candidate, decision, sufficient=True, sufficiency_score=0.9,
+        )
+
+        ctx, mock_redis, stack = self._run_patches(report, enable_agent_b=True)
+        with stack:
+            await evidence_assembly_job(
+                ctx,
+                run_id=_RUN_ID,
+                candidate_json=candidate.model_dump_json(),
+                decision_json=decision.model_dump_json(),
+                correlation_id="test-corr-003",
+            )
+
+        mock_redis.enqueue_job.assert_called_once()
+        assert mock_redis.enqueue_job.call_args[0][0] == "proposal_composition_job"

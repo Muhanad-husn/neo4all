@@ -258,16 +258,26 @@ async def evidence_assembly_job(
             sufficient=report.sufficient,
         )
 
-        # Chain: always go straight to proposal composition.
-        # Agent-B (retrieval augmentation) is skipped — the structural
-        # recommendation from collision_context is the primary input for
-        # Agent-P.  Agent-B will be re-enabled when curation-panel
-        # document ingestion allows users to add new evidence.
+        # Chain: route to Agent-B or straight to proposal composition.
+        # When ENABLE_AGENT_B is True and evidence is insufficient, the
+        # pipeline routes through retrieval augmentation (Agent-B) to
+        # search for complementary evidence before proposal composition.
+        from api.config import get_settings
+
+        settings = get_settings()
         redis = ctx["redis"]
         evidence_report_json = report.model_dump_json()
 
+        agent_b_enabled = settings.ENABLE_AGENT_B
+        route_to_agent_b = agent_b_enabled and not report.sufficient
+
+        if route_to_agent_b:
+            next_job = "retrieval_augmentation_job"
+        else:
+            next_job = "proposal_composition_job"
+
         await redis.enqueue_job(
-            "proposal_composition_job",
+            next_job,
             run_id=run_id,
             candidate_json=candidate_json,
             decision_json=decision_json,
@@ -278,8 +288,9 @@ async def evidence_assembly_job(
             "agent_chain_enqueued",
             run_id=run_id,
             candidate_id=candidate_id,
-            next_job="proposal_composition_job",
-            retrieval_skipped=True,
+            next_job=next_job,
+            evidence_sufficient=report.sufficient,
+            agent_b_enabled=agent_b_enabled,
         )
 
     except Exception as exc:

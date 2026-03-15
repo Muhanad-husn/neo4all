@@ -167,6 +167,14 @@ class Settings(BaseSettings):
     ENABLE_RAW_FALLBACK: bool = True
 
     # -------------------------------------------------------------------------
+    # Agent-B feature gate (SPEC-07)
+    # When True and Agent-A returns insufficient evidence, the pipeline routes
+    # to Agent-B (retrieval augmentation) before proposal composition.
+    # Default False for safe rollout — operators opt in when ready.
+    # -------------------------------------------------------------------------
+    ENABLE_AGENT_B: bool = False
+
+    # -------------------------------------------------------------------------
     # Vector indexing — sentence-transformers embedding model (SPEC-03 S-03.5)
     # Must match the model used at query time so vectors are comparable.
     # Changing this after indexing requires re-ingestion of all documents.
