@@ -15,11 +15,19 @@ _compute_quality_flags_summary — Aggregate flag counts from ChunkOut list (chu
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from api.models.document import ChunkQualityFlag, derive_parser_config_hash
 from api.routers.documents_models import ChunkOut, QualityFlagsSummary, QualitySummary
 from api.services.chunking import ParsedElement, ParsedElementType
+
+# ---------------------------------------------------------------------------
+# Markdown structure detection regexes (used by _classify_element)
+# ---------------------------------------------------------------------------
+_RE_HEADING = re.compile(r"^#{1,6}\s+\S")
+_RE_TABLE_SEP = re.compile(r"^\|?[\s\-:]+(\|[\s\-:]+)+\|?\s*$", re.MULTILINE)
+_RE_LIST_ITEM = re.compile(r"^(\s*[-*+]\s+|\s*\d+[.)]\s+)")
 
 
 def _compute_parser_config_hash() -> str:
@@ -41,12 +49,45 @@ def _compute_parser_config_hash() -> str:
     )
 
 
+def _classify_element(text: str) -> ParsedElementType:
+    """Classify a text block by its Markdown structure.
+
+    Checks the first non-empty line against compiled regexes in priority
+    order: heading > table > list_item > paragraph.  This is deterministic —
+    same input always yields the same type.
+    """
+    first_line = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            first_line = stripped
+            break
+
+    if not first_line:
+        return ParsedElementType.paragraph
+
+    if _RE_HEADING.match(first_line):
+        return ParsedElementType.heading
+
+    if _RE_TABLE_SEP.search(text):
+        return ParsedElementType.table
+
+    if _RE_LIST_ITEM.match(first_line):
+        return ParsedElementType.list_item
+
+    return ParsedElementType.paragraph
+
+
 def _text_to_elements(text: str) -> list[ParsedElement]:
     """Convert extracted text to a ParsedElement list for ChunkingService.
 
     Splits on double newlines (the paragraph separator used by all three
     parser tiers) so ChunkingService receives multiple elements and
     size-based chunking can operate across paragraph boundaries.
+
+    Each block is classified by its Markdown structure (heading, table,
+    list_item, or paragraph) so that ChunkingService's heading-aware
+    grouping logic can create proper chunk boundaries.
 
     All elements receive ``page=0``.  For raw_text output this satisfies the
     ChunkingService contract ("set page=0 explicitly on the raw_text path").
@@ -57,7 +98,7 @@ def _text_to_elements(text: str) -> list[ParsedElement]:
         text: Extracted text from IngestResult.extracted_text.
 
     Returns:
-        Non-empty list of paragraph ParsedElements; falls back to a single
+        Non-empty list of classified ParsedElements; falls back to a single
         element wrapping the whole text when no double-newline separators
         are present.
     """
@@ -68,7 +109,7 @@ def _text_to_elements(text: str) -> list[ParsedElement]:
 
     return [
         ParsedElement(
-            element_type=ParsedElementType.paragraph,
+            element_type=_classify_element(p),
             text=p,
             page=0,
         )
