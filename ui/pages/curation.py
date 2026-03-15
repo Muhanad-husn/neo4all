@@ -29,6 +29,7 @@ import httpx
 import streamlit as st
 
 from api.models.run import Phase
+from ui.components.candidate_summary import method_label, summarize_candidate
 from ui.state import StateManager
 
 # ---------------------------------------------------------------------------
@@ -307,9 +308,8 @@ def _render_candidate_group(
             {
                 "ID": c.get("candidate_id", "")[:12] + "…",
                 "Severity": c.get("severity", "").upper(),
-                "Method": c.get("detection_method", ""),
-                "Elements": _format_refs(c.get("involved_element_refs", [])),
-                "Context": _format_context(c.get("collision_context", {})),
+                "Summary": summarize_candidate(c),
+                "Method": method_label(c.get("detection_method", "")),
             }
             for c in candidates
         ]

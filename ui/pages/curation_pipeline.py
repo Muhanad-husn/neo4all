@@ -37,6 +37,11 @@ from typing import Any
 
 import streamlit as st
 
+from ui.components.candidate_summary import (
+    method_label,
+    short_summary,
+    summarize_candidate,
+)
 from ui.components.monitoring_helpers import format_duration
 from ui.pages.curation import (
     _delete,
@@ -827,9 +832,7 @@ def _render_candidate_detail_section(
         none_opt: none_opt,
         **{
             c["candidate_id"]: (
-                f"{c['candidate_id'][:14]}…  "
-                f"[{c['severity'].upper()}]  "
-                f"{_TYPE_LABELS.get(c['candidate_type'], c['candidate_type'])}"
+                f"[{c['severity'].upper()}] {short_summary(c)}"
             )
             for c in all_candidates
         },
@@ -855,22 +858,24 @@ def _render_candidate_detail_section(
 
     # --- Candidate detail ---
     st.markdown("**Candidate Details**")
+    st.info(summarize_candidate(candidate))
     col_type, col_sev, col_lane = st.columns(3)
     col_type.write(f"**Type:** {_TYPE_LABELS.get(candidate['candidate_type'], candidate['candidate_type'])}")
     col_sev.write(f"**Severity:** {_SEVERITY_BADGE.get(candidate['severity'], candidate['severity'])}")
     col_lane.write(f"**Lane:** {candidate.get('candidate_lane', '')}")
-    st.caption(f"Method: {candidate.get('detection_method', '')}")
+    st.caption(f"Detection: {method_label(candidate.get('detection_method', ''))}")
 
-    refs = candidate.get("involved_element_refs", [])
-    if refs:
-        st.markdown("**Involved elements:**")
-        for ref in refs:
-            st.code(ref, language=None)
+    with st.expander("Technical details", expanded=False):
+        refs = candidate.get("involved_element_refs", [])
+        if refs:
+            st.markdown("**Involved elements:**")
+            for ref in refs:
+                st.code(ref, language=None)
 
-    ctx = candidate.get("collision_context", {})
-    if ctx:
-        st.markdown("**Detection context:**")
-        st.json(ctx)
+        ctx = candidate.get("collision_context", {})
+        if ctx:
+            st.markdown("**Detection context:**")
+            st.json(ctx)
 
     st.divider()
 
