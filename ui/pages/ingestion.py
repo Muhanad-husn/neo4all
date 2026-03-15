@@ -251,12 +251,15 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
         )
         return
 
+    is_reentry = state.reentry_source is not None
+    btn_label = (
+        "Continue to Extraction (process new chunks) →"
+        if is_reentry
+        else "Proceed to Phase 3: AI-Assisted Extraction →"
+    )
+
     if not has_docs:
-        st.button(
-            "Proceed to Phase 3: AI-Assisted Extraction →",
-            type="primary",
-            disabled=True,
-        )
+        st.button(btn_label, type="primary", disabled=True)
         st.caption("Ingest at least one document to enable this button.")
         return
 
@@ -266,11 +269,7 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
         if s.phase == Phase.INGESTION:
             s.advance_phase(Phase.EXTRACTION)
 
-    st.button(
-        "Proceed to Phase 3: AI-Assisted Extraction →",
-        type="primary",
-        on_click=_do_advance,
-    )
+    st.button(btn_label, type="primary", on_click=_do_advance)
 
 
 # ---------------------------------------------------------------------------
@@ -325,12 +324,21 @@ def main() -> None:
     state = StateManager.get()
 
     st.title("Phase 2 — Document Ingestion & Chunking")
-    st.write(
-        "Upload your source documents. "
-        "Each file is parsed using a three-tier chain "
-        "(Docling → Unstructured → raw text), chunked semantically, "
-        "and indexed for AI-assisted extraction in Phase 3."
-    )
+
+    if state.reentry_source is not None:
+        st.info(
+            "You are adding more documents to this run. "
+            "Upload new files below, then proceed to extraction. "
+            "Only new chunks will be processed — existing work is preserved.",
+            icon="↩",
+        )
+    else:
+        st.write(
+            "Upload your source documents. "
+            "Each file is parsed using a three-tier chain "
+            "(Docling → Unstructured → raw text), chunked semantically, "
+            "and indexed for AI-assisted extraction in Phase 3."
+        )
 
     run_id = state.run_id
     if not run_id:

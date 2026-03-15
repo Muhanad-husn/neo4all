@@ -72,6 +72,8 @@ _K_DISMISSED_PROPOSALS = "_sm_dismissed_proposals"  # set[str]
 _K_PENDING_CONFIRMATIONS = "_sm_pending_confirmations"  # dict[str, str]
 # Submitted candidates — tracks which candidates have had proposals submitted this session.
 _K_SUBMITTED_CANDIDATES = "_sm_submitted_candidates"  # set[str]
+# Phase re-entry — records which phase the user came from when navigating backward.
+_K_REENTRY_SOURCE = "_sm_reentry_source"  # Phase | None
 
 # Allowed panel mode values.
 PANEL_READ = "read"
@@ -130,6 +132,7 @@ class StateManager:
             _K_DISMISSED_PROPOSALS: set(),
             _K_PENDING_CONFIRMATIONS: {},
             _K_SUBMITTED_CANDIDATES: set(),
+            _K_REENTRY_SOURCE: None,
         }
         for key, default in defaults.items():
             if key not in st.session_state:
@@ -218,6 +221,11 @@ class StateManager:
         """Set of candidate IDs that have had proposals submitted this session."""
         return st.session_state[_K_SUBMITTED_CANDIDATES]
 
+    @property
+    def reentry_source(self) -> Phase | None:
+        """Phase the user navigated back from, or None if not in re-entry mode."""
+        return st.session_state[_K_REENTRY_SOURCE]
+
     # ------------------------------------------------------------------
     # Panel mode tracking
     # ------------------------------------------------------------------
@@ -289,6 +297,46 @@ class StateManager:
 
         # Commit the phase transition last so timing is always recorded.
         st.session_state[_K_PHASE] = target
+
+    def reenter_phase(self, target: Phase) -> None:
+        """Navigate backward to a previous phase for re-entry (e.g. add more documents).
+
+        Only allows specific transitions:
+          - CURATION → INGESTION
+          - EXTRACTION → INGESTION
+
+        Records the current phase as the re-entry source so the UI can
+        suppress reconciliation and adjust button labels.
+
+        Args:
+            target: The phase to navigate back to.
+
+        Raises:
+            ValueError: If the transition is not an allowed re-entry path.
+        """
+        current = self.phase
+        allowed = {
+            (Phase.CURATION, Phase.INGESTION),
+            (Phase.EXTRACTION, Phase.INGESTION),
+        }
+        if (current, target) not in allowed:
+            raise ValueError(
+                f"Re-entry rejected: {current.name} → {target.name}. "
+                f"Allowed re-entry paths: CURATION→INGESTION, EXTRACTION→INGESTION."
+            )
+
+        st.session_state[_K_REENTRY_SOURCE] = current
+
+        # Record phase start time for the re-entered phase.
+        timings: dict[int, str] = dict(st.session_state[_K_PHASE_START_TIMES])
+        timings[target.value] = datetime.now(UTC).isoformat()
+        st.session_state[_K_PHASE_START_TIMES] = timings
+
+        st.session_state[_K_PHASE] = target
+
+    def clear_reentry(self) -> None:
+        """Clear the re-entry source flag, returning to normal phase flow."""
+        st.session_state[_K_REENTRY_SOURCE] = None
 
     def initialize_session(
         self,
@@ -420,6 +468,7 @@ class StateManager:
         neo4j_user: str,
         neo4j_password: str,
         openrouter_api_key: str,
+        reentry_source: int | None = None,
     ) -> None:
         """Restore a previously persisted session, bypassing advance_phase() ordering.
 
@@ -437,6 +486,7 @@ class StateManager:
             neo4j_user:         Neo4j username.
             neo4j_password:     Neo4j password (from .env, not from Redis).
             openrouter_api_key: OpenRouter API key (from .env, not from Redis).
+            reentry_source:     Phase integer the user navigated back from, or None.
 
         Raises:
             ValueError: If phase is not a valid Phase member.
@@ -451,6 +501,9 @@ class StateManager:
         st.session_state[_K_NEO4J_USER] = neo4j_user
         st.session_state[_K_NEO4J_PASSWORD] = neo4j_password
         st.session_state[_K_OPENROUTER_API_KEY] = openrouter_api_key
+        st.session_state[_K_REENTRY_SOURCE] = (
+            Phase(reentry_source) if reentry_source is not None else None
+        )
 
     def reset(self) -> None:
         """Reset all session state to defaults (for "New Session").
@@ -477,3 +530,4 @@ class StateManager:
         st.session_state[_K_DISMISSED_PROPOSALS] = set()
         st.session_state[_K_PENDING_CONFIRMATIONS] = {}
         st.session_state[_K_SUBMITTED_CANDIDATES] = set()
+        st.session_state[_K_REENTRY_SOURCE] = None

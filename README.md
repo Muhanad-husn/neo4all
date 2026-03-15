@@ -104,7 +104,7 @@ That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), 
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **0 — Connect**           | Enter Neo4j Aura credentials + OpenRouter API key. Session persists across browser restarts.                                                                                    |
 | **1 — Define Schema**     | Describe your domain in plain language. AI proposes node/edge types. You edit and lock.                                                                                         |
-| **2 — Ingest Documents**  | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant.                                                                                  |
+| **2 — Ingest Documents**  | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant. You can return here from Curation to add more documents.                            |
 | **3 — Extract Knowledge** | One ARQ job per chunk. LLM extracts entities and relationships. Validated. Written to Neo4j.                                                                                    |
 | **4 — Curate**            | Detectors surface issues. Review evidence. Propose fixes manually or let the AI agent pipeline handle batches. Every graph mutation is approved, diffed, executed, and audited. |
 
@@ -310,7 +310,7 @@ Drop in your documents. PDFs, DOCX, PPTX, XLSX, CSV, HTML, Markdown, images — 
 2. **Unstructured** — broad format coverage as fallback
 3. **Raw text** — PyPDF2/python-docx/UTF-8 decode as last resort
 
-Each document is semantically chunked (respecting headings and table boundaries), embedded via sentence-transformers, and indexed in Qdrant. Quality flags (`raw_fallback`, `low_ocr_confidence`, `low_text_density`) surface potential issues without blocking the pipeline. Re-uploading the same file skips parsing entirely — incremental by design.
+Each document is semantically chunked (respecting headings and table boundaries), embedded via sentence-transformers, and indexed in Qdrant. Quality flags (`raw_fallback`, `low_ocr_confidence`, `low_text_density`) surface potential issues without blocking the pipeline. Re-uploading the same file skips parsing entirely — incremental by design. You can also return to ingestion from the Curation phase to add more documents without starting over — extraction is idempotent and only processes new chunks.
 
 ---
 
@@ -378,7 +378,7 @@ Three Docker images are published to [Docker Hub](https://hub.docker.com/u/muhan
 | [`muhanaddocker/neo4all-worker`](https://hub.docker.com/r/muhanaddocker/neo4all-worker) | `Dockerfile.worker` | ARQ worker (extraction + agent pipeline jobs)                  |
 | [`muhanaddocker/neo4all-ui`](https://hub.docker.com/r/muhanaddocker/neo4all-ui)         | `Dockerfile.ui`     | Streamlit frontend (UI only)                                   |
 
-**Tags:** `1.0.2`, `latest`
+**Tags:** `1.0.3`, `latest`
 
 All images use CPU-only PyTorch (~3 GB each) instead of the default CUDA build (~13 GB). The embedding model (`all-MiniLM-L6-v2`) runs identically on CPU.
 
@@ -492,15 +492,15 @@ docker compose up -d --build api ui
 
 ## Roadmap
 
-**Next milestone: Curation-panel document ingestion + Agent-B activation**
+**Next milestone: Curation-panel evidence-only ingestion + Agent-B activation**
 
-Currently, the vector store only contains chunks from the original document ingestion (Phase 2). Since those chunks created the graph nodes in the first place, retrieval augmentation (Agent-B) finds no new evidence — it searches the same material that produced the candidates. Agent-B is registered but dormant.
+Phase re-entry now allows users to navigate back from Curation to Ingestion to add more documents within the same run. New documents go through the full extraction pipeline (only new chunks are processed — existing work is preserved). This supports iterative graph building.
 
-The next milestone enables users to ingest additional documents directly from the curation UI (Phase 4). These new documents are chunked and embedded into Qdrant without triggering extraction — they serve purely as supplementary evidence for entity resolution. When new documents exist in the vector store, Agent-B activates and searches them for evidence that supports or contradicts the structural recommendation. This completes the evidence loop: deterministic detectors flag issues, structural recommendations propose actions, and user-provided documents supply the textual evidence that was previously missing.
+The next milestone extends this with *evidence-only* ingestion directly from the curation UI: new documents would be chunked and embedded into Qdrant *without* triggering extraction, serving purely as supplementary evidence for entity resolution. When such evidence-only documents exist in the vector store, Agent-B activates and searches them for evidence that supports or contradicts the structural recommendation. This completes the evidence loop: deterministic detectors flag issues, structural recommendations propose actions, and user-provided documents supply the textual evidence that was previously missing.
 
 ---
 
-## Known Limitations (v1.0.2)
+## Known Limitations (v1.0.3)
 
 - Per-page locators from Docling/Unstructured are approximated; exact page-level attribution is not yet tracked per chunk
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)

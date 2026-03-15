@@ -2,6 +2,19 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.3] - 2026-03-15
+
+### Added
+- Phase re-entry: users can navigate from Curation back to Ingestion to add more documents within the same run, then extract only new chunks and return to Curation
+- "Add More Documents" button in the Curation sidebar
+- `reenter_phase()` and `clear_reentry()` methods on `StateManager` with allowed-path validation (CURATION→INGESTION, EXTRACTION→INGESTION)
+- `reentry_source` field on `SessionRecord` for persistence across browser refresh
+- Re-entry info banners on Ingestion and Extraction pages during re-entry mode
+- Reconciliation suppression during re-entry to prevent auto-advancement
+- Unit tests for phase re-entry transitions, persistence, and round-trip flow (`test_phase_reentry.py`)
+
+---
+
 ## [1.0.2] - 2026-03-12
 
 ### Added

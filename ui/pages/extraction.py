@@ -364,15 +364,17 @@ def _extraction_monitor(run_id: str) -> None:
         state = StateManager.get()
         if state.phase == Phase.EXTRACTION:
             st.divider()
+            is_reentry = state.reentry_source is not None
 
             def _do_advance() -> None:
                 """on_click callback — runs BEFORE the next render cycle."""
                 s = StateManager.get()
                 if s.phase == Phase.EXTRACTION:
+                    s.clear_reentry()
                     s.advance_phase(Phase.CURATION)
 
             st.button(
-                "Proceed to Curation →",
+                "Return to Curation →" if is_reentry else "Proceed to Curation →",
                 type="primary",
                 on_click=_do_advance,
             )
@@ -414,10 +416,18 @@ def main() -> None:
 
     # --- Page header ---
     st.title("Phase 3: AI-Assisted Extraction")
-    st.caption(
-        "Chunks are sent to the LLM with the locked domain schema. "
-        "Extracted entities are validated and written to Neo4j via MERGE."
-    )
+
+    if state.reentry_source is not None:
+        st.info(
+            "Processing new documents added during re-entry. "
+            "Only new chunks will be extracted — previously completed chunks are skipped.",
+            icon="↩",
+        )
+    else:
+        st.caption(
+            "Chunks are sent to the LLM with the locked domain schema. "
+            "Extracted entities are validated and written to Neo4j via MERGE."
+        )
 
     # --- Fetch current extraction status for trigger section ---
     status = _fetch(f"/api/extraction/status/{run_id}")

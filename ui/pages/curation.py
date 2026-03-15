@@ -437,6 +437,12 @@ def main() -> None:
         st.caption(f"Actor: `{actor}`")
         st.divider()
         st.caption(f"API: `{_API_BASE_URL}`")
+        st.divider()
+        st.button(
+            "Add More Documents",
+            on_click=lambda: StateManager.get().reenter_phase(Phase.INGESTION),
+            help="Return to ingestion to add more documents. Existing work is preserved.",
+        )
 
     st.title("Phase 4: Curation")
     st.caption(

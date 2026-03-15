@@ -307,6 +307,7 @@ def _try_restore_session(state: StateManager) -> bool:
             neo4j_user=record["neo4j_user"],
             neo4j_password=neo4j_password,
             openrouter_api_key=openrouter_api_key,
+            reentry_source=record.get("reentry_source"),
         )
 
         # NOTE: We intentionally do NOT call _notify_api_reload() here.
@@ -336,6 +337,12 @@ def _reconcile_phase(state: StateManager) -> None:
 
     Fails silently on any error — falls back to the saved phase.
     """
+    # Suppress reconciliation during phase re-entry — the user intentionally
+    # navigated backward (e.g. CURATION → INGESTION to add more documents).
+    # Without this guard, reconciliation would auto-advance back to CURATION.
+    if state.reentry_source is not None:
+        return
+
     try:
         import httpx
 
@@ -404,9 +411,11 @@ def _save_session(state: StateManager) -> None:
         import httpx
 
         # Build a snapshot hash to detect changes.
+        reentry_val = state.reentry_source.value if state.reentry_source is not None else ""
         snapshot = (
             f"{state.run_id}|{state.phase.value}|"
-            f"{state.schema_version or ''}|{state.neo4j_uri}|{state.neo4j_user}"
+            f"{state.schema_version or ''}|{state.neo4j_uri}|{state.neo4j_user}|"
+            f"{reentry_val}"
         )
         snapshot_hash = hashlib.sha256(snapshot.encode()).hexdigest()[:16]
 
@@ -424,6 +433,11 @@ def _save_session(state: StateManager) -> None:
                 "schema_version": state.schema_version,
                 "neo4j_uri": state.neo4j_uri,
                 "neo4j_user": state.neo4j_user,
+                "reentry_source": (
+                    state.reentry_source.value
+                    if state.reentry_source is not None
+                    else None
+                ),
             },
         }
 
