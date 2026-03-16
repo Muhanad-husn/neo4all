@@ -448,7 +448,7 @@ def _render_propose_section(state: StateManager, *, has_proposal: bool) -> None:
         )
         schema_model: str = st.text_input(
             "LLM Model (optional)",
-            value="openai/gpt-5-mini",
+            value="openrouter/hunter-alpha",
             help=(
                 "OpenRouter model ID for the schema proposal. "
                 "Leave as default or enter any supported model "

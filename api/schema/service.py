@@ -184,7 +184,7 @@ class SchemaService:
         self._llm = llm_client or LLMClient()
         self._job_config = job_config or JobConfig(
             job_id=self._JOB_ID,
-            model="openai/gpt-5-mini",
+            model="openrouter/hunter-alpha",
             temperature=0.2,
             response_format={"type": "json_object"},
         )

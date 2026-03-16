@@ -163,7 +163,7 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
 
     extraction_model = st.text_input(
         "LLM Model (optional)",
-        value="openai/gpt-5-mini",
+        value="openrouter/hunter-alpha",
         help=(
             "OpenRouter model ID for extraction. Leave as default or enter "
             "a different model (e.g. openai/gpt-4o, anthropic/claude-3.5-sonnet)."

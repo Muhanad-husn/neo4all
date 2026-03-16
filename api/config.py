@@ -56,17 +56,17 @@ class AgentConfig(BaseModel):
     """
 
     agent_a: AgentModelConfig = AgentModelConfig(
-        model="openai/gpt-5-mini",
+        model="openrouter/hunter-alpha",
         max_input_tokens=8000,
         max_output_tokens=2000,
     )
     agent_b: AgentModelConfig = AgentModelConfig(
-        model="openai/gpt-5-mini",
+        model="openrouter/hunter-alpha",
         max_input_tokens=8000,
         max_output_tokens=1000,
     )
     agent_p: AgentModelConfig = AgentModelConfig(
-        model="openai/gpt-5-mini",
+        model="openrouter/hunter-alpha",
         max_input_tokens=8000,
         max_output_tokens=2000,
     )

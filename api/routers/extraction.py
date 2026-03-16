@@ -175,7 +175,7 @@ class ExtractionRunRequest(BaseModel):
     Attributes:
         run_id: Governed run identifier.
         model:  Optional OpenRouter model override.  When None or empty,
-                the server default (openai/gpt-5-mini) is used.
+                the server default (openrouter/hunter-alpha) is used.
     """
 
     run_id: str

@@ -74,7 +74,7 @@ All notable changes to neo4all are documented in this file.
 - Deterministic chain merge fast-path to Agent-P
 
 ### Changed
-- Default model changed from gpt-4o-mini to openai/gpt-5-mini
+- Default model changed from gpt-4o-mini to openrouter/hunter-alpha
 
 ### Fixed
 - Evidence endpoint cache miss due to stage-keyed candidates
