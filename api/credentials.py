@@ -142,10 +142,13 @@ async def publish_credentials(creds: RuntimeCredentials) -> bool:
     """
     try:
         from api.cache.client import get_cache_client
+        from api.cache.config import CACHE_TTL
         from api.cache.keys import CacheKey
 
         cache = get_cache_client()
-        stored = await cache.set(CacheKey.config_credentials(), creds)
+        stored = await cache.set(
+            CacheKey.config_credentials(), creds, ttl=CACHE_TTL.credentials
+        )
 
         if stored:
             logger.info("credentials_published")

@@ -36,5 +36,9 @@ class _CacheTTL:
     # regeneration trigger.
     candidates: int = 300  # 5 minutes
 
+    # Runtime credentials override (Phase 0 UI form → Redis).
+    # Auto-expires so stale keys cannot silently override .env forever.
+    credentials: int = 86_400  # 24 hours
+
 
 CACHE_TTL: _CacheTTL = _CacheTTL()

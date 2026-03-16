@@ -56,17 +56,17 @@ class AgentConfig(BaseModel):
     """
 
     agent_a: AgentModelConfig = AgentModelConfig(
-        model="openrouter/hunter-alpha",
+        model="openrouter/healer-alpha",
         max_input_tokens=8000,
         max_output_tokens=2000,
     )
     agent_b: AgentModelConfig = AgentModelConfig(
-        model="openrouter/hunter-alpha",
+        model="openrouter/healer-alpha",
         max_input_tokens=8000,
         max_output_tokens=1000,
     )
     agent_p: AgentModelConfig = AgentModelConfig(
-        model="openrouter/hunter-alpha",
+        model="openrouter/healer-alpha",
         max_input_tokens=8000,
         max_output_tokens=2000,
     )
