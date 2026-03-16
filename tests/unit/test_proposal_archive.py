@@ -200,3 +200,49 @@ async def test_archive_for_run_multiple_proposals() -> None:
     manifest_keys = [k for k in s3._store if "manifest.json" in k]
     manifest = ArchiveManifest.model_validate_json(s3._store[manifest_keys[0]])
     assert manifest.proposal_count == 2
+
+
+@pytest.mark.asyncio
+async def test_archive_retains_executed_proposals() -> None:
+    """Executed proposals are retained (not archived) so that escalation
+    logic and candidate filtering can see prior applied work."""
+    from api.cache.keys import CacheKey
+    from api.proposals.models import ProposalState
+
+    svc, s3, cache = _make_service()
+
+    # Create two proposals: one pending, one that will be executed.
+    p_pending = _make_packet(candidate_id="a" * 64)
+    p_executed = _make_packet(candidate_id="b" * 64)
+    await svc.create(p_pending)
+    await svc.create(p_executed)
+
+    # Transition p_executed through approved → executed.
+    await svc.transition(_RUN_ID, p_executed.proposal_id, ProposalState.approved)
+    await svc.transition(_RUN_ID, p_executed.proposal_id, ProposalState.executed)
+
+    # Archive.
+    archived = await svc.archive_for_run(_RUN_ID)
+    assert archived == 1  # Only pending one archived
+
+    # Executed proposal should still be in S3.
+    executed_key = f"{_RUN_ID}/proposals/{p_executed.proposal_id}.json"
+    assert executed_key in s3._store
+
+    # Pending proposal should be gone from S3 originals.
+    pending_key = f"{_RUN_ID}/proposals/{p_pending.proposal_id}.json"
+    assert pending_key not in s3._store
+
+    # Redis index should contain only the executed proposal.
+    from api.proposals.storage import _ProposalIndex
+
+    index = await cache.get(CacheKey.proposals_index(_RUN_ID), model=_ProposalIndex)
+    assert index is not None
+    assert p_executed.proposal_id in index.proposal_ids
+    assert p_pending.proposal_id not in index.proposal_ids
+
+    # list_for_run should return only the executed proposal.
+    remaining = await svc.list_for_run(_RUN_ID)
+    assert len(remaining) == 1
+    assert remaining[0].proposal_id == p_executed.proposal_id
+    assert str(remaining[0].state) == "executed"

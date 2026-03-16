@@ -404,11 +404,18 @@ class ProposalService:
     # ------------------------------------------------------------------
 
     async def archive_for_run(self, run_id: str) -> int:
-        """Archive all proposals for a run to a timestamped S3 prefix.
+        """Archive non-executed proposals for a run to a timestamped S3 prefix.
 
-        Copies each proposal to ``{run_id}/proposals_archive/{timestamp}/``,
-        writes an ArchiveManifest, then deletes the originals from S3 and
-        Redis.
+        Executed proposals are **retained** so that:
+          - ``_load_prior_proposals`` can detect prior canonicalize→merge
+            escalation even after archiving.
+          - The agent-pipeline candidate filter (step 2b) correctly excludes
+            candidates that already have an executed proposal.
+
+        Copies each archivable proposal to
+        ``{run_id}/proposals_archive/{timestamp}/``, writes an
+        ArchiveManifest, then deletes the originals from S3 and Redis.
+        The proposals index is rebuilt to contain only retained proposal IDs.
 
         Args:
             run_id: Governed run identifier.
@@ -418,7 +425,7 @@ class ProposalService:
 
         Log events:
             proposals_archive_started  INFO — run_id
-            proposals_archive_complete INFO — run_id, count, timestamp
+            proposals_archive_complete INFO — run_id, count, timestamp, retained
         """
         from datetime import UTC, datetime
 
@@ -428,7 +435,7 @@ class ProposalService:
             CacheKey.proposals_index(run_id), model=_ProposalIndex
         )
         if index is None or not index.proposal_ids:
-            logger.info("proposals_archive_complete", run_id=run_id, count=0, timestamp="")
+            logger.info("proposals_archive_complete", run_id=run_id, count=0, timestamp="", retained=0)
             return 0
 
         # S3-safe timestamp (no colons).
@@ -436,6 +443,7 @@ class ProposalService:
 
         archived = 0
         archived_ids: list[str] = []
+        retained_ids: list[str] = []
         for pid in index.proposal_ids:
             # Read original from S3.
             src_key = _proposal_s3_key(run_id, pid)
@@ -444,6 +452,16 @@ class ProposalService:
             )
             if raw is None:
                 continue
+
+            # Retain executed proposals — they are needed for escalation
+            # logic (canonicalize→merge) and candidate filtering.
+            try:
+                packet = ProposalPacket.model_validate_json(raw)
+                if packet.state == ProposalState.executed:
+                    retained_ids.append(pid)
+                    continue
+            except Exception:
+                pass  # If we can't parse, archive it
 
             # Write to archive prefix.
             dst_key = _archive_s3_key(run_id, timestamp, pid)
@@ -486,14 +504,21 @@ class ProposalService:
             manifest.model_dump_json().encode("utf-8"),
         )
 
-        # Delete the proposals index from Redis.
-        await self._cache.delete(CacheKey.proposals_index(run_id))
+        # Rebuild index with only retained (executed) proposal IDs.
+        if retained_ids:
+            await self._cache.set(
+                CacheKey.proposals_index(run_id),
+                _ProposalIndex(proposal_ids=retained_ids),
+            )
+        else:
+            await self._cache.delete(CacheKey.proposals_index(run_id))
 
         logger.info(
             "proposals_archive_complete",
             run_id=run_id,
             count=archived,
             timestamp=timestamp,
+            retained=len(retained_ids),
         )
         return archived
 
