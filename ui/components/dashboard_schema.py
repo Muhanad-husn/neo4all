@@ -29,9 +29,10 @@ def render_schema_tab(run_id: str) -> None:
         st.info("Schema not available yet. Lock a schema in Phase 1 to see it here.")
         return
 
-    version = data.get("version_hash", "")
-    nodes: list[dict[str, Any]] = data.get("nodes", [])
-    edges: list[dict[str, Any]] = data.get("edges", [])
+    sv: dict[str, Any] = data.get("schema_version") or {}
+    version = sv.get("version_hash", "")
+    nodes: list[dict[str, Any]] = sv.get("nodes", [])
+    edges: list[dict[str, Any]] = sv.get("edges", [])
 
     # Header metrics
     c1, c2, c3 = st.columns(3)
