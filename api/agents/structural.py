@@ -126,35 +126,42 @@ def _recommend_probable_duplicate(
     val_a: str = str(ctx.get("value_a", ""))
     val_b: str = str(ctx.get("value_b", ""))
 
-    # Pattern 1: Case-only difference
+    # ------------------------------------------------------------------
+    # Every probable_duplicate is a MERGE.  The problem is two nodes
+    # existing for the same entity.  "Canonicalize" only updates a
+    # property — it does not remove the duplicate node.  Regardless of
+    # whether the difference is casing, a typo, an abbreviation, or an
+    # encoding variant, the answer is always merge.  The human approval
+    # gate is the safety net, not a conservative heuristic here.
+    # ------------------------------------------------------------------
+
+    # Pattern 1: Case-only or encoding difference (highest confidence)
     if val_a and val_b and val_a.lower() == val_b.lower():
         return StructuralRecommendation(
-            suggested_action="canonicalize",
+            suggested_action="merge",
             confidence=min(0.95, max(jw, 0.90)),
             reasoning=(
                 f"Values '{val_a}' and '{val_b}' differ only in letter "
-                f"casing (similarity: {jw:.2f}). Standardise to canonical form."
+                f"casing or encoding (similarity: {jw:.2f}). These are "
+                f"the same entity — merge into canonical form."
             ),
         )
 
-    # Pattern 5: Near-identical (typo / formatting)
+    # Pattern 2: Near-identical (typo / formatting / encoding variant)
     if jw >= 0.95:
         conf = round(0.90 + min(cj, 0.05), 2)
         return StructuralRecommendation(
-            suggested_action="canonicalize",
+            suggested_action="merge",
             confidence=min(1.0, conf),
             reasoning=(
                 f"Near-identical values '{val_a}' and '{val_b}' "
                 f"(similarity: {jw:.2f}). Minor formatting or "
-                f"typographical difference."
+                f"typographical difference — same entity, merge."
             ),
         )
 
-    # Pattern 2: Name containment — one value's tokens are a subset of
-    # the other's (e.g. "Ingrid" vs "Ingrid Bos", "Lauren" vs "Lauren Park").
-    # This is a name abbreviation, not a formatting variant — merge, not
-    # canonicalize.  Canonicalize cannot resolve this because the shorter
-    # form is not a case/whitespace variant of the longer form.
+    # Pattern 3: Name containment — one value's tokens are a subset of
+    # the other's (e.g. "Ingrid" vs "Ingrid Bos", "Jason" vs "Jason Chen").
     if val_a and val_b and jw >= 0.90:
         toks_a = set(val_a.lower().split())
         toks_b = set(val_b.lower().split())
@@ -173,18 +180,14 @@ def _recommend_probable_duplicate(
                 ),
             )
 
-    # Pattern 6: High similarity → merge.
-    # With jw >= 0.90 the names are near-identical; the human approval gate
-    # is the safety net, not a conservative heuristic.  Shared graph context
-    # boosts confidence but is not required.
+    # Pattern 4: High similarity (jw >= 0.90, general case)
     if jw >= 0.90:
         if cj > 0:
             conf = round(0.75 + min(cj, 0.15), 2)
             reasoning = (
                 f"High similarity between '{val_a}' and '{val_b}' "
                 f"(similarity: {jw:.2f}) with shared graph neighbours "
-                f"(context overlap: {cj:.2f}). Strong evidence these "
-                f"represent the same entity."
+                f"(context overlap: {cj:.2f}). Same entity — merge."
             )
         else:
             conf = round(0.70 + min(tok * 0.1, 0.10), 2)

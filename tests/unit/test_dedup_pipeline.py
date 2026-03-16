@@ -181,7 +181,7 @@ class TestCompositeScore:
         ctx = {"jaro_winkler": 1.0, "token_overlap": 1.0, "context_jaccard": 1.0}
         props = {"age": "30"}
         score = _compute_composite_score(ctx, props, props)
-        # 0.35*1 + 0.25*1 + 0.25*1 + 0.15*1 = 1.0
+        # 0.50*1 + 0.25*1 + 0.15*1 + 0.10*1 = 1.0
         assert abs(score - 1.0) < 0.001
 
     def test_zero_scores(self) -> None:
@@ -189,13 +189,28 @@ class TestCompositeScore:
         score = _compute_composite_score(ctx, {}, {})
         assert score == 0.0
 
-    def test_mixed_scores(self) -> None:
+    def test_mixed_scores_with_context(self) -> None:
+        """When CJ > 0, standard weights apply."""
         ctx = {"jaro_winkler": 0.95, "token_overlap": 0.80, "context_jaccard": 0.60}
         props_a = {"age": "30"}
         props_b = {"age": "30"}
         score = _compute_composite_score(ctx, props_a, props_b)
-        expected = 0.35 * 0.95 + 0.25 * 0.80 + 0.25 * 0.60 + 0.15 * 1.0
+        expected = 0.50 * 0.95 + 0.25 * 0.80 + 0.15 * 0.60 + 0.10 * 1.0
         assert abs(score - expected) < 0.001
+
+    def test_high_jw_no_context_uses_jw_floor(self) -> None:
+        """JW >= 0.90 with CJ=0: composite floored at JW value."""
+        ctx = {"jaro_winkler": 0.92, "token_overlap": 0.667, "context_jaccard": 0.0}
+        score = _compute_composite_score(ctx, {}, {})
+        assert score >= 0.92
+
+    def test_cj_zero_below_jw_gate_redistributes(self) -> None:
+        """JW < 0.90 with CJ=0: CJ weight redistributed, no JW floor."""
+        ctx = {"jaro_winkler": 0.85, "token_overlap": 0.5, "context_jaccard": 0.0}
+        score = _compute_composite_score(ctx, {}, {})
+        expected = (0.50 + 0.15) * 0.85 + 0.25 * 0.5
+        assert abs(score - expected) < 0.001
+        assert score < 0.85  # no floor applied
 
     def test_missing_context_fields(self) -> None:
         ctx = {}
@@ -366,7 +381,7 @@ class TestEnrichCandidates:
 
     def test_medium_similarity_classified_medium(self) -> None:
         # Need score in [0.60, 0.80) range for medium
-        # 0.35*0.85 + 0.25*0.75 + 0.25*0.65 + 0.15*0 = 0.2975 + 0.1875 + 0.1625 = 0.6475
+        # 0.50*0.85 + 0.25*0.75 + 0.15*0.65 + 0.10*0 = 0.425 + 0.1875 + 0.0975 = 0.71
         c = _make_candidate("Alice S", "Alice Smith", "k1", "k2", jw=0.85, tok=0.75, cj=0.65)
         nodes = {"k1": _make_node("k1"), "k2": _make_node("k2")}
 

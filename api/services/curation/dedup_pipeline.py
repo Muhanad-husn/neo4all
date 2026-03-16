@@ -60,10 +60,13 @@ _MAX_CLUSTER_SIZE: int = 10
 # Composite score weights
 # ---------------------------------------------------------------------------
 
-_W_JW: float = 0.35
+# Name similarity (JW + token overlap) is the primary signal.
+# Context and property overlap are supporting — their absence is normal
+# for duplicates and must not drag the score below the merge threshold.
+_W_JW: float = 0.50
 _W_TOK: float = 0.25
-_W_CJ: float = 0.25
-_W_PO: float = 0.15
+_W_CJ: float = 0.15
+_W_PO: float = 0.10
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +128,33 @@ def _compute_composite_score(
     props_a: dict[str, Any],
     props_b: dict[str, Any],
 ) -> float:
-    """Weighted composite deduplication score."""
+    """Weighted composite deduplication score.
+
+    When context_jaccard is 0 (no shared graph neighbors), its weight is
+    redistributed to jaro_winkler.  No shared neighbors is the *normal*
+    state for duplicates — the duplicate exists precisely because the graph
+    didn't connect them.  Absence of shared context is not evidence against
+    a merge; penalizing it produces nonsensically low scores for obvious
+    duplicates (e.g. JW=0.92 scoring 0.52).
+    """
     jw = ctx.get("jaro_winkler", 0.0)
     tok = ctx.get("token_overlap", 0.0)
     cj = ctx.get("context_jaccard", 0.0)
     po = _property_overlap(props_a, props_b)
+
+    # When context_jaccard is 0 and name similarity is high (JW >= 0.90),
+    # the name IS the evidence.  No shared neighbors is the normal state
+    # for duplicates.  Use JW directly as the floor — don't let partial
+    # token overlap or missing properties drag an obvious duplicate below
+    # the merge threshold.
+    if cj == 0.0 and jw >= 0.90:
+        weighted = (_W_JW + _W_CJ) * jw + _W_TOK * tok + _W_PO * po
+        return max(weighted, jw)
+
+    # Redistribute CJ weight to JW when CJ is 0 but JW is below 0.90.
+    if cj == 0.0:
+        return (_W_JW + _W_CJ) * jw + _W_TOK * tok + _W_PO * po
+
     return _W_JW * jw + _W_TOK * tok + _W_CJ * cj + _W_PO * po
 
 
