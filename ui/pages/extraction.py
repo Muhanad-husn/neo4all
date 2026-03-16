@@ -157,7 +157,7 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
     else:
         label = "Start Extraction"
         help_text = (
-            "Enqueue one ARQ extraction job per chunk in this run. "
+            "Enqueue extraction jobs for all pending chunks (batched). "
             "Requires the domain schema to be locked (Phase 1)."
         )
 
@@ -195,10 +195,18 @@ def _render_trigger_section(run_id: str, status: dict[str, Any] | None) -> None:
                 "Click below to view results."
             )
         else:
-            st.success(
-                f"Enqueued {enqueued} extraction job(s). "
-                "Monitoring progress below."
-            )
+            batch_size: int = data.get("batch_size", 1)
+            if batch_size > 1:
+                st.success(
+                    f"Enqueued {enqueued} batch job(s) "
+                    f"(up to {batch_size} chunks each). "
+                    "Monitoring progress below."
+                )
+            else:
+                st.success(
+                    f"Enqueued {enqueued} extraction job(s). "
+                    "Monitoring progress below."
+                )
         st.rerun()
 
 

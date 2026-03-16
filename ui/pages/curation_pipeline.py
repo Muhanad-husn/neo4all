@@ -1090,8 +1090,16 @@ def _render_agent_model_config(run_id: str) -> None:
                 st.error(f"[{e.get('code')}] {e.get('message')}")
         else:
             enqueued = data.get("jobs_enqueued", 0)
+            batch_size = data.get("batch_size", 1)
+            if batch_size > 1:
+                jobs_label = (
+                    f"{enqueued} batch job(s) "
+                    f"(up to {batch_size} candidates each)"
+                )
+            else:
+                jobs_label = f"{enqueued} job(s)"
             st.success(
-                f"Pipeline started — {enqueued} job(s) enqueued.  "
+                f"Pipeline started — {jobs_label} enqueued.  "
                 f"Models: A={data.get('model_a', '?')}, "
                 f"B={data.get('model_b', '?')}, "
                 f"P={data.get('model_p', '?')}"
