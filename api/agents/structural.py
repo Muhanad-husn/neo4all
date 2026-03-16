@@ -183,6 +183,29 @@ def _recommend_probable_duplicate(
             ),
         )
 
+    # Pattern 2: Name containment — one value's tokens are a subset of
+    # the other's (e.g. "Ingrid" vs "Ingrid Bos", "Lauren" vs "Lauren Park").
+    # This is a name abbreviation, not a formatting variant — merge, not
+    # canonicalize.  Canonicalize cannot resolve this because the shorter
+    # form is not a case/whitespace variant of the longer form.
+    if val_a and val_b and jw >= 0.90:
+        toks_a = set(val_a.lower().split())
+        toks_b = set(val_b.lower().split())
+        if toks_a != toks_b and (toks_a <= toks_b or toks_b <= toks_a):
+            longer = val_a if len(toks_a) >= len(toks_b) else val_b
+            shorter = val_b if longer == val_a else val_a
+            conf = round(0.80 + min(tok * 0.10, 0.10), 2)
+            return StructuralRecommendation(
+                suggested_action="merge",
+                confidence=min(1.0, conf),
+                reasoning=(
+                    f"Name containment: '{shorter}' is a subset of "
+                    f"'{longer}' (similarity: {jw:.2f}, word overlap: "
+                    f"{tok:.2f}). This is a name abbreviation — merge "
+                    f"into the more complete form."
+                ),
+            )
+
     # Pattern 6: High similarity + shared graph neighbourhood → merge
     if jw >= 0.90 and cj > 0:
         conf = round(0.75 + min(cj, 0.15), 2)
