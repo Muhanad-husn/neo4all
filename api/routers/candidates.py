@@ -738,7 +738,7 @@ async def generate_candidates(
 # ---------------------------------------------------------------------------
 
 
-async def _load_excluded_ids(run_id: str) -> set[str]:
+async def load_excluded_ids(run_id: str) -> set[str]:
     """Load excluded candidate IDs from Redis with graceful degradation.
 
     Returns an empty set on cache miss or error (SKILL-D R-D9).
@@ -820,7 +820,7 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
             deduped.append(c)
 
     # Filter out excluded candidates.
-    excluded_ids = await _load_excluded_ids(run_id)
+    excluded_ids = await load_excluded_ids(run_id)
     if excluded_ids:
         deduped = [c for c in deduped if c.candidate_id not in excluded_ids]
 

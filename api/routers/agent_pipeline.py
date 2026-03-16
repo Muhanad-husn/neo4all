@@ -496,6 +496,48 @@ async def run_agent_pipeline(
             ],
         )
 
+    # 2a. Filter out excluded candidates — user already dismissed these.
+    from api.routers.candidates import load_excluded_ids
+
+    excluded_ids = await load_excluded_ids(run_id)
+    if excluded_ids:
+        before = len(raw_candidates)
+        raw_candidates = [
+            c for c in raw_candidates
+            if c.get("candidate_id") not in excluded_ids
+        ]
+        excluded_count = before - len(raw_candidates)
+        if excluded_count:
+            logger.info(
+                "agent_pipeline_excluded_filtered",
+                run_id=run_id,
+                excluded_count=excluded_count,
+                remaining=len(raw_candidates),
+            )
+
+    # 2b. Filter out candidates that already have a non-failed proposal.
+    #     Reuses proposal_svc from step 1b; re-fetches because archive may
+    #     have cleared old proposals while manual ones could still exist.
+    existing_proposals_list = await proposal_svc.list_for_run(run_id)
+    has_proposal_ids: set[str] = {
+        p.candidate_id for p in existing_proposals_list
+        if str(p.state) not in ("rejected",)
+    }
+    if has_proposal_ids:
+        before = len(raw_candidates)
+        raw_candidates = [
+            c for c in raw_candidates
+            if c.get("candidate_id") not in has_proposal_ids
+        ]
+        skipped_proposal_count = before - len(raw_candidates)
+        if skipped_proposal_count:
+            logger.info(
+                "agent_pipeline_existing_proposals_filtered",
+                run_id=run_id,
+                skipped_count=skipped_proposal_count,
+                remaining=len(raw_candidates),
+            )
+
     # Filter to requested candidate IDs if specified.
     if request.candidate_ids:
         requested = set(request.candidate_ids)
