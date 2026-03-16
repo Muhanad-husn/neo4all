@@ -83,16 +83,25 @@ def render_failed_chunks_expander(
 
 
 def render_entity_yield_metrics(jobs: list[dict[str, Any]]) -> None:
-    """Sum nodes_created and edges_created from completed jobs and render as metrics.
+    """Sum node and edge totals (created + matched) from completed jobs.
 
-    Only counts jobs with status=='complete'.
+    Only counts jobs with status=='complete'.  Both ``merge_created`` and
+    ``merge_matched`` actions represent entities written for this run, so
+    both are included to stay consistent with the Neo4j entity counts shown
+    in the Extraction Summary section.
     """
     completed = [j for j in jobs if j.get("status") == "complete"]
     if not completed:
         return
 
-    total_nodes = sum(j.get("nodes_created", 0) for j in completed)
-    total_edges = sum(j.get("edges_created", 0) for j in completed)
+    total_nodes = sum(
+        j.get("nodes_created", 0) + j.get("nodes_matched", 0)
+        for j in completed
+    )
+    total_edges = sum(
+        j.get("edges_created", 0) + j.get("edges_matched", 0)
+        for j in completed
+    )
 
     col_n, col_e = st.columns(2)
     col_n.metric("Nodes extracted so far", total_nodes)
