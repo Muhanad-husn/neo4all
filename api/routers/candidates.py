@@ -204,46 +204,6 @@ class _ExcludedCandidatesCache(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Shared candidate loading helper
-# ---------------------------------------------------------------------------
-
-
-async def load_all_cached_candidates(
-    run_id: str,
-    schema_version_hash: str,
-) -> list[CandidateOut]:
-    """Load and deduplicate all cached candidates across detection stages.
-
-    Scans cache keys for stages None, 1, 2, 3 and deduplicates by
-    candidate_id.  Used by the candidate listing endpoint, the orphan
-    bulk-delete endpoint, and the verdict generalization service.
-
-    Returns an empty list on cache miss.
-    """
-    cache = get_cache_client()
-    all_cached: list[CandidateOut] = []
-
-    for stage_val in (None, 1, 2, 3):
-        dhash = _detection_hash(schema_version_hash, stage=stage_val)
-        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
-        cached: _CandidateListCache | None = await cache.get(
-            cache_key, model=_CandidateListCache
-        )
-        if cached and cached.candidates:
-            all_cached.extend(cached.candidates)
-
-    # Deduplicate by candidate_id
-    seen: set[str] = set()
-    deduped: list[CandidateOut] = []
-    for c in all_cached:
-        if c.candidate_id not in seen:
-            seen.add(c.candidate_id)
-            deduped.append(c)
-
-    return deduped
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
