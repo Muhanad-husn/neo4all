@@ -12,13 +12,12 @@ place.
 
 from __future__ import annotations
 
-from api.agents.models import PriorProposalSummary, StructuralRecommendation
+from api.agents.models import StructuralRecommendation
 from api.models.candidate import Candidate
 
 
 def compute_structural_recommendation(
     candidate: Candidate,
-    prior_proposals: list[PriorProposalSummary] | None = None,
 ) -> StructuralRecommendation:
     """Derive a deterministic curation recommendation from collision_context.
 
@@ -91,12 +90,6 @@ def compute_structural_recommendation(
 
     # ----- probable_duplicate ---------------------------------------------
     if ctype == "probable_duplicate":
-        # Escalation: if a prior canonicalize was executed for this candidate,
-        # escalate to merge — the canonicalize didn't resolve the duplicate.
-        if prior_proposals:
-            escalation = _check_escalation(prior_proposals)
-            if escalation is not None:
-                return escalation
         return _recommend_probable_duplicate(ctx)
 
     # ----- canonical_violation --------------------------------------------
@@ -116,32 +109,6 @@ def compute_structural_recommendation(
             f"does not map to a known structural recommendation."
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Prior proposal escalation
-# ---------------------------------------------------------------------------
-
-
-def _check_escalation(
-    prior_proposals: list[PriorProposalSummary],
-) -> StructuralRecommendation | None:
-    """Escalate to merge if a prior canonicalize was applied but didn't resolve.
-
-    Returns a StructuralRecommendation if escalation applies, None otherwise.
-    """
-    for pp in prior_proposals:
-        if pp.proposal_class == "canonicalize" and pp.outcome == "executed":
-            return StructuralRecommendation(
-                suggested_action="merge",
-                confidence=0.80,
-                reasoning=(
-                    "Prior canonicalize proposal was applied but this candidate "
-                    "reappeared. Escalating to merge — the name standardisation "
-                    "was insufficient to resolve the duplicate."
-                ),
-            )
-    return None
 
 
 # ---------------------------------------------------------------------------

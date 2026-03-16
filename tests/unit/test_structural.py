@@ -1,17 +1,15 @@
 """
-tests/unit/test_structural.py — Structural recommendation escalation tests.
+tests/unit/test_structural.py — Structural recommendation tests.
 
-Tests the escalation logic: when a prior canonicalize proposal was applied for a
-candidate that reappears, the structural recommendation escalates to merge.
+Tests the deterministic structural recommendation logic for probable_duplicate,
+canonical_violation, and other candidate types.
 
 No network, no LLM, no Neo4j.
 """
 
 from __future__ import annotations
 
-import pytest
-
-from api.agents.models import PriorProposalSummary, StructuralRecommendation
+from api.agents.models import StructuralRecommendation
 from api.agents.structural import compute_structural_recommendation
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
 
@@ -19,7 +17,7 @@ from api.models.candidate import Candidate, CandidateLane, CandidateType, Severi
 # Constants
 # ---------------------------------------------------------------------------
 
-_RUN_ID = "unit-test-structural-escalation"
+_RUN_ID = "unit-test-structural"
 _SCHEMA_VERSION = "test_schema_v1_hash_0000000000000000"
 
 
@@ -54,88 +52,25 @@ def _make_probable_dup(
 
 
 # ===========================================================================
-# Escalation tests
+# Probable duplicate tests
 # ===========================================================================
 
 
-class TestStructuralEscalation:
-    """Tests for prior proposal escalation in compute_structural_recommendation."""
+class TestStructuralProbableDuplicate:
+    """Tests for probable_duplicate recommendations."""
 
-    def test_no_prior_proposals_uses_normal_logic(self) -> None:
-        """Without prior proposals, normal recommendation logic applies."""
+    def test_high_similarity_with_context_recommends_merge(self) -> None:
+        """JW >= 0.90 with shared graph context → merge."""
         c = _make_probable_dup(jw=0.92, cj=0.30)
-        rec = compute_structural_recommendation(c, prior_proposals=None)
-        # JW >= 0.90 + CJ > 0 → merge (normal logic)
+        rec = compute_structural_recommendation(c)
         assert rec.suggested_action == "merge"
-        assert rec.confidence <= 0.90  # Normal merge confidence
+        assert rec.confidence <= 0.90
 
-    def test_prior_canonicalize_executed_escalates_to_merge(self) -> None:
-        """A prior executed canonicalize should escalate to merge (higher confidence)."""
+    def test_high_similarity_no_context_recommends_merge(self) -> None:
+        """JW >= 0.90 without context overlap → merge."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
-        prior = [
-            PriorProposalSummary(
-                proposal_class="canonicalize",
-                confidence=0.85,
-                outcome="executed",
-            )
-        ]
-        rec = compute_structural_recommendation(c, prior_proposals=prior)
+        rec = compute_structural_recommendation(c)
         assert rec.suggested_action == "merge"
-        assert rec.confidence == 0.80  # Escalation confidence
-        assert "escalat" in rec.reasoning.lower()
-
-    def test_prior_canonicalize_pending_no_escalation(self) -> None:
-        """A pending canonicalize should NOT trigger escalation (still merge from heuristic)."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)
-        prior = [
-            PriorProposalSummary(
-                proposal_class="canonicalize",
-                confidence=0.85,
-                outcome="pending",
-            )
-        ]
-        rec = compute_structural_recommendation(c, prior_proposals=prior)
-        # jw >= 0.90 → merge directly (no escalation needed)
-        assert rec.suggested_action == "merge"
-
-    def test_prior_merge_executed_no_escalation(self) -> None:
-        """A prior merge (not canonicalize) should not trigger escalation."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)
-        prior = [
-            PriorProposalSummary(
-                proposal_class="merge",
-                confidence=0.90,
-                outcome="executed",
-            )
-        ]
-        rec = compute_structural_recommendation(c, prior_proposals=prior)
-        # jw >= 0.90 → merge directly
-        assert rec.suggested_action == "merge"
-
-    def test_empty_prior_list_still_merges(self) -> None:
-        """Empty prior list — jw >= 0.90 produces merge directly."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)
-        rec = compute_structural_recommendation(c, prior_proposals=[])
-        assert rec.suggested_action == "merge"
-
-    def test_multiple_prior_proposals_first_match_wins(self) -> None:
-        """Multiple priors — first matching canonicalize+executed triggers escalation."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)
-        prior = [
-            PriorProposalSummary(
-                proposal_class="canonicalize",
-                confidence=0.70,
-                outcome="rejected",
-            ),
-            PriorProposalSummary(
-                proposal_class="canonicalize",
-                confidence=0.85,
-                outcome="executed",
-            ),
-        ]
-        rec = compute_structural_recommendation(c, prior_proposals=prior)
-        assert rec.suggested_action == "merge"
-        assert rec.confidence == 0.80  # Escalation confidence
 
     def test_canonical_direction_violation_mentions_two_paths(self) -> None:
         """canonical_direction_violation reasoning mentions both normalize and rename paths."""
@@ -161,8 +96,8 @@ class TestStructuralEscalation:
         assert "rename" in rec.reasoning.lower()
         assert "high_risk_override" in rec.reasoning
 
-    def test_non_probable_duplicate_ignores_prior_proposals(self) -> None:
-        """Prior proposals should only affect probable_duplicate candidates."""
+    def test_exact_node_duplicate_recommends_merge(self) -> None:
+        """Exact node duplicate → merge at high confidence."""
         c = Candidate(
             run_id=_RUN_ID,
             schema_version=_SCHEMA_VERSION,
@@ -173,14 +108,6 @@ class TestStructuralEscalation:
             detection_method="exact_node_dedupe_key",
             collision_context={"duplicate_count": 2},
         )
-        prior = [
-            PriorProposalSummary(
-                proposal_class="canonicalize",
-                confidence=0.85,
-                outcome="executed",
-            )
-        ]
-        rec = compute_structural_recommendation(c, prior_proposals=prior)
-        # Exact node dup → merge at 0.95 (not escalated)
+        rec = compute_structural_recommendation(c)
         assert rec.suggested_action == "merge"
         assert rec.confidence == 0.95

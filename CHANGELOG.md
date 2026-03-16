@@ -2,6 +2,24 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.6] - 2026-03-16
+
+### Fixed
+- Merge proposals now enforced for high-similarity duplicates (jw >= 0.90) across pipeline
+- Escalation check matched against actual "executed" state (was matching "applied")
+- Diff builder handles relationship-only merge targets without crashing
+
+### Changed
+- Pipeline candidate filter simplified — all non-rejected proposals block re-processing
+- Prompt template upgraded to v9 with binding rule for duplicate structural recommendations
+
+### Removed
+- Canonicalize-to-merge escalation path (dead code after pipeline simplification)
+- `_check_escalation()` and `_load_prior_proposals()` functions (unreachable after upstream filter change)
+- `PriorProposalSummary` model (no longer used)
+
+---
+
 ## [1.0.5] - 2026-03-15
 
 ### Added

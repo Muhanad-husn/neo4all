@@ -407,8 +407,6 @@ class ProposalService:
         """Archive non-executed proposals for a run to a timestamped S3 prefix.
 
         Executed proposals are **retained** so that:
-          - ``_load_prior_proposals`` can detect prior canonicalize→merge
-            escalation even after archiving.
           - The agent-pipeline candidate filter (step 2b) correctly excludes
             candidates that already have an executed proposal.
 
