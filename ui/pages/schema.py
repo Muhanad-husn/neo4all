@@ -458,7 +458,7 @@ def _render_propose_section(state: StateManager, *, has_proposal: bool) -> None:
         submitted = st.form_submit_button(
             "Propose Schema",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted:
@@ -507,7 +507,7 @@ def _render_editor_section(state: StateManager) -> None:
         node_df,
         key=f"node_editor_{v}",
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "node_class": st.column_config.TextColumn(
@@ -557,7 +557,7 @@ def _render_editor_section(state: StateManager) -> None:
         edge_df,
         key=f"edge_editor_{v}",
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "start_node_type": st.column_config.TextColumn(
@@ -603,11 +603,11 @@ def _render_editor_section(state: StateManager) -> None:
         if st.button(
             "Approve & Lock Schema",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         ):
             _handle_approve(state, edited_nodes_df, edited_edges_df)
     with col_repropose:
-        if st.button("Re-propose", use_container_width=True, help="Discard this proposal and enter a new domain description."):
+        if st.button("Re-propose", width="stretch", help="Discard this proposal and enter a new domain description."):
             state.clear_proposed_schema()
             st.rerun()
 
@@ -648,7 +648,7 @@ def _render_locked_view(state: StateManager) -> None:
         if nodes:
             st.dataframe(
                 _nodes_to_df(nodes),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -659,7 +659,7 @@ def _render_locked_view(state: StateManager) -> None:
         if edges:
             st.dataframe(
                 _edges_to_df(edges),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:

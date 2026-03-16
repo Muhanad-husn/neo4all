@@ -55,7 +55,7 @@ def render_schema_tab(run_id: str) -> None:
                 }
                 for n in nodes
             ]
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
         else:
             st.caption("No node types defined.")
 
@@ -70,7 +70,7 @@ def render_schema_tab(run_id: str) -> None:
                 }
                 for e in edges
             ]
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
         else:
             st.caption("No edge types defined.")
 
@@ -80,4 +80,4 @@ def render_schema_tab(run_id: str) -> None:
         values = [len(n.get("properties", [])) for n in nodes]
         if any(v > 0 for v in values):
             fig = donut_chart(labels, values, "Node Types by Property Count")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")

@@ -2,7 +2,7 @@
 ui/components/plotly_helpers.py — Shared Plotly figure factories for dashboard tabs.
 
 Provides a consistent visual style across all dashboard charts.  Every function
-returns a ``go.Figure`` rendered via ``st.plotly_chart(fig, use_container_width=True)``.
+returns a ``go.Figure`` rendered via ``st.plotly_chart(fig, width="stretch")``.
 
 Architecture rules:
   - Pure figure factories — no business logic (CLAUDE.md §4.1, SKILL-B R-B3).

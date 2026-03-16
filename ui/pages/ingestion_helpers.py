@@ -406,7 +406,7 @@ def _render_single_doc_chunks(
 
     st.dataframe(
         styled,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Chunk ID": st.column_config.TextColumn(

@@ -327,7 +327,7 @@ def _render_summary_section(
             }
             for j in completed_jobs
         ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
     st.caption(
         "Detailed per-type breakdown and entity browsing are available "

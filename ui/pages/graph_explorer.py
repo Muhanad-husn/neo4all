@@ -91,7 +91,7 @@ def _render_type_breakdown(by_type: list[dict[str, Any]], label: str) -> None:
         return
     rows = [{"Type": entry["type"], "Count": entry["count"]} for entry in by_type]
     st.markdown(f"**{label}**")
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _page_selector(*, total: int, page_size: int, key: str) -> int:
@@ -225,7 +225,7 @@ def _render_node_browser(run_id: str) -> None:
         }
         for item in items
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     # --- Step 5: Full property detail in expandable section ---
     with st.expander(f"Full property view — {len(items)} node(s)"):
@@ -336,7 +336,7 @@ def _render_edge_browser(run_id: str) -> None:
         }
         for item in items
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     # --- Step 5: Full property detail in expandable section ---
     with st.expander(f"Full property view — {len(items)} edge(s)"):

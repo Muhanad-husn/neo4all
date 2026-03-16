@@ -773,7 +773,7 @@ def _render_excluded_items(run_id: str, actor: str) -> None:
         }
         for p in proposals
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     # Per-item restore buttons.
     for p in proposals:

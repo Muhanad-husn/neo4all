@@ -54,7 +54,7 @@ def render_ingestion_tab(run_id: str) -> None:
             list(parser_counts.values()),
             "Parser Tier Distribution",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.divider()
 
@@ -70,7 +70,7 @@ def render_ingestion_tab(run_id: str) -> None:
         }
         for d in documents
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     # Per-document chunk expander
     for d in documents:
@@ -100,7 +100,7 @@ def render_ingestion_tab(run_id: str) -> None:
                 }
                 for c in chunks
             ]
-            st.dataframe(chunk_rows, use_container_width=True, hide_index=True)
+            st.dataframe(chunk_rows, width="stretch", hide_index=True)
 
     # Quality flag distribution across all documents
     all_clean = 0
@@ -122,4 +122,4 @@ def render_ingestion_tab(run_id: str) -> None:
             [all_clean, all_flagged],
             "Chunk Quality Distribution",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")

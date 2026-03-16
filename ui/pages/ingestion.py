@@ -157,7 +157,7 @@ def _render_document_list(run_id: str) -> list[dict[str, Any]]:
 
     st.dataframe(
         _docs_to_df(documents),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Doc ID": st.column_config.TextColumn(

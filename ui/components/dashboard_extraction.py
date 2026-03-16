@@ -61,7 +61,7 @@ def _extraction_auto_refresh(run_id: str) -> None:
 
     # Gauge chart
     fig = gauge_chart(frac, "Extraction Completion")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Status metrics
     c1, c2, c3 = st.columns(3)
@@ -86,7 +86,7 @@ def _extraction_auto_refresh(run_id: str) -> None:
                 "Entities per Chunk",
                 horizontal=True,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Entity yield metrics
         render_entity_yield_metrics(jobs_list)

@@ -313,7 +313,7 @@ def _render_candidate_group(
             }
             for c in candidates
         ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
         # Bulk orphan delete button for structural anomaly groups.
         if ctype == "structural_anomaly" and run_id and actor:
