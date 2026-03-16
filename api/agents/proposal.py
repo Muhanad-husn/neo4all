@@ -42,7 +42,8 @@ from api.models.candidate import Candidate, CandidateLane, CandidateType
 from api.observability.logger import get_logger
 from api.observability.metrics import get_metrics
 from api.proposals.models import ElementRef, ProposalClass, ProposalPacket
-from api.proposals.service import ProposalService
+from api.proposals.service import ProposalService, ProposalValidationError
+from api.proposals.storage import ProposalStorageError
 from api.schema.models import SchemaVersion
 from api.services.llm import JobConfig, LLMClient
 
@@ -496,7 +497,21 @@ class ProposalComposerAgent:
         # 6. Submit via ProposalService — same governed pipeline as manual.
         try:
             stored = await self._get_proposal_service().create(packet)
-        except Exception as exc:
+        except ProposalValidationError as exc:
+            logger.error(
+                "proposal_composition_validation_failed",
+                candidate_id=candidate_id,
+                run_id=decision.run_id,
+                proposal_id=packet.proposal_id,
+                error=str(exc),
+                duration_ms=duration_ms,
+            )
+            self._record_telemetry(
+                metrics, decision.run_id, candidate_id, duration_ms,
+                prompt_tokens, completion_tokens, success=False,
+            )
+            return None
+        except ProposalStorageError as exc:
             logger.error(
                 "proposal_composition_storage_failed",
                 candidate_id=candidate_id,

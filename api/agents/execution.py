@@ -377,14 +377,14 @@ class ExecutionAgent:
                 ttl=cooldown_seconds,
             )
 
-        # --- 5b. Auto-trigger scoped candidate re-detection after merge ---
-        if outcome == AuditOutcome.applied and self._merge_affected_keys:
-            # Wait for Aura read replicas to propagate the mutation before
-            # re-detecting candidates in the merge-affected neighborhood.
-            await asyncio.sleep(cooldown_seconds)
-            await self._run_scoped_detection(
-                diff.run_id, diff.schema_version, diff.diff_id
-            )
+            # --- 5b. Auto-trigger scoped candidate re-detection after merge ---
+            if self._merge_affected_keys:
+                # Wait for Aura read replicas to propagate the mutation before
+                # re-detecting candidates in the merge-affected neighborhood.
+                await asyncio.sleep(cooldown_seconds)
+                await self._run_scoped_detection(
+                    diff.run_id, diff.schema_version, diff.diff_id
+                )
 
         # --- 6. Write immutable audit record ---
         record = AuditRecord.make(

@@ -412,7 +412,7 @@ class RetrievalAugmentationAgent:
                 score += 0.50
             elif jw >= 0.90:
                 score += 0.40
-            elif jw >= 0.90:
+            elif jw >= 0.85:
                 score += 0.30
             if cj > 0.0:
                 score += min(cj, 0.2)
