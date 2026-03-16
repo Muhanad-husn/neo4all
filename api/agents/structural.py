@@ -206,32 +206,31 @@ def _recommend_probable_duplicate(
                 ),
             )
 
-    # Pattern 6: High similarity + shared graph neighbourhood → merge
-    if jw >= 0.90 and cj > 0:
-        conf = round(0.75 + min(cj, 0.15), 2)
-        return StructuralRecommendation(
-            suggested_action="merge",
-            confidence=conf,
-            reasoning=(
+    # Pattern 6: High similarity → merge.
+    # With jw >= 0.90 the names are near-identical; the human approval gate
+    # is the safety net, not a conservative heuristic.  Shared graph context
+    # boosts confidence but is not required.
+    if jw >= 0.90:
+        if cj > 0:
+            conf = round(0.75 + min(cj, 0.15), 2)
+            reasoning = (
                 f"High similarity between '{val_a}' and '{val_b}' "
                 f"(similarity: {jw:.2f}) with shared graph neighbours "
                 f"(context overlap: {cj:.2f}). Strong evidence these "
                 f"represent the same entity."
-            ),
-        )
-
-    # High similarity, no shared context → canonicalize (safer)
-    if jw >= 0.90:
-        conf = round(0.70 + min(tok * 0.1, 0.10), 2)
-        return StructuralRecommendation(
-            suggested_action="canonicalize",
-            confidence=conf,
-            reasoning=(
+            )
+        else:
+            conf = round(0.70 + min(tok * 0.1, 0.10), 2)
+            reasoning = (
                 f"High similarity between '{val_a}' and '{val_b}' "
                 f"(similarity: {jw:.2f}, word overlap: {tok:.2f}). "
-                f"No shared graph neighbours — canonicalize rather "
-                f"than merge."
-            ),
+                f"Merge recommended — human approval gate provides "
+                f"the safety check."
+            )
+        return StructuralRecommendation(
+            suggested_action="merge",
+            confidence=conf,
+            reasoning=reasoning,
         )
 
     # Below thresholds (shouldn't happen — detector gate is 0.90)

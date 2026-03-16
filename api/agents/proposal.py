@@ -402,6 +402,14 @@ class ProposalComposerAgent:
                         confidence=p.confidence_score,
                         outcome=str(p.state),
                     ))
+            logger.info(
+                "prior_proposals_loaded",
+                run_id=run_id,
+                candidate_id=candidate_id,
+                count=len(summaries),
+                outcomes=[s.outcome for s in summaries],
+                classes=[s.proposal_class for s in summaries],
+            )
             return summaries
         except Exception:
             logger.debug(

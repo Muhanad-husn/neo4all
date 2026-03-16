@@ -69,9 +69,9 @@ class TestStructuralEscalation:
         assert rec.suggested_action == "merge"
         assert rec.confidence <= 0.90  # Normal merge confidence
 
-    def test_prior_canonicalize_applied_escalates_to_merge(self) -> None:
-        """A prior applied canonicalize should escalate to merge."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)  # Would normally be canonicalize
+    def test_prior_canonicalize_executed_escalates_to_merge(self) -> None:
+        """A prior executed canonicalize should escalate to merge (higher confidence)."""
+        c = _make_probable_dup(jw=0.92, cj=0.0)
         prior = [
             PriorProposalSummary(
                 proposal_class="canonicalize",
@@ -81,11 +81,11 @@ class TestStructuralEscalation:
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
         assert rec.suggested_action == "merge"
-        assert rec.confidence == 0.80
+        assert rec.confidence == 0.80  # Escalation confidence
         assert "escalat" in rec.reasoning.lower()
 
     def test_prior_canonicalize_pending_no_escalation(self) -> None:
-        """A pending canonicalize should NOT trigger escalation."""
+        """A pending canonicalize should NOT trigger escalation (still merge from heuristic)."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
         prior = [
             PriorProposalSummary(
@@ -95,7 +95,8 @@ class TestStructuralEscalation:
             )
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
-        assert rec.suggested_action == "canonicalize"
+        # jw >= 0.90 → merge directly (no escalation needed)
+        assert rec.suggested_action == "merge"
 
     def test_prior_merge_executed_no_escalation(self) -> None:
         """A prior merge (not canonicalize) should not trigger escalation."""
@@ -108,16 +109,17 @@ class TestStructuralEscalation:
             )
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
-        assert rec.suggested_action == "canonicalize"
+        # jw >= 0.90 → merge directly
+        assert rec.suggested_action == "merge"
 
-    def test_empty_prior_list_no_escalation(self) -> None:
-        """Empty prior list should behave like None."""
+    def test_empty_prior_list_still_merges(self) -> None:
+        """Empty prior list — jw >= 0.90 produces merge directly."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
         rec = compute_structural_recommendation(c, prior_proposals=[])
-        assert rec.suggested_action == "canonicalize"
+        assert rec.suggested_action == "merge"
 
     def test_multiple_prior_proposals_first_match_wins(self) -> None:
-        """Multiple priors — first matching canonicalize+executed triggers."""
+        """Multiple priors — first matching canonicalize+executed triggers escalation."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
         prior = [
             PriorProposalSummary(
@@ -133,7 +135,7 @@ class TestStructuralEscalation:
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
         assert rec.suggested_action == "merge"
-        assert rec.confidence == 0.80
+        assert rec.confidence == 0.80  # Escalation confidence
 
     def test_canonical_direction_violation_mentions_two_paths(self) -> None:
         """canonical_direction_violation reasoning mentions both normalize and rename paths."""
