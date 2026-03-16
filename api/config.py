@@ -213,7 +213,7 @@ class Settings(BaseSettings):
     # Higher values reduce API round-trips and amortise the system prompt +
     # schema across more chunks.  Capped at 50 as a defensive upper bound.
     # -------------------------------------------------------------------------
-    EXTRACTION_BATCH_SIZE: int = Field(default=10, ge=1, le=50)
+    EXTRACTION_BATCH_SIZE: int = Field(default=5, ge=1, le=50)
 
     # -------------------------------------------------------------------------
     # Post-execution cooldown (seconds)
