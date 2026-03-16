@@ -594,28 +594,14 @@ async def delete_all_orphans(
         )
 
     # 2. Fetch candidates from cache, filter to orphan_node.
-    from api.routers.candidates import _CandidateListCache, _detection_hash
+    from api.routers.candidates import load_all_cached_candidates
 
-    orphan_candidates: list[dict[str, Any]] = []
-    for stage_val in (None, 1, 2, 3):
-        dhash = _detection_hash(schema.version_hash, stage=stage_val)
-        cache_key = CacheKey.candidates(run_id=run_id, detection_hash=dhash)
-        cached: _CandidateListCache | None = await cache.get(
-            cache_key, model=_CandidateListCache
-        )
-        if cached:
-            for c in cached.candidates:
-                if c.detection_method == "orphan_node":
-                    orphan_candidates.append(c.model_dump())
-
-    # Deduplicate by candidate_id.
-    seen: set[str] = set()
-    unique_orphans: list[dict[str, Any]] = []
-    for oc in orphan_candidates:
-        cid = oc["candidate_id"]
-        if cid not in seen:
-            seen.add(cid)
-            unique_orphans.append(oc)
+    all_candidates = await load_all_cached_candidates(run_id, schema.version_hash)
+    unique_orphans: list[dict[str, Any]] = [
+        c.model_dump()
+        for c in all_candidates
+        if c.detection_method == "orphan_node"
+    ]
 
     if not unique_orphans:
         return DeleteAllOrphansResponse(
@@ -879,4 +865,240 @@ async def execute_proposal(
         outcome=str(audit_record.outcome),
         steps_applied=audit_record.steps_applied,
         error_detail=dict(audit_record.error_detail),
+    )
+
+
+# ===========================================================================
+# Verdict Generalization (Tier 1) — batch apply same correction to siblings
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class SimilarVerdictMatch(BaseModel):
+    """A candidate matching the same structural violation pattern."""
+
+    candidate_id: str
+    collision_context: dict[str, Any]
+    involved_element_refs: list[str]
+    severity: str
+
+
+class FindSimilarVerdictsResponse(BaseResponse):
+    """Response for GET /verdicts/{run_id}/similar.
+
+    Attributes:
+        source_proposal_id:    The executed proposal used as the verdict template.
+        source_proposal_class: The proposal class of the source.
+        pattern_key:           Display-friendly description of the matched pattern.
+        matches:               Sibling candidates that can receive the same verdict.
+        total_matches:         Total number of matches found.
+    """
+
+    source_proposal_id: str = ""
+    source_proposal_class: str = ""
+    pattern_key: str = ""
+    matches: list[SimilarVerdictMatch] = []
+    total_matches: int = 0
+
+
+class ApplyVerdictBatchRequest(BaseModel):
+    """Request body for POST /verdicts/apply-batch."""
+
+    run_id: str
+    source_proposal_id: str
+    candidate_ids: list[str]
+
+    @field_validator("run_id", "source_proposal_id")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def _non_empty_list(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("candidate_ids must contain at least one entry")
+        return v
+
+
+class ApplyVerdictBatchResponse(BaseResponse):
+    """Response for POST /verdicts/apply-batch.
+
+    Attributes:
+        proposals_created: Number of new proposals created in pending state.
+        proposal_ids:      IDs of the created proposals.
+        skipped:           Number of candidates skipped (already had proposals).
+        failed:            Number of candidates that failed during creation.
+    """
+
+    proposals_created: int = 0
+    proposal_ids: list[str] = []
+    skipped: int = 0
+    failed: int = 0
+
+
+# ---------------------------------------------------------------------------
+# GET /verdicts/{run_id}/similar
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/verdicts/{run_id}/similar",
+    response_model=FindSimilarVerdictsResponse,
+    summary="Find sibling candidates sharing the same structural violation pattern",
+    responses={
+        404: {
+            "model": FindSimilarVerdictsResponse,
+            "description": "Source proposal not found",
+        },
+        409: {
+            "model": FindSimilarVerdictsResponse,
+            "description": "Source proposal not in executed state",
+        },
+    },
+)
+async def find_similar_verdicts(
+    run_id: str,
+    source_proposal_id: str,
+    response: Response,
+) -> FindSimilarVerdictsResponse:
+    """Find sibling candidates that can receive the same verdict as the source.
+
+    After executing a correction on one canonical_violation candidate, call this
+    endpoint to discover other candidates with the same (rel_type, start_type,
+    end_type, detection_method) pattern.  Only candidates without existing
+    proposals are returned.
+
+    **Errors**
+    - ``404 Not Found`` — source proposal not found.
+    - ``409 Conflict`` — source proposal not in executed state or ineligible class.
+    """
+    from api.services.curation.verdict import find_similar_candidates
+
+    logger.info(
+        "verdict_similar_requested",
+        run_id=run_id,
+        source_proposal_id=source_proposal_id,
+    )
+
+    try:
+        result = await find_similar_candidates(run_id, source_proposal_id)
+    except ValueError as exc:
+        response.status_code = 409
+        return FindSimilarVerdictsResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code="invalid_source", message=str(exc))],
+        )
+
+    if result is None:
+        response.status_code = 404
+        return FindSimilarVerdictsResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="proposal_not_found",
+                    message=f"Proposal '{source_proposal_id}' not found in run '{run_id}'.",
+                )
+            ],
+        )
+
+    matches = [
+        SimilarVerdictMatch(
+            candidate_id=m.candidate_id,
+            collision_context=m.collision_context,
+            involved_element_refs=m.involved_element_refs,
+            severity=m.severity,
+        )
+        for m in result.matches
+    ]
+
+    return FindSimilarVerdictsResponse(
+        run_id=run_id,
+        status="success",
+        source_proposal_id=result.source_proposal_id,
+        source_proposal_class=result.source_proposal_class,
+        pattern_key=result.pattern_key,
+        matches=matches,
+        total_matches=result.total_matches,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /verdicts/apply-batch
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/verdicts/apply-batch",
+    response_model=ApplyVerdictBatchResponse,
+    summary="Create proposals for multiple candidates replicating a source verdict",
+    responses={
+        404: {
+            "model": ApplyVerdictBatchResponse,
+            "description": "Source proposal not found",
+        },
+        409: {
+            "model": ApplyVerdictBatchResponse,
+            "description": "Schema not locked or source proposal invalid",
+        },
+    },
+)
+async def apply_verdict_batch(
+    request: ApplyVerdictBatchRequest,
+    response: Response,
+) -> ApplyVerdictBatchResponse:
+    """Create pending proposals for multiple candidates replicating a source verdict.
+
+    Each proposal is created in ``pending`` state and must pass through the
+    existing approval gate before execution.  No approval bypass.
+
+    **Errors**
+    - ``404 Not Found`` — source proposal not found.
+    - ``409 Conflict`` — schema not locked or source proposal in wrong state.
+    """
+    from api.services.curation.verdict import create_batch_proposals
+
+    run_id = request.run_id
+
+    logger.info(
+        "verdict_batch_requested",
+        run_id=run_id,
+        source_proposal_id=request.source_proposal_id,
+        candidate_count=len(request.candidate_ids),
+    )
+
+    try:
+        result = await create_batch_proposals(
+            run_id=run_id,
+            source_proposal_id=request.source_proposal_id,
+            candidate_ids=request.candidate_ids,
+        )
+    except ValueError as exc:
+        error_msg = str(exc)
+        if "not found" in error_msg.lower():
+            response.status_code = 404
+            code = "proposal_not_found"
+        else:
+            response.status_code = 409
+            code = "invalid_source"
+        return ApplyVerdictBatchResponse(
+            run_id=run_id,
+            status="error",
+            errors=[ErrorDetail(code=code, message=error_msg)],
+        )
+
+    return ApplyVerdictBatchResponse(
+        run_id=run_id,
+        status="success",
+        proposals_created=result.proposals_created,
+        proposal_ids=result.proposal_ids,
+        skipped=result.skipped,
+        failed=result.failed,
     )
