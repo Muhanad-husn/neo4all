@@ -174,7 +174,7 @@ class SchemaService:
     """
 
     _JOB_ID: str = "schema_propose"
-    _TEMPLATE_VERSION: str = "v1"
+    _TEMPLATE_VERSION: str = "v2"
 
     def __init__(
         self,
@@ -421,8 +421,8 @@ class SchemaService:
 
         Checks performed:
           1. Schema not already locked for this run.
-          2. Node count within 1–8 range.
-          3. Edge count within 1–15 range.
+          2. Node count within 1–50 range.
+          3. Edge count within 1–100 range.
           4. Node type uniqueness.
           5. Node class in allowed set.
           6. Node type is PascalCase (starts with uppercase, no underscores).
@@ -453,17 +453,17 @@ class SchemaService:
         # 2. Node count
         if not schema_data.nodes:
             issues.append("Schema must define at least one node type.")
-        elif len(schema_data.nodes) > 8:
+        elif len(schema_data.nodes) > 50:
             issues.append(
-                f"Too many node types ({len(schema_data.nodes)}). Maximum is 8."
+                f"Too many node types ({len(schema_data.nodes)}). Maximum is 50."
             )
 
         # 3. Edge count
         if not schema_data.edges:
             issues.append("Schema must define at least one edge type.")
-        elif len(schema_data.edges) > 15:
+        elif len(schema_data.edges) > 100:
             issues.append(
-                f"Too many edge types ({len(schema_data.edges)}). Maximum is 15."
+                f"Too many edge types ({len(schema_data.edges)}). Maximum is 100."
             )
 
         # 4. Node type uniqueness

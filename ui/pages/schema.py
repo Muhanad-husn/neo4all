@@ -623,7 +623,7 @@ def _render_upload_section(state: StateManager, *, has_proposal: bool) -> None:
             "**Edge types** require: `start_node_type`, `end_node_type` "
             "(must match a node type), `type` (SCREAMING_SNAKE_CASE). "
             "Optional: `primary_property`, `qualifier`, `additional_properties`.\n\n"
-            "**Limits**: 1–8 node types, 1–15 edge types."
+            "**Limits**: 1–50 node types, 1–100 edge types."
         )
         st.code(_UPLOAD_EXAMPLE, language="json")
 
