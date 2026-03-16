@@ -800,6 +800,12 @@ async def list_candidates(run_id: str) -> ListCandidatesResponse:
     if excluded_ids:
         deduped = [c for c in deduped if c.candidate_id not in excluded_ids]
 
+    # Filter out pairwise candidates suppressed by a chain group.
+    deduped = [
+        c for c in deduped
+        if not c.collision_context.get("suppressed_by_group")
+    ]
+
     if not deduped:
         logger.debug("candidates_list_empty", run_id=run_id)
         return ListCandidatesResponse(
