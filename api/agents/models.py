@@ -243,6 +243,14 @@ class AgentProposalOutput(BaseModel):
             "of proposal_class."
         ),
     )
+    normalize_target: str = Field(
+        default="",
+        description=(
+            "For normalize proposals on canonical violations: the existing "
+            "schema relationship type to re-type the relationship to. "
+            "Empty string when not applicable."
+        ),
+    )
 
     @field_validator("candidate_id")
     @classmethod

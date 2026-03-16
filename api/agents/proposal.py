@@ -53,7 +53,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _JOB_ID: str = "proposal_composer"
-_TEMPLATE_VERSION: str = "v10"
+_TEMPLATE_VERSION: str = "v11"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -163,6 +163,80 @@ _MERGE_ENFORCEABLE_TYPES: frozenset[CandidateType] = frozenset({
     CandidateType.probable_duplicate,
     CandidateType.exact_node_duplicate,
 })
+
+
+def _validate_normalize_target(
+    output: AgentProposalOutput,
+    candidate: Candidate,
+) -> AgentProposalOutput:
+    """Ensure normalize proposals for canonical violations have actionable targets.
+
+    Direction violations (node types don't match any schema edge) require a
+    ``normalize_target`` — without it, the diff builder falls through to a
+    property-update with empty properties, which is a no-op.  The violation
+    persists, is re-detected, and the pipeline loops forever.
+
+    Inverse violations (correct node types, wrong direction) can be auto-filled:
+    the fix is to re-create the edge with the same type but swapped endpoints.
+
+    Returns the original output unchanged when no correction is needed.
+    """
+    if output.proposal_class != "normalize":
+        return output
+    if candidate.candidate_type != CandidateType.canonical_violation:
+        return output
+    if candidate.candidate_lane != CandidateLane.relationship:
+        return output
+    if output.normalize_target:
+        return output  # target provided, nothing to fix
+
+    ctx = candidate.collision_context
+
+    # Inverse violation: same type, just need to swap endpoints.
+    # Auto-fill normalize_target with the current rel_type.
+    if candidate.detection_method == "canonical_inverse_violation":
+        rel_type = ctx.get("rel_type", "")
+        if rel_type:
+            logger.info(
+                "proposal_normalize_auto_target",
+                candidate_id=output.candidate_id,
+                detection_method=candidate.detection_method,
+                auto_target=rel_type,
+            )
+            return AgentProposalOutput(
+                candidate_id=output.candidate_id,
+                proposal_class="normalize",
+                rule_ids=output.rule_ids,
+                evidence_ids=output.evidence_ids,
+                rationale=output.rationale,
+                confidence_score=output.confidence_score,
+                high_risk_override=output.high_risk_override,
+                normalize_target=rel_type,
+            )
+
+    # Direction violation without target: normalize is a no-op → defer.
+    # The LLM said "normalize" but couldn't find an existing schema type
+    # that fits these node types.  A human must decide: rename (extends
+    # schema, high-risk) or delete.
+    logger.warning(
+        "proposal_normalize_no_target_deferred",
+        candidate_id=output.candidate_id,
+        detection_method=candidate.detection_method,
+    )
+    return AgentProposalOutput(
+        candidate_id=output.candidate_id,
+        proposal_class="defer",
+        rule_ids=output.rule_ids,
+        evidence_ids=output.evidence_ids,
+        rationale=(
+            f"{output.rationale} "
+            "[Deferred: no existing schema type fits this node pair. "
+            "Requires manual rename (schema extension) or delete.]"
+        ),
+        confidence_score=min(output.confidence_score, 0.30),
+        high_risk_override=False,
+        normalize_target="",
+    )
 
 
 def _enforce_merge_for_duplicates(
@@ -406,6 +480,11 @@ class ProposalComposerAgent:
             raw_output, candidate, evidence_report,
         )
 
+        # 4c. Validate normalize target for canonical violations.
+        #     Prevents no-op normalize proposals that cause infinite
+        #     re-detection loops (direction violations without a target type).
+        raw_output = _validate_normalize_target(raw_output, candidate)
+
         # 5. Convert AgentProposalOutput -> ProposalPacket.
         packet = self._build_proposal_packet(
             output=raw_output,
@@ -609,20 +688,53 @@ class ProposalComposerAgent:
             )
 
         targets_list: list[ElementRef] = []
+        ctx = candidate.collision_context
         for ref in candidate.involved_element_refs:
             if rel_dk and ref == rel_dk:
                 element_type = "relationship"
+                # For normalize re-type: carry metadata so the diff builder
+                # can generate delete_edge + create_edge instead of update_edge.
+                props: dict[str, Any] = {}
+                normalize_target = getattr(output, "normalize_target", "") or ""
+                if (
+                    output.proposal_class == "normalize"
+                    and normalize_target
+                ):
+                    props["_target_rel_type"] = normalize_target
+                    props["_old_rel_type"] = ctx.get("rel_type", "")
+                    # Inverse violations: swap start/end to fix direction.
+                    if candidate.detection_method == "canonical_inverse_violation":
+                        props["_start_dedupe_key"] = ctx.get("end_dedupe_key", "")
+                        props["_end_dedupe_key"] = ctx.get("start_dedupe_key", "")
+                    else:
+                        props["_start_dedupe_key"] = ctx.get("start_dedupe_key", "")
+                        props["_end_dedupe_key"] = ctx.get("end_dedupe_key", "")
+                targets_list.append(
+                    ElementRef(
+                        element_type=element_type,
+                        dedupe_key=ref,
+                        label=ref,
+                        properties=props,
+                    )
+                )
             elif candidate.candidate_lane == CandidateLane.relationship:
                 element_type = "node"  # endpoint node ref
+                targets_list.append(
+                    ElementRef(
+                        element_type=element_type,
+                        dedupe_key=ref,
+                        label=ref,
+                    )
+                )
             else:
                 element_type = "node"
-            targets_list.append(
-                ElementRef(
-                    element_type=element_type,
-                    dedupe_key=ref,
-                    label=ref,
+                targets_list.append(
+                    ElementRef(
+                        element_type=element_type,
+                        dedupe_key=ref,
+                        label=ref,
+                    )
                 )
-            )
         targets = tuple(targets_list)
 
         # Collect unique doc_ids from the evidence report for provenance.

@@ -242,25 +242,24 @@ def _recommend_canonical_violation(
         )
 
     # canonical_direction_violation — node types don't match any schema edge.
-    # The relationship may be real but mislabeled (e.g., HAS_CONTRACT between
-    # Org→Org should be WORKS_FOR).  Two paths for Agent-P:
-    #   Path 1 (normalize): an existing schema type preserves semantic meaning.
-    #   Path 2 (rename + novel name): no schema type fits — effectively extends
-    #   the schema, which is high risk and needs human review.
+    # The relationship may be semantically valid but uses a type the schema
+    # doesn't define for these node types.  Normalize requires an existing
+    # schema type that fits — if none exists (common case), the LLM must
+    # use rename (extends schema, high-risk) or delete.  Suggest normalize
+    # but at low confidence so the LLM has room to choose rename/delete.
     return StructuralRecommendation(
-        suggested_action="rename",
-        confidence=0.65,
+        suggested_action="normalize",
+        confidence=0.50,
         reasoning=(
             f"Relationship '{rel_type}' connects "
             f"{ctx.get('actual_start_type', '?')} -> "
             f"{ctx.get('actual_end_type', '?')} which matches no valid "
-            f"schema direction for this type. Two paths: "
-            f"(1) If an existing schema relationship type preserves the "
-            f"semantic meaning for this node pair, use 'normalize' to "
-            f"re-type to that existing type (low risk). "
-            f"(2) If no existing schema type fits, use 'rename' with a "
-            f"novel descriptive type name and set high_risk_override=true "
-            f"(high risk — effectively extends the schema, needs human review)."
+            f"schema direction for this type. Check the schema: if an "
+            f"existing relationship type connects these node types with "
+            f"similar meaning, use 'normalize' with normalize_target set "
+            f"to that type. If no existing type fits, use 'rename' to "
+            f"create a new type (set high_risk_override=true). If the "
+            f"relationship is an extraction error, use 'delete'."
         ),
     )
 

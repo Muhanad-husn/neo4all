@@ -840,10 +840,15 @@ async def execute_proposal(
             ],
         )
 
-    # 3. Build deterministic DiffPlan (no LLM, no randomness).
+    # 3. Refresh credentials from Redis before execution — ensures the API
+    #    process uses session-injected credentials after container restarts.
+    from api.credentials import refresh_credentials
+    await refresh_credentials()
+
+    # 4. Build deterministic DiffPlan (no LLM, no randomness).
     diff = DiffBuilder().build(packet)
 
-    # 4. Delegate to Agent-C — always returns an AuditRecord.
+    # 5. Delegate to Agent-C — always returns an AuditRecord.
     agent = ExecutionAgent()
     audit_record = await agent.execute(diff=diff, approval_id=approval_id, actor=actor)
 

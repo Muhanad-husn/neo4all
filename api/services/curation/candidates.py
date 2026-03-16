@@ -424,6 +424,8 @@ class CanonicalViolationDetector:
                             "expected_start_type": end_type,
                             "expected_end_type": start_type,
                             "rel_dedupe_key": rel.dedupe_key,
+                            "start_dedupe_key": rel.start_dedupe_key,
+                            "end_dedupe_key": rel.end_dedupe_key,
                         },
                     )
                 )
@@ -435,7 +437,11 @@ class CanonicalViolationDetector:
                         schema_version=schema_version,
                         candidate_type=CandidateType.canonical_violation,
                         candidate_lane=CandidateLane.relationship,
-                        involved_element_refs=(rel.dedupe_key,),
+                        involved_element_refs=(
+                            rel.dedupe_key,
+                            rel.start_dedupe_key,
+                            rel.end_dedupe_key,
+                        ),
                         severity=Severity.medium,
                         detection_method=self.DETECTION_METHOD_DIRECTION,
                         collision_context={
@@ -443,6 +449,8 @@ class CanonicalViolationDetector:
                             "actual_start_type": start_type,
                             "actual_end_type": end_type,
                             "rel_dedupe_key": rel.dedupe_key,
+                            "start_dedupe_key": rel.start_dedupe_key,
+                            "end_dedupe_key": rel.end_dedupe_key,
                         },
                     )
                 )

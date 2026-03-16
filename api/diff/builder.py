@@ -7,7 +7,8 @@ ProposalPacket always produces the same DiffPlan and the same diff_id.
 
 Dispatch table (proposal_class → DiffSteps produced):
   canonicalize  update_node / update_edge per target (ElementRef.properties as set)
-  normalize     update_node / update_edge per target (same shape as canonicalize)
+  normalize     delete_edge + create_edge when re-typing a relationship;
+                otherwise update_node / update_edge (same shape as canonicalize)
   rename        update_node / update_edge per target (same shape as canonicalize)
   merge         single merge_nodes step; first target is the survivor
   delete        delete_edge per rel target (sorted), then delete_node per node (sorted)
@@ -102,7 +103,7 @@ class DiffBuilder:
         """Route to the correct build method for the proposal_class."""
         dispatch: dict[ProposalClass, Any] = {
             ProposalClass.canonicalize: self._build_property_update,
-            ProposalClass.normalize: self._build_property_update,
+            ProposalClass.normalize: self._build_normalize,
             ProposalClass.rename: self._build_property_update,
             ProposalClass.merge: self._build_merge,
             ProposalClass.delete: self._build_delete,
@@ -111,7 +112,78 @@ class DiffBuilder:
         return dispatch[proposal.proposal_class](proposal)
 
     # ------------------------------------------------------------------
-    # canonicalize / normalize / rename
+    # normalize (may re-type relationships)
+    # ------------------------------------------------------------------
+
+    def _build_normalize(
+        self, proposal: ProposalPacket
+    ) -> tuple[DiffStep, ...]:
+        """Produce steps for normalize proposals.
+
+        For relationship targets with ``_target_rel_type`` metadata (canonical
+        violations that need a type change), generates a delete_edge + create_edge
+        pair because Neo4j cannot change a relationship type in-place.
+
+        For all other targets (nodes, or relationships without re-type metadata),
+        falls through to ``_build_property_update``.
+        """
+        # Check if any relationship target needs re-typing.
+        retype_targets = [
+            t for t in proposal.targets
+            if t.element_type == "relationship"
+            and t.properties.get("_target_rel_type")
+        ]
+
+        if not retype_targets:
+            # No re-type needed — treat as a standard property update.
+            return self._build_property_update(proposal)
+
+        steps: list[DiffStep] = []
+        for target in retype_targets:
+            target_rel_type = target.properties["_target_rel_type"]
+            start_dk = target.properties.get("_start_dedupe_key", "")
+            end_dk = target.properties.get("_end_dedupe_key", "")
+
+            if not start_dk or not end_dk:
+                logger.warning(
+                    "diff_normalize_retype_missing_endpoints",
+                    proposal_id=proposal.proposal_id,
+                    dedupe_key=target.dedupe_key,
+                )
+                continue
+
+            # Compute the new dedupe_key for the re-typed relationship.
+            # rel_dedupe_key = (RelType, start_key, end_key, schema_version).
+            new_dk = "::".join((
+                target_rel_type, start_dk, end_dk, proposal.schema_version,
+            ))
+
+            # Step 1: Delete the old relationship.
+            steps.append(
+                DiffStep(
+                    operation=DiffOperation.delete_edge,
+                    dedupe_key=target.dedupe_key,
+                    rationale=proposal.rationale,
+                    rule_ids=proposal.rule_ids,
+                )
+            )
+            # Step 2: Create the new relationship with the correct type.
+            steps.append(
+                DiffStep(
+                    operation=DiffOperation.create_edge,
+                    dedupe_key=new_dk,
+                    rel_type=target_rel_type,
+                    start_dedupe_key=start_dk,
+                    end_dedupe_key=end_dk,
+                    rationale=proposal.rationale,
+                    rule_ids=proposal.rule_ids,
+                )
+            )
+
+        return tuple(steps)
+
+    # ------------------------------------------------------------------
+    # canonicalize / rename
     # ------------------------------------------------------------------
 
     def _build_property_update(
@@ -128,7 +200,8 @@ class DiffBuilder:
 
         Args:
             proposal: ProposalPacket with proposal_class in
-                      {canonicalize, normalize, rename}.
+                      {canonicalize, rename} (normalize delegates here
+                      only for non-retype cases).
 
         Returns:
             Tuple of DiffStep (one per target), sorted by dedupe_key.
