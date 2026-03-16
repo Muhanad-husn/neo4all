@@ -28,6 +28,16 @@ COLORS: list[str] = [
     "#19D3F3",
     "#FF6692",
     "#B6E880",
+    "#FF97FF",
+    "#FECB52",
+    "#72B7B2",
+    "#E45756",
+    "#54A24B",
+    "#EECA3B",
+    "#B279A2",
+    "#D6616B",
+    "#9D755D",
+    "#BAB0AC",
 ]
 
 
@@ -52,7 +62,7 @@ def bar_chart(
     color: str | Sequence[str] | None = None,
 ) -> go.Figure:
     """Simple bar chart (vertical or horizontal)."""
-    colours = color if color is not None else COLORS[: len(labels)]
+    colours = color if color is not None else [COLORS[i % len(COLORS)] for i in range(len(labels))]
     if horizontal:
         fig = go.Figure(go.Bar(y=list(labels), x=list(values), orientation="h", marker_color=colours))
     else:
@@ -72,7 +82,7 @@ def donut_chart(
             labels=list(labels),
             values=list(values),
             hole=0.45,
-            marker=dict(colors=COLORS[: len(labels)]),
+            marker=dict(colors=[COLORS[i % len(COLORS)] for i in range(len(labels))]),
         )
     )
     fig.update_layout(**_base_layout(title=title))

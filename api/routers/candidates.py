@@ -58,8 +58,11 @@ logger = get_logger(__name__)
 
 router = APIRouter(tags=["candidates"])
 
-# 5-minute TTL for candidate results (SKILL-D R-D8)
-_CANDIDATE_CACHE_TTL: int = 300
+# 24-hour TTL for candidate results — candidates are deterministic and
+# immutable once generated; explicit invalidation after graph mutations
+# (SKILL-D R-D10) handles staleness.  The short 5-minute TTL from R-D8
+# caused the dashboard to lose candidate data before users could review it.
+_CANDIDATE_CACHE_TTL: int = 86_400
 
 # Severity sort order: critical first.
 _SEVERITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -709,7 +712,7 @@ async def generate_candidates(
     candidates_out = [_to_candidate_out(c) for c in unique]
 
     # ------------------------------------------------------------------
-    # 6. Cache results with 5-minute TTL (SKILL-D R-D8)
+    # 6. Cache results with 24-hour TTL (SKILL-D R-D8, R-D10)
     # ------------------------------------------------------------------
     await cache.set(
         cache_key,

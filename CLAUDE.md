@@ -444,7 +444,7 @@ The rules below are extracted from the skill files. Refer to the full skill file
 - **R-D5**: Never log credentials, API keys, raw document content, or full LLM prompts in production
 - **R-D6**: Redis-backed cache via `api/cache/client.py` — no direct Redis calls outside this module
 - **R-D7**: Cache keys via `CacheKey` builders in `api/cache/keys.py` — no ad-hoc string concatenation
-- **R-D8**: Cache: locked schema (run lifetime), manifest (1h), graph queries (5min), chunks (30min), candidates (5min)
+- **R-D8**: Cache: locked schema (run lifetime), manifest (1h), graph queries (5min), chunks (30min), candidates (24h)
 - **R-D9**: Cache misses are normal (DEBUG level) — system falls through to source; Redis failures logged at WARNING, never fail-closed
 - **R-D10**: After any graph mutation, invalidate all run-scoped cache keys (post-execution hook in Agent-C)
 - **R-D11**: Monitoring endpoints introduced progressively per spec (see `SKILL-D` for the full table)

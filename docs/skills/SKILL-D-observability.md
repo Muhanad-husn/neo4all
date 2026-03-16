@@ -39,4 +39,4 @@ Run after every increment:
 | Document manifest | `manifest:{run_id}:{doc_id}` | 1 hour |
 | Graph reader queries | `gq:{run_id}:{query_hash}` | 5 minutes |
 | Chunk text | `chunk:{chunk_id}` | 30 minutes |
-| Candidate results | `candidates:{run_id}:{detection_hash}` | 5 minutes |
+| Candidate results | `candidates:{run_id}:{detection_hash}` | 24 hours |
