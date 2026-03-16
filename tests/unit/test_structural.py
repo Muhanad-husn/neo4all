@@ -76,7 +76,7 @@ class TestStructuralEscalation:
             PriorProposalSummary(
                 proposal_class="canonicalize",
                 confidence=0.85,
-                outcome="applied",
+                outcome="executed",
             )
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
@@ -97,14 +97,14 @@ class TestStructuralEscalation:
         rec = compute_structural_recommendation(c, prior_proposals=prior)
         assert rec.suggested_action == "canonicalize"
 
-    def test_prior_merge_applied_no_escalation(self) -> None:
+    def test_prior_merge_executed_no_escalation(self) -> None:
         """A prior merge (not canonicalize) should not trigger escalation."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
         prior = [
             PriorProposalSummary(
                 proposal_class="merge",
                 confidence=0.90,
-                outcome="applied",
+                outcome="executed",
             )
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
@@ -117,7 +117,7 @@ class TestStructuralEscalation:
         assert rec.suggested_action == "canonicalize"
 
     def test_multiple_prior_proposals_first_match_wins(self) -> None:
-        """Multiple priors — first matching canonicalize+applied triggers."""
+        """Multiple priors — first matching canonicalize+executed triggers."""
         c = _make_probable_dup(jw=0.92, cj=0.0)
         prior = [
             PriorProposalSummary(
@@ -128,7 +128,7 @@ class TestStructuralEscalation:
             PriorProposalSummary(
                 proposal_class="canonicalize",
                 confidence=0.85,
-                outcome="applied",
+                outcome="executed",
             ),
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)
@@ -175,7 +175,7 @@ class TestStructuralEscalation:
             PriorProposalSummary(
                 proposal_class="canonicalize",
                 confidence=0.85,
-                outcome="applied",
+                outcome="executed",
             )
         ]
         rec = compute_structural_recommendation(c, prior_proposals=prior)

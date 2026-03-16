@@ -131,7 +131,7 @@ def _check_escalation(
     Returns a StructuralRecommendation if escalation applies, None otherwise.
     """
     for pp in prior_proposals:
-        if pp.proposal_class == "canonicalize" and pp.outcome == "applied":
+        if pp.proposal_class == "canonicalize" and pp.outcome == "executed":
             return StructuralRecommendation(
                 suggested_action="merge",
                 confidence=0.80,
