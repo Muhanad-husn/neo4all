@@ -186,9 +186,11 @@ class ExtractionRunResponse(BaseResponse):
     """Response for POST /api/extraction/run.
 
     jobs_enqueued is 0 when all chunks are already complete (idempotent re-call).
+    batch_size reports the extraction batch size used for grouping.
     """
 
     jobs_enqueued: int = 0
+    batch_size: int = 0
 
 
 class ExtractionStatusResponse(BaseResponse):
@@ -328,11 +330,16 @@ async def run_extraction(
         )
 
     # ------------------------------------------------------------------
-    # 3. Enqueue jobs for all non-complete chunks
+    # 3. Collect pending chunks, write "queued" status, group into batches
     # ------------------------------------------------------------------
-    arq_pool = await get_arq_pool()
-    jobs_enqueued = 0
+    from api.config import get_settings
 
+    arq_pool = await get_arq_pool()
+    settings = get_settings()
+    batch_size = settings.EXTRACTION_BATCH_SIZE
+
+    # Collect all pending (chunk_id, doc_id) pairs.
+    pending: list[tuple[str, str]] = []  # (chunk_id, doc_id)
     for manifest in manifests:
         for chunk_id in manifest.chunk_ids:
             existing: ChunkJobStatus | None = await cache.get(
@@ -359,28 +366,40 @@ async def run_extraction(
                 ),
                 ttl=_JOB_STATUS_TTL_S,
             )
+            pending.append((chunk_id, manifest.doc_id))
 
-            await arq_pool.enqueue_job(
-                "extraction_job",
-                run_id=request.run_id,
-                chunk_id=chunk_id,
-                doc_id=manifest.doc_id,
-                correlation_id=get_correlation_id(),
-                model_override=request.model,
-            )
-            jobs_enqueued += 1
+    # Enqueue batch jobs — group pending chunks into batches.
+    import json as _json
 
-            logger.debug(
-                "extraction_chunk_enqueued",
-                run_id=request.run_id,
-                chunk_id=chunk_id,
-                doc_id=manifest.doc_id,
-            )
+    jobs_enqueued = 0
+    for batch_start in range(0, len(pending), batch_size):
+        batch = pending[batch_start : batch_start + batch_size]
+        batch_chunk_ids = [cid for cid, _ in batch]
+        batch_doc_ids = [did for _, did in batch]
+
+        await arq_pool.enqueue_job(
+            "batch_extraction_job",
+            run_id=request.run_id,
+            chunk_ids_json=_json.dumps(batch_chunk_ids),
+            doc_ids_json=_json.dumps(batch_doc_ids),
+            correlation_id=get_correlation_id(),
+            model_override=request.model,
+        )
+        jobs_enqueued += 1
+
+        logger.debug(
+            "extraction_batch_enqueued",
+            run_id=request.run_id,
+            batch_size=len(batch),
+            batch_chunk_ids=batch_chunk_ids,
+        )
 
     logger.info(
         "extraction_run_enqueued",
         run_id=request.run_id,
         jobs_enqueued=jobs_enqueued,
+        total_chunks_pending=len(pending),
+        batch_size=batch_size,
         total_manifests=len(manifests),
         schema_version=schema.version_hash,
     )
@@ -389,6 +408,7 @@ async def run_extraction(
         run_id=request.run_id,
         status="success",
         jobs_enqueued=jobs_enqueued,
+        batch_size=batch_size,
     )
 
 

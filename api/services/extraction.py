@@ -164,6 +164,28 @@ class _LLMExtractionOutput(BaseModel):
     edges: list[_RawEdge] = []
 
 
+class _BatchChunkResult(BaseModel):
+    """Per-chunk result within a batch extraction response.
+
+    chunk_id ties the extraction back to the source chunk so results
+    can be matched to the correct ExtractionResult after the LLM call.
+    """
+
+    chunk_id: str
+    nodes: list[_RawNode] = []
+    edges: list[_RawEdge] = []
+
+
+class _BatchExtractionOutput(BaseModel):
+    """Top-level batch extraction response wrapper.
+
+    Contains one _BatchChunkResult per input chunk.  The LLM must return
+    every chunk_id that was provided in the prompt.
+    """
+
+    results: list[_BatchChunkResult]
+
+
 # ---------------------------------------------------------------------------
 # Custom exception
 # ---------------------------------------------------------------------------
@@ -190,6 +212,7 @@ class ExtractionService:
 
     _JOB_ID: str = "extraction"
     _TEMPLATE_VERSION: str = "v1"
+    _BATCH_TEMPLATE_VERSION: str = "v2"
 
     def __init__(
         self,
@@ -297,6 +320,145 @@ class ExtractionService:
             schema_version=schema.version_hash,
         )
         return result
+
+    async def extract_batch(
+        self,
+        run_id: str,
+        chunks: list[tuple[str, str]],
+        model_override: str | None = None,
+    ) -> dict[str, ExtractionResult]:
+        """Extract entities and relationships from multiple chunks in one LLM call.
+
+        Args:
+            run_id:     Governed run identifier.
+            chunks:     List of (chunk_id, chunk_text) tuples.  Order is preserved
+                        in the prompt but does not affect the keyed results.
+            model_override: Optional OpenRouter model override.
+
+        Returns:
+            Dict mapping chunk_id → ExtractionResult.  Chunks that fail
+            schema validation or promotion are omitted (logged at ERROR).
+            Empty dict if the LLM call itself fails.
+
+        Raises:
+            ExtractionError: Schema not found in cache.
+
+        Log events:
+            extraction_batch_start        INFO  — run_id, batch_size
+            extraction_batch_llm_failed   ERROR — run_id, batch_size
+            extraction_batch_chunk_failed ERROR — run_id, chunk_id, error
+            extraction_batch_complete     INFO  — run_id, succeeded, failed
+        """
+        batch_size = len(chunks)
+        logger.info("extraction_batch_start", run_id=run_id, batch_size=batch_size)
+
+        # Use first chunk_id for schema lookup logging (schema is run-scoped).
+        schema = await self._get_schema(run_id=run_id, chunk_id=chunks[0][0])
+        schema_json = _schema_to_prompt_json(schema)
+
+        # Build the chunks block: each chunk as a numbered section.
+        chunk_sections: list[str] = []
+        for chunk_id, chunk_text in chunks:
+            chunk_sections.append(
+                f"### Chunk: {chunk_id}\n{chunk_text}"
+            )
+        chunks_block = "\n\n---\n\n".join(chunk_sections)
+
+        # Load batch prompt template (v2).
+        template = _load_prompt_template(self._JOB_ID, self._BATCH_TEMPLATE_VERSION)
+        system_prompt: str = template["system_prompt"]
+        user_message: str = template["user_template"].format(
+            schema_json=schema_json,
+            batch_size=batch_size,
+            chunks_block=chunks_block,
+        )
+
+        # Apply model override if provided.
+        job_config = self._job_config
+        if model_override and model_override.strip():
+            job_config = JobConfig(
+                job_id=self._job_config.job_id,
+                model=model_override.strip(),
+                temperature=self._job_config.temperature,
+                response_format=self._job_config.response_format,
+            )
+
+        logger.debug(
+            "extraction_batch_llm_start",
+            run_id=run_id,
+            batch_size=batch_size,
+            model=job_config.model,
+        )
+
+        llm_output: _BatchExtractionOutput | None = await self._llm.call(
+            job=job_config,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            response_model=_BatchExtractionOutput,
+            run_id=run_id,
+        )
+
+        if llm_output is None:
+            logger.error(
+                "extraction_batch_llm_failed",
+                run_id=run_id,
+                batch_size=batch_size,
+            )
+            return {}
+
+        # Index results by chunk_id for lookup.
+        result_map: dict[str, _BatchChunkResult] = {
+            r.chunk_id: r for r in llm_output.results
+        }
+
+        # Validate and promote each chunk's results independently.
+        valid_node_types = {n.type for n in schema.nodes}
+        valid_edge_types = {e.type for e in schema.edges}
+        results: dict[str, ExtractionResult] = {}
+        failed_count = 0
+
+        for chunk_id, _ in chunks:
+            chunk_result = result_map.get(chunk_id)
+            if chunk_result is None:
+                logger.error(
+                    "extraction_batch_chunk_missing",
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                )
+                failed_count += 1
+                continue
+
+            # Wrap in _LLMExtractionOutput for reuse of existing validation.
+            single_output = _LLMExtractionOutput(
+                nodes=chunk_result.nodes,
+                edges=chunk_result.edges,
+            )
+
+            try:
+                self._validate_schema_conformance(
+                    single_output, schema, run_id, chunk_id
+                )
+                result = self._promote_to_result(
+                    single_output, run_id, chunk_id, schema
+                )
+                results[chunk_id] = result
+            except ExtractionError as exc:
+                logger.error(
+                    "extraction_batch_chunk_failed",
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                    error=str(exc),
+                )
+                failed_count += 1
+
+        logger.info(
+            "extraction_batch_complete",
+            run_id=run_id,
+            succeeded=len(results),
+            failed=failed_count,
+            schema_version=schema.version_hash,
+        )
+        return results
 
     # ------------------------------------------------------------------
     # Private helpers

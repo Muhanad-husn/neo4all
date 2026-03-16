@@ -55,6 +55,7 @@ logger = get_logger(__name__)
 
 _JOB_ID: str = "proposal_composer"
 _TEMPLATE_VERSION: str = "v11"
+_BATCH_TEMPLATE_VERSION: str = "v12"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -543,6 +544,245 @@ class ProposalComposerAgent:
             duration_ms=final_duration_ms,
         )
         return stored
+
+    # ------------------------------------------------------------------
+    # Batch entry point
+    # ------------------------------------------------------------------
+
+    async def run_batch(
+        self,
+        candidates: list[Candidate],
+        decisions: list[OrchestratorDecision],
+        evidence_reports: list[EvidenceReport],
+    ) -> dict[str, ProposalPacket | None]:
+        """Compose proposals for multiple candidates in one LLM call.
+
+        Deterministic fast-paths (chain group merges) are handled inline
+        without the LLM.  Remaining candidates go to a single batch LLM call.
+
+        Returns a dict mapping candidate_id -> ProposalPacket (or None on
+        failure).  Per-candidate errors are isolated — one bad result does
+        not block the others.
+        """
+        from api.agents.models import BatchProposalResponse
+
+        assert len(candidates) == len(decisions) == len(evidence_reports)
+        t0 = time.perf_counter()
+        metrics = get_metrics()
+        run_id = decisions[0].run_id
+
+        logger.info(
+            "proposal_composition_batch_start",
+            run_id=run_id,
+            batch_size=len(candidates),
+        )
+
+        results: dict[str, ProposalPacket | None] = {}
+
+        # Separate deterministic fast-paths from LLM candidates.
+        llm_candidates: list[tuple[Candidate, OrchestratorDecision, EvidenceReport]] = []
+
+        for cand, dec, ev in zip(candidates, decisions, evidence_reports):
+            # Attach structural recommendation if missing.
+            if ev.structural_recommendation is None:
+                rec = compute_structural_recommendation(cand)
+                ev = ev.model_copy(update={"structural_recommendation": rec})
+
+            # Deterministic fast-path for chain group merges.
+            if cand.detection_method == "duplicate_chain_group":
+                packet = await self._deterministic_merge(
+                    candidate=cand,
+                    decision=dec,
+                    evidence_report=ev,
+                    metrics=metrics,
+                    t0=t0,
+                )
+                results[cand.candidate_id] = packet
+            else:
+                llm_candidates.append((cand, dec, ev))
+
+        if not llm_candidates:
+            logger.info(
+                "proposal_composition_batch_all_deterministic",
+                run_id=run_id,
+                deterministic_count=len(results),
+            )
+            return results
+
+        # Gather schema rules once (shared context).
+        schema_rules = await self._gather_schema_rules(run_id=run_id)
+        schema_rules_json = json.dumps(schema_rules, indent=2, ensure_ascii=True)
+
+        # Build per-candidate blocks.
+        candidate_blocks: list[str] = []
+        for i, (cand, dec, ev) in enumerate(llm_candidates, 1):
+            # Pre-canonicalize collision_context (same as single-candidate path).
+            cand_dict = cand.model_dump(mode="json")
+            ctx_copy = dict(cand_dict.get("collision_context", {}))
+            for vk in ("value_a", "value_b"):
+                if vk in ctx_copy and isinstance(ctx_copy[vk], str):
+                    ctx_copy[vk] = ctx_copy[vk].strip().title()
+            ctx_copy["_canonicalization_applied"] = True
+            cand_dict["collision_context"] = ctx_copy
+
+            cand_json = json.dumps(cand_dict, indent=2, ensure_ascii=True)
+            ev_json = json.dumps(
+                ev.model_dump(mode="json"), indent=2, ensure_ascii=True,
+            )
+            candidate_blocks.append(
+                f"### Candidate {i}\n"
+                f"#### Candidate Data\n{cand_json}\n\n"
+                f"#### Evidence Report\n{ev_json}\n"
+            )
+
+        candidates_block = "\n---\n\n".join(candidate_blocks)
+
+        # Load batch template and build prompt.
+        template = load_prompt_template(_JOB_ID, _BATCH_TEMPLATE_VERSION)
+        system_prompt: str = template["system_prompt"]
+        user_message: str = template["user_template"].format(
+            batch_size=len(llm_candidates),
+            schema_rules=schema_rules_json,
+            candidates_block=candidates_block,
+        )
+
+        # Compute batch output budget.
+        batch_max_output = sum(d.budget.max_output_tokens_p for _, d, _ in llm_candidates)
+
+        job = JobConfig(
+            job_id=_JOB_ID,
+            model=llm_candidates[0][1].model_p,
+            temperature=0.2,
+            max_tokens=batch_max_output,
+            response_format={"type": "json_object"},
+        )
+        batch_result: BatchProposalResponse | None = await self._llm.call(
+            job=job,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            response_model=BatchProposalResponse,
+            run_id=run_id,
+        )
+
+        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+        prompt_tokens = len(system_prompt) + len(user_message)
+
+        if batch_result is None:
+            logger.error(
+                "proposal_composition_batch_llm_failed",
+                run_id=run_id,
+                batch_size=len(llm_candidates),
+                duration_ms=duration_ms,
+            )
+            for cand, dec, _ in llm_candidates:
+                results[cand.candidate_id] = None
+                self._record_telemetry(
+                    metrics, run_id, cand.candidate_id, duration_ms,
+                    prompt_tokens, 0, success=False,
+                )
+            return results
+
+        # Index LLM results by candidate_id.
+        llm_outputs: dict[str, AgentProposalOutput] = {
+            r.candidate_id: r for r in batch_result.results
+        }
+
+        # Process each LLM candidate result with safety guards.
+        for cand, dec, ev in llm_candidates:
+            cid = cand.candidate_id
+            raw_output = llm_outputs.get(cid)
+
+            if raw_output is None:
+                logger.warning(
+                    "proposal_batch_missing_candidate",
+                    candidate_id=cid,
+                    run_id=run_id,
+                )
+                results[cid] = None
+                self._record_telemetry(
+                    metrics, run_id, cid, duration_ms / len(llm_candidates),
+                    prompt_tokens // len(llm_candidates), 0, success=False,
+                )
+                continue
+
+            completion_tokens = len(json.dumps(raw_output.model_dump(mode="json")))
+
+            # Safety guard — reject Cypher or executable instructions.
+            try:
+                _guard_no_cypher_or_executable(raw_output)
+            except ProposalSafetyError as exc:
+                logger.error(
+                    "proposal_composition_safety_violation",
+                    candidate_id=cid,
+                    run_id=run_id,
+                    field=exc.field,
+                    pattern=exc.pattern_name,
+                    match=exc.match,
+                )
+                results[cid] = None
+                self._record_telemetry(
+                    metrics, run_id, cid, duration_ms / len(llm_candidates),
+                    prompt_tokens // len(llm_candidates), completion_tokens,
+                    success=False,
+                )
+                continue
+
+            # Merge enforcement and normalize validation.
+            raw_output = _enforce_merge_for_duplicates(raw_output, cand, ev)
+            raw_output = _validate_normalize_target(raw_output, cand)
+
+            # Build ProposalPacket.
+            packet = self._build_proposal_packet(
+                output=raw_output,
+                candidate=cand,
+                decision=dec,
+                evidence_report=ev,
+            )
+
+            # Submit via ProposalService.
+            try:
+                stored = await self._get_proposal_service().create(packet)
+            except (ProposalValidationError, ProposalStorageError) as exc:
+                logger.error(
+                    "proposal_batch_storage_failed",
+                    candidate_id=cid,
+                    run_id=run_id,
+                    error=str(exc),
+                )
+                results[cid] = None
+                self._record_telemetry(
+                    metrics, run_id, cid, duration_ms / len(llm_candidates),
+                    prompt_tokens // len(llm_candidates), completion_tokens,
+                    success=False,
+                )
+                continue
+
+            results[cid] = stored
+            self._record_telemetry(
+                metrics, run_id, cid, duration_ms / len(llm_candidates),
+                prompt_tokens // len(llm_candidates), completion_tokens,
+                success=True,
+            )
+
+            logger.info(
+                "proposal_composition_complete",
+                candidate_id=cid,
+                run_id=run_id,
+                proposal_id=stored.proposal_id,
+                proposal_class=str(stored.proposal_class),
+                confidence_score=raw_output.confidence_score,
+                batch_mode=True,
+            )
+
+        logger.info(
+            "proposal_composition_batch_complete",
+            run_id=run_id,
+            batch_size=len(llm_candidates),
+            deterministic_count=len(results) - len(llm_candidates),
+            success_count=sum(1 for v in results.values() if v is not None),
+            duration_ms=duration_ms,
+        )
+        return results
 
     # ------------------------------------------------------------------
     # Schema rules gathering

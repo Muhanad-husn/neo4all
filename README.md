@@ -105,7 +105,7 @@ That's it. Five containers come up (FastAPI, Streamlit, Redis, RustFS, Qdrant), 
 | **0 — Connect**           | Enter Neo4j Aura credentials + OpenRouter API key. Session persists across browser restarts.                                                                                    |
 | **1 — Define Schema**     | Describe your domain in plain language. AI proposes node/edge types. You edit and lock.                                                                                         |
 | **2 — Ingest Documents**  | Upload files. Three-tier parser extracts structure. Chunks are embedded and indexed in Qdrant. You can return here from Curation to add more documents.                            |
-| **3 — Extract Knowledge** | One ARQ job per chunk. LLM extracts entities and relationships. Validated. Written to Neo4j.                                                                                    |
+| **3 — Extract Knowledge** | Chunks batched into single LLM calls (default 10/batch). Schema shared once per batch. Validated per-chunk. Written to Neo4j via idempotent MERGE.                                |
 | **4 — Curate**            | Detectors surface issues. Review evidence. Propose fixes manually or let the AI agent pipeline handle batches. Every graph mutation is approved, diffed, executed, and audited. |
 
 ---
@@ -317,7 +317,7 @@ Each document is semantically chunked (respecting headings and table boundaries)
 
 ### Phase 3: AI-Assisted Extraction
 
-Hit "Extract" and neo4all fans out one ARQ job per chunk. Each job sends chunk text + your locked schema to the LLM, validates the response (fail-closed — malformed output is blocked, not silently accepted), and writes entities to Neo4j via idempotent `MERGE`. Real-time progress tracking in the UI shows you every chunk's status as it flows through.
+Hit "Extract" and neo4all groups your chunks into batches (default 10 per batch, configurable via `EXTRACTION_BATCH_SIZE`). Each batch is processed in a single LLM call — the schema is provided once and shared across all chunks, massively reducing redundant context. Per-chunk validation is fail-closed (malformed output for one chunk doesn't block siblings), and entities are written to Neo4j via idempotent `MERGE`. Real-time progress tracking in the UI shows you every chunk's status as it flows through.
 
 ---
 
@@ -440,6 +440,7 @@ Set `DRY_RUN=true` to run the full pipeline without graph mutations. Agent-C ski
 | `ENABLE_UNSTRUCTURED`  | No       | `true`             | Enable Unstructured parser tier                              |
 | `ENABLE_RAW_FALLBACK`  | No       | `true`             | Enable raw-text fallback parser tier                         |
 | `EMBEDDING_MODEL`      | No       | `all-MiniLM-L6-v2` | Sentence-transformers model for chunk embeddings             |
+| `EXTRACTION_BATCH_SIZE`| No       | `10`               | Chunks per LLM call in batch extraction (1–50)               |
 | `DRY_RUN`              | No       | `false`            | Skip graph mutations; log diffs to S3                        |
 
 ---

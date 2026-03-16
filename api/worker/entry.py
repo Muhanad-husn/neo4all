@@ -28,8 +28,10 @@ from __future__ import annotations
 from api.graph.client import get_neo4j_client
 from api.observability.logger import configure_logging, get_logger
 from api.worker.config_sync import sync_credentials_from_redis
-from api.worker.jobs import extraction_job
+from api.worker.jobs import batch_extraction_job, extraction_job
 from api.worker.jobs_agents import (
+    batch_evidence_assembly_job,
+    batch_proposal_composition_job,
     evidence_assembly_job,
     proposal_composition_job,
     retrieval_augmentation_job,
@@ -113,9 +115,12 @@ class WorkerSettings:
 
     functions = [
         extraction_job,
+        batch_extraction_job,
         evidence_assembly_job,
         retrieval_augmentation_job,
         proposal_composition_job,
+        batch_evidence_assembly_job,
+        batch_proposal_composition_job,
     ]
     on_startup = startup
     on_shutdown = shutdown

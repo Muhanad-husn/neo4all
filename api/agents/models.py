@@ -279,3 +279,28 @@ class AgentProposalOutput(BaseModel):
         if not v.strip():
             raise ValueError("rationale must be a non-empty, non-whitespace string")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Batch response wrappers (for multi-candidate LLM calls)
+# ---------------------------------------------------------------------------
+
+
+class BatchEvidenceResponse(BaseModel):
+    """Wrapper for batch Agent-A responses.
+
+    The LLM returns a JSON object with a ``results`` array containing
+    one EvidenceReport per candidate in the batch.
+    """
+
+    results: list[EvidenceReport]
+
+
+class BatchProposalResponse(BaseModel):
+    """Wrapper for batch Agent-P responses.
+
+    The LLM returns a JSON object with a ``results`` array containing
+    one AgentProposalOutput per candidate in the batch.
+    """
+
+    results: list[AgentProposalOutput]

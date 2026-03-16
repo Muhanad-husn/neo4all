@@ -1,17 +1,24 @@
 """
 api/worker/jobs.py — ARQ jobs: extraction (SPEC-04).
 
-Extraction job (SPEC-04 S-04.1)
--------------------------------
+Extraction jobs (SPEC-04 S-04.1)
+---------------------------------
 extraction_job(ctx, run_id, chunk_id, doc_id)
+  Per-chunk extraction: idempotency check -> retrieve chunk -> LLM extraction
+  -> Neo4j write -> mark complete.
 
-Pipeline: idempotency check -> retrieve chunk -> LLM extraction -> Neo4j
-write -> mark complete.  Per-chunk failure handling: persist "failed", do NOT
-raise, sibling chunks continue.
+batch_extraction_job(ctx, run_id, chunk_ids_json, doc_ids_json)
+  Batch extraction: process multiple chunks in a single LLM call.  Fetches
+  all chunk texts, calls ExtractionService.extract_batch(), writes each
+  result to Neo4j independently.  Per-chunk failure handling: each chunk
+  gets its own job status — one failure does not block siblings.
 
 Job arguments
 -------------
 Extraction: run_id (str), chunk_id (str), doc_id (str), correlation_id (str).
+Batch extraction: run_id (str), chunk_ids_json (str), doc_ids_json (str),
+  correlation_id (str).  JSON-serialised lists because ARQ serialises
+  positional args — lists would work but JSON strings are explicit.
 
 All jobs accept an optional ``correlation_id`` parameter (SKILL-D R-D2).
 When non-empty, the ID is bound to structlog's context at job start so
@@ -37,7 +44,7 @@ from api.graph.client import Neo4jClient
 from api.graph.writer import GraphWriter
 from api.observability.correlation import set_correlation_id
 from api.observability.logger import get_logger
-from api.services.extraction import ExtractionError, get_extraction_service
+from api.services.extraction import ExtractionError, ExtractionResult, get_extraction_service
 from api.vector.indexer import get_vector_indexer
 from api.worker.config_sync import sync_credentials_from_redis
 
@@ -332,5 +339,245 @@ async def extraction_job(
             run_id=run_id,
             chunk_id=chunk_id,
             doc_id=doc_id,
+            error=error_msg,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Batch extraction job
+# ---------------------------------------------------------------------------
+
+
+async def batch_extraction_job(
+    ctx: dict,
+    run_id: str,
+    chunk_ids_json: str,
+    doc_ids_json: str,
+    correlation_id: str = "",
+    model_override: str | None = None,
+) -> None:
+    """Extract entities from multiple chunks in a single LLM call.
+
+    Groups chunks into one batch prompt, calls ExtractionService.extract_batch(),
+    then writes each chunk's results to Neo4j independently.  Per-chunk failure
+    is isolated — one bad chunk does not block siblings.
+
+    Args:
+        ctx:             ARQ worker context (must contain "neo4j_client").
+        run_id:          Governed run identifier.
+        chunk_ids_json:  JSON-serialised list of chunk_id strings.
+        doc_ids_json:    JSON-serialised list of doc_id strings (parallel to chunk_ids).
+        correlation_id:  Propagated from the HTTP request (SKILL-D R-D2).
+        model_override:  Optional OpenRouter model override.
+
+    Returns:
+        None. Results persisted to Neo4j; per-chunk statuses persisted to Redis.
+
+    Raises:
+        Nothing. All exceptions caught and translated to per-chunk "failed" statuses.
+    """
+    import json as _json
+
+    if correlation_id:
+        set_correlation_id(correlation_id)
+
+    await sync_credentials_from_redis(ctx=ctx)
+
+    chunk_ids: list[str] = _json.loads(chunk_ids_json)
+    doc_ids: list[str] = _json.loads(doc_ids_json)
+    chunk_to_doc: dict[str, str] = dict(zip(chunk_ids, doc_ids))
+
+    started_at = datetime.now(UTC).isoformat()
+    batch_size = len(chunk_ids)
+
+    logger.info(
+        "batch_extraction_start",
+        run_id=run_id,
+        batch_size=batch_size,
+    )
+
+    # Mark all chunks as running.
+    for chunk_id in chunk_ids:
+        await _set_job_status(
+            ChunkJobStatus(
+                run_id=run_id,
+                chunk_id=chunk_id,
+                doc_id=chunk_to_doc[chunk_id],
+                status="running",
+                started_at=started_at,
+            )
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # 1. Retrieve chunk texts — cache-aside (SKILL-D R-D8)
+        # ------------------------------------------------------------------
+        cache = get_cache_client()
+        indexer = get_vector_indexer()
+        chunks: list[tuple[str, str]] = []  # (chunk_id, chunk_text)
+        missing_chunks: list[str] = []
+
+        for chunk_id in chunk_ids:
+            cached_text = await cache.get(
+                CacheKey.chunk(chunk_id), model=_CachedChunkText
+            )
+            if cached_text is not None:
+                chunks.append((chunk_id, cached_text.text))
+                logger.debug("chunk_cache_hit", run_id=run_id, chunk_id=chunk_id)
+            else:
+                raw_text = await indexer.get_chunk_text(
+                    run_id=run_id, chunk_id=chunk_id
+                )
+                if raw_text is None:
+                    logger.error(
+                        "chunk_not_found",
+                        run_id=run_id,
+                        chunk_id=chunk_id,
+                        doc_id=chunk_to_doc[chunk_id],
+                    )
+                    missing_chunks.append(chunk_id)
+                    continue
+                await cache.set(
+                    CacheKey.chunk(chunk_id),
+                    _CachedChunkText(text=raw_text),
+                    ttl=_CHUNK_TEXT_TTL_S,
+                )
+                chunks.append((chunk_id, raw_text))
+
+        # Mark missing chunks as failed immediately.
+        for chunk_id in missing_chunks:
+            await _set_job_status(
+                ChunkJobStatus(
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                    doc_id=chunk_to_doc[chunk_id],
+                    status="failed",
+                    error=f"Chunk text not found for chunk_id='{chunk_id}'",
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC).isoformat(),
+                )
+            )
+
+        if not chunks:
+            logger.error(
+                "batch_extraction_no_chunks",
+                run_id=run_id,
+                batch_size=batch_size,
+            )
+            return
+
+        # ------------------------------------------------------------------
+        # 2. Batch LLM extraction
+        # ------------------------------------------------------------------
+        extraction_svc = get_extraction_service()
+        results: dict[str, ExtractionResult] = await extraction_svc.extract_batch(
+            run_id=run_id,
+            chunks=chunks,
+            model_override=model_override,
+        )
+
+        # ------------------------------------------------------------------
+        # 3. Write results to Neo4j and update statuses
+        # ------------------------------------------------------------------
+        neo4j_client: Neo4jClient = ctx["neo4j_client"]
+        writer = GraphWriter(neo4j_client)
+
+        for chunk_id, _ in chunks:
+            result = results.get(chunk_id)
+            if result is None:
+                # LLM didn't return results for this chunk or validation failed.
+                await _set_job_status(
+                    ChunkJobStatus(
+                        run_id=run_id,
+                        chunk_id=chunk_id,
+                        doc_id=chunk_to_doc[chunk_id],
+                        status="failed",
+                        error="Batch extraction returned no valid result for this chunk",
+                        started_at=started_at,
+                        completed_at=datetime.now(UTC).isoformat(),
+                    )
+                )
+                continue
+
+            try:
+                write_result = await writer.write_extraction_result(result)
+                logger.info(
+                    "graph_write_complete",
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                    nodes_created=write_result.nodes_created,
+                    nodes_matched=write_result.nodes_matched,
+                    edges_created=write_result.edges_created,
+                    edges_matched=write_result.edges_matched,
+                    edges_skipped=write_result.edges_skipped,
+                )
+                await _set_job_status(
+                    ChunkJobStatus(
+                        run_id=run_id,
+                        chunk_id=chunk_id,
+                        doc_id=chunk_to_doc[chunk_id],
+                        status="complete",
+                        nodes_created=write_result.nodes_created,
+                        nodes_matched=write_result.nodes_matched,
+                        edges_created=write_result.edges_created,
+                        edges_matched=write_result.edges_matched,
+                        edges_skipped=write_result.edges_skipped,
+                        started_at=started_at,
+                        completed_at=datetime.now(UTC).isoformat(),
+                    )
+                )
+            except Exception as exc:
+                error_msg = str(exc) or type(exc).__name__
+                logger.error(
+                    "batch_extraction_chunk_write_failed",
+                    run_id=run_id,
+                    chunk_id=chunk_id,
+                    error=error_msg,
+                )
+                await _set_job_status(
+                    ChunkJobStatus(
+                        run_id=run_id,
+                        chunk_id=chunk_id,
+                        doc_id=chunk_to_doc[chunk_id],
+                        status="failed",
+                        error=error_msg,
+                        started_at=started_at,
+                        completed_at=datetime.now(UTC).isoformat(),
+                    )
+                )
+
+        logger.info(
+            "batch_extraction_complete",
+            run_id=run_id,
+            batch_size=batch_size,
+            succeeded=len(results),
+        )
+
+    except BaseException as exc:
+        # Batch-level failure: mark all non-resolved chunks as failed.
+        error_msg = str(exc) or type(exc).__name__
+        completed_at = datetime.now(UTC).isoformat()
+        for chunk_id in chunk_ids:
+            try:
+                existing = await _get_job_status(run_id=run_id, chunk_id=chunk_id)
+                if existing is not None and existing.status in ("complete", "failed"):
+                    continue  # already resolved
+                await _set_job_status(
+                    ChunkJobStatus(
+                        run_id=run_id,
+                        chunk_id=chunk_id,
+                        doc_id=chunk_to_doc[chunk_id],
+                        status="failed",
+                        error=error_msg,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                )
+            except Exception:
+                pass  # best-effort
+        logger.error(
+            "batch_extraction_failed",
+            run_id=run_id,
+            batch_size=batch_size,
             error=error_msg,
         )

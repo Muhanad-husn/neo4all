@@ -72,13 +72,15 @@ class RunAgentPipelineResponse(BaseResponse):
     """Response for POST /agents/run.
 
     Attributes:
-        jobs_enqueued: Number of evidence_assembly_job instances enqueued.
-        model_a:       Agent-A model used for this batch.
-        model_b:       Agent-B model used for this batch.
-        model_p:       Agent-P model used for this batch.
+        jobs_enqueued:  Number of batch jobs enqueued.
+        batch_size:     Candidates per batch job.
+        model_a:        Agent-A model used for this run.
+        model_b:        Agent-B model used for this run.
+        model_p:        Agent-P model used for this run.
     """
 
     jobs_enqueued: int = 0
+    batch_size: int = 0
     model_a: str = ""
     model_b: str = ""
     model_p: str = ""
@@ -673,8 +675,12 @@ async def run_agent_pipeline(
             CacheKey.agent_job(run_id=run_id, candidate_id=candidate.candidate_id)
         )
 
-    # 6. Enqueue evidence_assembly_job for each candidate.
+    # 6. Enqueue batch_evidence_assembly_job(s), grouped by batch_size.
+    import json as _json
+
     correlation_id = get_correlation_id()
+    batch_size = agent_config.batch_size
+
     try:
         arq_pool = await get_arq_pool()
     except Exception as exc:
@@ -687,29 +693,41 @@ async def run_agent_pipeline(
         )
 
     enqueued = 0
-    for candidate, decision in zip(candidates, decisions):
+    for batch_start in range(0, len(candidates), batch_size):
+        batch_candidates = candidates[batch_start : batch_start + batch_size]
+        batch_decisions = decisions[batch_start : batch_start + batch_size]
+
+        batch_cands_payload = _json.dumps(
+            [c.model_dump(mode="json") for c in batch_candidates]
+        )
+        batch_decs_payload = _json.dumps(
+            [d.model_dump(mode="json") for d in batch_decisions]
+        )
+
         try:
             await arq_pool.enqueue_job(
-                "evidence_assembly_job",
+                "batch_evidence_assembly_job",
                 run_id=run_id,
-                candidate_json=candidate.model_dump_json(),
-                decision_json=decision.model_dump_json(),
+                candidates_json=batch_cands_payload,
+                decisions_json=batch_decs_payload,
                 correlation_id=correlation_id,
             )
             enqueued += 1
         except Exception as exc:
             logger.error(
-                "agent_pipeline_enqueue_failed",
+                "agent_pipeline_batch_enqueue_failed",
                 run_id=run_id,
-                candidate_id=candidate.candidate_id,
+                batch_start=batch_start,
+                batch_size=len(batch_candidates),
                 error=str(exc),
             )
 
     logger.info(
         "agent_pipeline_run_complete",
         run_id=run_id,
-        enqueued=enqueued,
+        batch_jobs_enqueued=enqueued,
         total_candidates=len(candidates),
+        batch_size=batch_size,
         model_a=agent_config.agent_a.model,
         model_b=agent_config.agent_b.model,
         model_p=agent_config.agent_p.model,
@@ -719,6 +737,7 @@ async def run_agent_pipeline(
         run_id=run_id,
         status="success",
         jobs_enqueued=enqueued,
+        batch_size=batch_size,
         model_a=agent_config.agent_a.model,
         model_b=agent_config.agent_b.model,
         model_p=agent_config.agent_p.model,

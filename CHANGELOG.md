@@ -2,6 +2,25 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.7] - 2026-03-16
+
+### Added
+- Batch extraction: multiple chunks processed per LLM call (default 10, configurable via `EXTRACTION_BATCH_SIZE`)
+- `batch_extraction_job` ARQ worker job for batch processing
+- `ExtractionService.extract_batch()` method — single LLM call with per-chunk validation
+- `prompts/extraction/v2.yaml` batch extraction prompt template
+- `EXTRACTION_BATCH_SIZE` environment variable (1–50, default 10)
+- Batch curation agents: Agent-A and Agent-P process multiple candidates per LLM call (default 8, configurable via `AgentConfig.batch_size`)
+- `batch_evidence_assembly_job` and `batch_proposal_composition_job` ARQ worker jobs
+- `prompts/evidence_assembly/v5.yaml` and `prompts/proposal_composer/v12.yaml` batch prompt templates
+
+### Changed
+- Extraction router groups chunks into batches before enqueuing (was 1 job per chunk)
+- Agent pipeline router groups candidates into batches before enqueuing (was 1 job per candidate)
+- Schema and system prompt shared once per batch, reducing redundant context
+
+---
+
 ## [1.0.6] - 2026-03-16
 
 ### Fixed

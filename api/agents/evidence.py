@@ -51,6 +51,9 @@ _CHUNK_DELIMITER: str = "\n---CHUNK---\n"
 _AGENT_NAME: str = "agent-a"
 _COST_PER_1K_TOKENS: float = 0.001
 
+_BATCH_JOB_ID: str = "evidence_assembly"
+_BATCH_TEMPLATE_VERSION: str = "v5"
+
 
 # ---------------------------------------------------------------------------
 # Shared utilities (also imported by api/agents/retrieval.py)
@@ -231,6 +234,140 @@ class EvidenceAssemblyAgent:
             duration_ms=duration_ms,
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Batch entry point
+    # ------------------------------------------------------------------
+
+    async def run_batch(
+        self,
+        candidates: list[Candidate],
+        decisions: list[OrchestratorDecision],
+    ) -> dict[str, EvidenceReport]:
+        """Assemble and classify evidence for multiple candidates in one LLM call.
+
+        Returns a dict mapping candidate_id -> EvidenceReport.  Candidates
+        whose results fail validation get a fallback (sufficient=False).
+        """
+        from api.agents.models import BatchEvidenceResponse
+
+        assert len(candidates) == len(decisions)
+        t0 = time.perf_counter()
+        metrics = get_metrics()
+        run_id = decisions[0].run_id
+
+        logger.info(
+            "evidence_assembly_batch_start",
+            run_id=run_id,
+            batch_size=len(candidates),
+        )
+
+        # Build per-candidate context blocks.
+        candidate_blocks: list[str] = []
+        for i, (cand, dec) in enumerate(zip(candidates, decisions), 1):
+            graph_ctx = await self._gather_graph_context(
+                run_id=dec.run_id,
+                involved_refs=list(cand.involved_element_refs),
+            )
+            chunks = await self._retrieve_chunks(
+                run_id=dec.run_id,
+                involved_refs=list(cand.involved_element_refs),
+            )
+            cand_json = json.dumps(
+                cand.model_dump(mode="json"), indent=2, ensure_ascii=True,
+            )
+            ctx_json = json.dumps(graph_ctx, indent=2, ensure_ascii=True)
+            chunk_text = self._format_chunk_texts(chunks)
+            candidate_blocks.append(
+                f"### Candidate {i}\n"
+                f"#### Candidate Data\n{cand_json}\n\n"
+                f"#### Graph Context\n{ctx_json}\n\n"
+                f"#### Source Chunks\n{chunk_text}\n"
+            )
+
+        candidates_block = "\n---\n\n".join(candidate_blocks)
+
+        # Load batch template and build prompt.
+        template = load_prompt_template(_BATCH_JOB_ID, _BATCH_TEMPLATE_VERSION)
+        system_prompt: str = template["system_prompt"]
+        user_message: str = template["user_template"].format(
+            batch_size=len(candidates),
+            candidates_block=candidates_block,
+        )
+
+        # Compute batch output budget: sum of per-candidate budgets.
+        batch_max_output = sum(d.budget.max_output_tokens_a for d in decisions)
+
+        job = JobConfig(
+            job_id=_BATCH_JOB_ID,
+            model=decisions[0].model_a,
+            temperature=0.2,
+            max_tokens=batch_max_output,
+            response_format={"type": "json_object"},
+        )
+        batch_result: BatchEvidenceResponse | None = await self._llm.call(
+            job=job,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            response_model=BatchEvidenceResponse,
+            run_id=run_id,
+        )
+
+        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+        # Build results dict, matching by candidate_id.
+        results: dict[str, EvidenceReport] = {}
+
+        if batch_result is not None:
+            # Index LLM results by candidate_id for lookup.
+            llm_results: dict[str, EvidenceReport] = {
+                r.candidate_id: r for r in batch_result.results
+            }
+            for cand, dec in zip(candidates, decisions):
+                cid = cand.candidate_id
+                report = llm_results.get(cid)
+                if report is not None:
+                    results[cid] = report
+                else:
+                    logger.warning(
+                        "evidence_batch_missing_candidate",
+                        candidate_id=cid,
+                        run_id=run_id,
+                    )
+                    results[cid] = self._build_fallback(cand, dec)
+        else:
+            logger.error(
+                "evidence_assembly_batch_failed",
+                run_id=run_id,
+                batch_size=len(candidates),
+                duration_ms=duration_ms,
+            )
+            for cand, dec in zip(candidates, decisions):
+                results[cand.candidate_id] = self._build_fallback(cand, dec)
+
+        # Telemetry per candidate.
+        prompt_tokens = len(system_prompt) + len(user_message)
+        for cand in candidates:
+            cid = cand.candidate_id
+            report = results[cid]
+            self._record_telemetry(
+                metrics=metrics,
+                run_id=run_id,
+                candidate_id=cid,
+                duration_ms=duration_ms / len(candidates),
+                report=report,
+                prompt_tokens=prompt_tokens // len(candidates),
+                completion_tokens=len(json.dumps(report.model_dump(mode="json"))),
+            )
+
+        logger.info(
+            "evidence_assembly_batch_complete",
+            run_id=run_id,
+            batch_size=len(candidates),
+            duration_ms=duration_ms,
+            sufficient_count=sum(1 for r in results.values() if r.sufficient),
+        )
+        return results
 
     # ------------------------------------------------------------------
     # Graph context gathering

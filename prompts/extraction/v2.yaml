@@ -1,0 +1,254 @@
+# prompts/extraction/v2.yaml
+#
+# Job:              extraction
+# Template version: v2
+# Introduced in:    Batch extraction enhancement
+#
+# IMMUTABILITY NOTICE
+# -------------------
+# This file is immutable once used in any run. Never edit it after initial
+# deployment. To change prompting behaviour, create v3.yaml and update
+# ExtractionService._BATCH_TEMPLATE_VERSION (CLAUDE.md §14).
+#
+# LOADER CONTRACT
+# ---------------
+# api/services/extraction.py loads this file via _load_prompt_template().
+# Required keys: system_prompt, user_template.
+# user_template is rendered with Python str.format(schema_json=...,
+# batch_size=..., chunks_block=...).
+# WARNING: any {placeholder} in user_template other than {schema_json},
+# {batch_size}, and {chunks_block} will raise a KeyError.
+# system_prompt is used verbatim — it is NOT passed through str.format().
+# Literal braces in system_prompt do not need escaping.
+#
+# OUTPUT VALIDATION
+# -----------------
+# The LLM response is validated against _BatchExtractionOutput
+# (api/services/extraction.py) which wraps _BatchChunkResult, _RawNode,
+# and _RawEdge. Each node_type and rel_type is then checked against the
+# locked SchemaVersion by ExtractionService._validate_schema_conformance().
+# Any type mismatch is logged and the failing chunk's results are discarded
+# (other chunks in the batch still succeed).
+#
+# RESPONSE FORMAT
+# ---------------
+# ExtractionService configures the LLM with response_format={"type": "json_object"},
+# so the model is constrained to return valid JSON. The system_prompt specifies
+# the exact top-level key contract the validator expects.
+
+job_id: "extraction"
+template_version: "v2"
+
+description: >-
+  Instructs the LLM to extract named entities (nodes) and relationships (edges)
+  from multiple document chunks in a single call, constrained to the types
+  defined in a locked domain schema. Each chunk is processed independently —
+  entities from one chunk do not influence extraction from another. The schema
+  is provided once and shared across all chunks, reducing redundant context.
+
+# ── System prompt ──────────────────────────────────────────────────────────────
+# Used as the system message in the OpenRouter chat completion request.
+# This string is NOT passed through str.format() at call time — all JSON
+# examples below use literal braces and are safe without escaping.
+system_prompt: |
+  You are an information extraction assistant specialising in knowledge graph
+  construction. Your task is to identify entities (nodes) and relationships
+  (edges) from MULTIPLE document chunks in a single pass, constrained strictly
+  to the types defined in a provided domain schema.
+
+  ═══════════════════════════════════════════════════════════
+  BATCH PROCESSING RULES
+  ═══════════════════════════════════════════════════════════
+  1. You will receive multiple document chunks, each identified by a chunk_id.
+  2. Process each chunk INDEPENDENTLY — do not let entities from one chunk
+     influence extraction from another chunk.
+  3. Return one result object per chunk, keyed by its chunk_id.
+  4. If a chunk yields no extractable entities, return empty arrays for that
+     chunk's nodes and edges — do NOT omit the chunk from results.
+  5. Every chunk provided MUST appear in your results array.
+
+  ═══════════════════════════════════════════════════════════
+  EXTRACTION RULES
+  ═══════════════════════════════════════════════════════════
+  1. Only use node types that appear in the schema's "nodes" list.
+     Do not invent node types. Do not use synonyms or abbreviations.
+  2. Only use relationship types that appear in the schema's "edges" list.
+     Do not invent relationship types.
+  3. For each node, extract the value of the property named in the schema's
+     "primary_property" field for that node type.
+  4. For each relationship, both the start node and end node must be
+     explicitly or strongly implied in the chunk text.
+  5. start_primary_value and end_primary_value must correspond to nodes
+     that you are also extracting in the same chunk's "nodes" array.
+  6. Do not hallucinate entities, values, or relationships not supported
+     by the text.  Omit uncertain or speculative extractions.
+  7. Extract all clearly identifiable entities — do not arbitrarily truncate.
+  8. If no entities or relationships can be extracted from a chunk, return
+     empty arrays for both "nodes" and "edges" for that chunk.
+
+  ═══════════════════════════════════════════════════════════
+  NODE EXTRACTION
+  ═══════════════════════════════════════════════════════════
+  For each entity found in a chunk:
+
+    node_type      — Exact type string from the schema (case-sensitive).
+    primary_value  — The extracted value of the schema's primary_property for
+                     this node type.  This value is used for deduplication:
+                     two chunks that mention the same entity must produce the
+                     same primary_value string so they MERGE into one graph node.
+    properties     — A JSON object containing additional properties defined in
+                     the schema's additional_properties list.  Omit properties
+                     you cannot extract — use an empty object {} if none.
+
+  ═══════════════════════════════════════════════════════════
+  RELATIONSHIP EXTRACTION
+  ═══════════════════════════════════════════════════════════
+  For each relationship found in a chunk:
+
+    rel_type             — Exact relationship type string from the schema.
+    start_node_type      — Exact node type of the source entity.
+    start_primary_value  — primary_value of the source entity (must appear in
+                           that chunk's nodes).
+    end_node_type        — Exact node type of the target entity.
+    end_primary_value    — primary_value of the target entity (must appear in
+                           that chunk's nodes).
+    properties           — Additional relationship properties from the schema.
+                           Use an empty object {} if none.
+
+  ═══════════════════════════════════════════════════════════
+  OUTPUT CONTRACT (strict JSON — no prose, no markdown fences)
+  ═══════════════════════════════════════════════════════════
+  Return a single JSON object with exactly one top-level key "results",
+  containing an array with one object per chunk:
+
+  {
+    "results": [
+      {
+        "chunk_id": "the_chunk_id_from_input",
+        "nodes": [
+          {
+            "node_type": "ExactTypeFromSchema",
+            "primary_value": "extracted primary property value",
+            "properties": {
+              "additional_prop_name": "extracted value"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "rel_type": "EXACT_REL_TYPE_FROM_SCHEMA",
+            "start_node_type": "StartNodeType",
+            "start_primary_value": "primary value of the start node",
+            "end_node_type": "EndNodeType",
+            "end_primary_value": "primary value of the end node",
+            "properties": {}
+          }
+        ]
+      }
+    ]
+  }
+
+  Constraints:
+  - "results" must always be present and contain one entry per input chunk.
+  - Each entry must include "chunk_id" matching the input chunk_id exactly.
+  - "nodes" and "edges" must always be present in each entry (use [] if empty).
+  - node_type must exactly match a type in the schema's nodes list.
+  - rel_type must exactly match a type in the schema's edges list.
+  - "properties" must be a JSON object — never null, never a string.
+  - Do not include any fields not shown in the contract above.
+  - Return only the JSON object.  No explanation, no markdown, no commentary.
+
+# ── User template ──────────────────────────────────────────────────────────────
+# Rendered at call time: str.format(schema_json=..., batch_size=...,
+# chunks_block=...).
+# ONLY {schema_json}, {batch_size}, and {chunks_block} are valid placeholders.
+# Do NOT add any other {placeholder} tokens — they will raise KeyError.
+# Do NOT include JSON examples here — all literal braces must be escaped
+# as {{ and }} if added.  Keep this template minimal and unambiguous.
+user_template: |
+  ## Domain Schema
+  {schema_json}
+
+  ## Document Chunks ({batch_size} chunks)
+  {chunks_block}
+
+  Extract all entities and relationships from each document chunk that conform
+  to the domain schema above. Process each chunk independently. Return the JSON
+  object with a "results" array containing one entry per chunk. Follow the
+  output contract in your instructions exactly.
+
+# ── Output schema reference ────────────────────────────────────────────────────
+# Documents the expected LLM response structure. This section is not read by
+# the loader at runtime.
+output_schema:
+  type: object
+  required:
+    - results
+  additionalProperties: false
+  properties:
+    results:
+      type: array
+      description: >-
+        One extraction result per input chunk. Every input chunk_id must
+        appear exactly once. Order does not matter.
+      items:
+        type: object
+        required:
+          - chunk_id
+          - nodes
+          - edges
+        additionalProperties: false
+        properties:
+          chunk_id:
+            type: string
+            minLength: 1
+            description: >-
+              Must exactly match a chunk_id from the input chunks_block.
+          nodes:
+            type: array
+            items:
+              type: object
+              required:
+                - node_type
+                - primary_value
+              additionalProperties: false
+              properties:
+                node_type:
+                  type: string
+                  minLength: 1
+                primary_value:
+                  type: string
+                  minLength: 1
+                properties:
+                  type: object
+                  additionalProperties: true
+          edges:
+            type: array
+            items:
+              type: object
+              required:
+                - rel_type
+                - start_node_type
+                - start_primary_value
+                - end_node_type
+                - end_primary_value
+              additionalProperties: false
+              properties:
+                rel_type:
+                  type: string
+                  minLength: 1
+                start_node_type:
+                  type: string
+                  minLength: 1
+                start_primary_value:
+                  type: string
+                  minLength: 1
+                end_node_type:
+                  type: string
+                  minLength: 1
+                end_primary_value:
+                  type: string
+                  minLength: 1
+                properties:
+                  type: object
+                  additionalProperties: true

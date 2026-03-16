@@ -73,6 +73,16 @@ class AgentConfig(BaseModel):
     cost_limit_per_candidate: float = Field(default=0.10, gt=0.0)
     max_retrieval_rounds: int = Field(default=3, ge=1, le=10)
     reranking_top_n: int = Field(default=5, ge=1, le=50)
+    batch_size: int = Field(
+        default=8,
+        ge=1,
+        le=20,
+        description=(
+            "Number of candidates to process per LLM call in batch mode. "
+            "Higher values reduce API round-trips but increase per-call token "
+            "usage. Capped at 20 as a defensive upper bound."
+        ),
+    )
 
 
 class Settings(BaseSettings):
@@ -196,6 +206,14 @@ class Settings(BaseSettings):
     # can review what *would* happen without touching the graph.
     # -------------------------------------------------------------------------
     DRY_RUN: bool = False
+
+    # -------------------------------------------------------------------------
+    # Extraction batch size
+    # Number of chunks to process per LLM call in batch extraction mode.
+    # Higher values reduce API round-trips and amortise the system prompt +
+    # schema across more chunks.  Capped at 50 as a defensive upper bound.
+    # -------------------------------------------------------------------------
+    EXTRACTION_BATCH_SIZE: int = Field(default=10, ge=1, le=50)
 
     # -------------------------------------------------------------------------
     # Post-execution cooldown (seconds)
