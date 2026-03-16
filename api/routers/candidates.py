@@ -37,8 +37,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
+import time
+
+from api.agents.execution import _CooldownRecord
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
+from api.config import get_settings
 from api.graph.reader import GraphReader, get_graph_reader
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
 from api.models.responses import BaseResponse, ErrorDetail
@@ -431,6 +435,33 @@ def _annotate_conflict_groups(
 
 
 # ---------------------------------------------------------------------------
+# Execution cooldown guard
+# ---------------------------------------------------------------------------
+
+
+async def _check_execution_cooldown(run_id: str) -> float | None:
+    """Return remaining cooldown seconds if a post-execution cooldown is active.
+
+    Returns None when no cooldown is in effect (normal path).
+    """
+    try:
+        cache = get_cache_client()
+        record: _CooldownRecord | None = await cache.get(
+            CacheKey.execution_cooldown(run_id),
+            model=_CooldownRecord,
+        )
+        if record is None:
+            return None
+        elapsed = time.time() - record.timestamp
+        remaining = record.cooldown_seconds - elapsed
+        return remaining if remaining > 0 else None
+    except Exception:
+        # Cache failure is non-blocking (SKILL-D R-D9).
+        logger.debug("execution_cooldown_check_failed", run_id=run_id)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # POST /api/curation/candidates/generate
 # ---------------------------------------------------------------------------
 
@@ -477,7 +508,33 @@ async def generate_candidates(
     logger.info("candidate_generation_requested", run_id=run_id, stage=stage)
 
     # ------------------------------------------------------------------
-    # 0. Validate stage parameter
+    # 0a. Execution cooldown guard — reject if Aura replicas may be stale
+    # ------------------------------------------------------------------
+    remaining = await _check_execution_cooldown(run_id)
+    if remaining is not None:
+        logger.info(
+            "candidate_generation_cooldown",
+            run_id=run_id,
+            remaining_seconds=round(remaining, 1),
+        )
+        response.status_code = 429
+        response.headers["Retry-After"] = str(int(remaining) + 1)
+        return GenerateCandidatesResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="execution_cooldown",
+                    message=(
+                        f"A graph mutation was recently executed for run '{run_id}'. "
+                        f"Retry after {int(remaining) + 1}s to allow read replica propagation."
+                    ),
+                )
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 0b. Validate stage parameter
     # ------------------------------------------------------------------
     if stage is not None and stage not in {1, 2, 3}:
         response.status_code = 422
@@ -897,6 +954,30 @@ async def generate_candidates_scoped(
         run_id=run_id,
         focus_keys_count=len(focus_keys),
     )
+
+    # Execution cooldown guard
+    remaining = await _check_execution_cooldown(run_id)
+    if remaining is not None:
+        logger.info(
+            "scoped_candidate_generation_cooldown",
+            run_id=run_id,
+            remaining_seconds=round(remaining, 1),
+        )
+        response.status_code = 429
+        response.headers["Retry-After"] = str(int(remaining) + 1)
+        return GenerateCandidatesResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="execution_cooldown",
+                    message=(
+                        f"A graph mutation was recently executed for run '{run_id}'. "
+                        f"Retry after {int(remaining) + 1}s to allow read replica propagation."
+                    ),
+                )
+            ],
+        )
 
     # Verify schema is locked
     schema_service = get_schema_service()

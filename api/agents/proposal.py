@@ -33,12 +33,12 @@ import time
 from typing import Any
 
 from api.agents.evidence import load_prompt_template
-from api.agents.models import AgentProposalOutput, EvidenceReport
+from api.agents.models import AgentProposalOutput, EvidenceReport, StructuralRecommendation
 from api.agents.orchestrator import OrchestratorDecision
 from api.agents.structural import compute_structural_recommendation
 from api.cache.client import CacheClient, get_cache_client
 from api.cache.keys import CacheKey
-from api.models.candidate import Candidate, CandidateLane
+from api.models.candidate import Candidate, CandidateLane, CandidateType
 from api.observability.logger import get_logger
 from api.observability.metrics import get_metrics
 from api.proposals.models import ElementRef, ProposalClass, ProposalPacket
@@ -153,6 +153,69 @@ def _guard_no_cypher_or_executable(output: AgentProposalOutput) -> None:
                 pattern_name="executable instruction",
                 match=exec_hit.group(0),
             )
+
+
+# ---------------------------------------------------------------------------
+# Merge enforcement for duplicate candidates
+# ---------------------------------------------------------------------------
+
+_MERGE_ENFORCEABLE_TYPES: frozenset[CandidateType] = frozenset({
+    CandidateType.probable_duplicate,
+    CandidateType.exact_node_duplicate,
+})
+
+
+def _enforce_merge_for_duplicates(
+    output: AgentProposalOutput,
+    candidate: Candidate,
+    evidence_report: EvidenceReport,
+) -> AgentProposalOutput:
+    """Override LLM proposal_class when it downgrades a structural merge to canonicalize.
+
+    When all three conditions hold:
+      1. candidate_type is probable_duplicate or exact_node_duplicate
+      2. structural recommendation suggested_action == "merge"
+      3. LLM returned proposal_class == "canonicalize"
+
+    the LLM has incorrectly downgraded the action — canonicalize only updates a
+    property and leaves both nodes alive, while merge collapses the duplicate.
+    This function overrides the proposal_class to "merge" and takes the higher
+    confidence score between the structural recommendation and the LLM output.
+
+    Returns the original output unchanged if conditions are not met.
+    """
+    if candidate.candidate_type not in _MERGE_ENFORCEABLE_TYPES:
+        return output
+
+    rec: StructuralRecommendation | None = evidence_report.structural_recommendation
+    if rec is None or rec.suggested_action != "merge":
+        return output
+
+    if output.proposal_class != "canonicalize":
+        return output
+
+    # Override: LLM downgraded merge → canonicalize
+    enforced_confidence = max(rec.confidence, output.confidence_score)
+    enforced = AgentProposalOutput(
+        candidate_id=output.candidate_id,
+        proposal_class="merge",
+        rule_ids=output.rule_ids,
+        evidence_ids=output.evidence_ids,
+        rationale=output.rationale,
+        confidence_score=enforced_confidence,
+        high_risk_override=output.high_risk_override,
+    )
+    logger.warning(
+        "proposal_merge_enforcement",
+        candidate_id=output.candidate_id,
+        candidate_type=str(candidate.candidate_type),
+        original_class="canonicalize",
+        enforced_class="merge",
+        structural_confidence=rec.confidence,
+        llm_confidence=output.confidence_score,
+        enforced_confidence=enforced_confidence,
+    )
+    return enforced
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +390,11 @@ class ProposalComposerAgent:
                 prompt_tokens, completion_tokens, success=False,
             )
             return None
+
+        # 4b. Enforce merge for duplicate candidates when LLM downgrades.
+        raw_output = _enforce_merge_for_duplicates(
+            raw_output, candidate, evidence_report,
+        )
 
         # 5. Convert AgentProposalOutput -> ProposalPacket.
         packet = self._build_proposal_packet(

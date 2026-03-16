@@ -221,6 +221,17 @@ class CacheKey:
         return f"merge_affected:{run_id}:{diff_id}"
 
     @staticmethod
+    def execution_cooldown(run_id: str) -> str:
+        """Key for post-execution cooldown marker.
+
+        Pattern: exec_cooldown:{run_id}
+        TTL: EXECUTION_COOLDOWN_SECONDS (default 10s).
+        Set by Agent-C after successful execution; checked by candidate
+        generation endpoints to avoid stale reads from Aura read replicas.
+        """
+        return f"exec_cooldown:{run_id}"
+
+    @staticmethod
     def excluded_candidates(run_id: str) -> str:
         """Key for the set of excluded candidate_ids within a run (no TTL).
 

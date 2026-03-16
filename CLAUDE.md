@@ -252,6 +252,9 @@ ENABLE_AGENT_B             # true/false — enable Agent-B retrieval augmentatio
 
 # Dry-run mode (SPEC-08)
 DRY_RUN                    # true/false — skip graph mutations, log diffs to S3 (default false)
+
+# Post-execution cooldown
+EXECUTION_COOLDOWN_SECONDS # int — seconds to block candidate generation after execution (default 10)
 ```
 
 ---

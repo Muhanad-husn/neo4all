@@ -197,6 +197,14 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     DRY_RUN: bool = False
 
+    # -------------------------------------------------------------------------
+    # Post-execution cooldown (seconds)
+    # After Agent-C executes a graph mutation, candidate generation endpoints
+    # return 429 for this many seconds to allow Aura read replicas to
+    # propagate the change before re-detecting candidates.
+    # -------------------------------------------------------------------------
+    EXECUTION_COOLDOWN_SECONDS: int = 10
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -34,6 +34,7 @@ ApprovalRecord storage contract:
 from __future__ import annotations
 
 import asyncio
+import time as _time
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -82,6 +83,19 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # ApprovalRecord — written by Approval Gate, read-only here
 # ---------------------------------------------------------------------------
+
+
+class _CooldownRecord(BaseModel):
+    """Redis marker indicating a recent graph mutation for a run.
+
+    Stored at CacheKey.execution_cooldown(run_id) with TTL equal to
+    EXECUTION_COOLDOWN_SECONDS.  Candidate generation endpoints check this
+    key and return 429 while the cooldown is active, preventing stale reads
+    from Aura read replicas that haven't propagated the mutation yet.
+    """
+
+    timestamp: float
+    cooldown_seconds: int
 
 
 class _MergeAffectedCache(BaseModel):
@@ -349,11 +363,25 @@ class ExecutionAgent:
         outcome = AuditOutcome.applied if not error_detail else AuditOutcome.failed
 
         # --- 5. Post-execution cache invalidation (SKILL-D R-D10) ---
+        cooldown_seconds = get_settings().EXECUTION_COOLDOWN_SECONDS
         if outcome == AuditOutcome.applied:
             await self._invalidate_run_cache(diff.run_id)
+            # Store cooldown marker so candidate generation endpoints can
+            # reject requests until Aura read replicas propagate the change.
+            await self._cache.set(
+                CacheKey.execution_cooldown(diff.run_id),
+                _CooldownRecord(
+                    timestamp=_time.time(),
+                    cooldown_seconds=cooldown_seconds,
+                ),
+                ttl=cooldown_seconds,
+            )
 
         # --- 5b. Auto-trigger scoped candidate re-detection after merge ---
         if outcome == AuditOutcome.applied and self._merge_affected_keys:
+            # Wait for Aura read replicas to propagate the mutation before
+            # re-detecting candidates in the merge-affected neighborhood.
+            await asyncio.sleep(cooldown_seconds)
             await self._run_scoped_detection(
                 diff.run_id, diff.schema_version, diff.diff_id
             )
