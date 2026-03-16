@@ -317,6 +317,9 @@ Claude reads `/infra/` for context but **never auto-applies infrastructure chang
 
 ## 15. Claude Directives
 
+### Core Principle
+Common sense and semantic logic always take priority over rigid contract adherence. If a rule, schema, or specification produces an outcome that is obviously wrong — semantically, logically, or practically — flag it and fix it. We can always modify the contract; we cannot accept nonsensical results. Never sacrifice a clearly correct answer to satisfy a technicality. The system exists to serve its purpose, not the other way around.
+
 ### Always Do
 - Use `./hotpatch.sh` for code-only changes — never rebuild Docker images unless dependencies or Dockerfiles changed
 - Read this file before writing code

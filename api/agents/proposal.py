@@ -53,7 +53,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _JOB_ID: str = "proposal_composer"
-_TEMPLATE_VERSION: str = "v9"
+_TEMPLATE_VERSION: str = "v10"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -170,17 +170,15 @@ def _enforce_merge_for_duplicates(
     candidate: Candidate,
     evidence_report: EvidenceReport,
 ) -> AgentProposalOutput:
-    """Override LLM proposal_class when it downgrades a structural merge to canonicalize.
+    """Override LLM proposal_class when it ignores a structural merge recommendation.
 
     When all three conditions hold:
       1. candidate_type is probable_duplicate or exact_node_duplicate
       2. structural recommendation suggested_action == "merge"
-      3. LLM returned proposal_class == "canonicalize"
+      3. LLM returned anything other than "merge"
 
-    the LLM has incorrectly downgraded the action — canonicalize only updates a
-    property and leaves both nodes alive, while merge collapses the duplicate.
-    This function overrides the proposal_class to "merge" and takes the higher
-    confidence score between the structural recommendation and the LLM output.
+    the LLM has incorrectly downgraded the action.  This function overrides
+    the proposal_class to "merge" and takes the higher confidence score.
 
     Returns the original output unchanged if conditions are not met.
     """
@@ -191,10 +189,10 @@ def _enforce_merge_for_duplicates(
     if rec is None or rec.suggested_action != "merge":
         return output
 
-    if output.proposal_class != "canonicalize":
-        return output
+    if output.proposal_class == "merge":
+        return output  # already correct
 
-    # Override: LLM downgraded merge → canonicalize
+    # Override: LLM downgraded merge → something else
     enforced_confidence = max(rec.confidence, output.confidence_score)
     enforced = AgentProposalOutput(
         candidate_id=output.candidate_id,
@@ -209,7 +207,7 @@ def _enforce_merge_for_duplicates(
         "proposal_merge_enforcement",
         candidate_id=output.candidate_id,
         candidate_type=str(candidate.candidate_type),
-        original_class="canonicalize",
+        original_class=output.proposal_class,
         enforced_class="merge",
         structural_confidence=rec.confidence,
         llm_confidence=output.confidence_score,
@@ -304,11 +302,11 @@ class ProposalComposerAgent:
             "proposal_fast_path_check",
             candidate_id=candidate_id,
             detection_method=candidate.detection_method,
-            detection_method_type=type(candidate.detection_method).__name__,
+            candidate_type=str(candidate.candidate_type),
             is_chain_group=(candidate.detection_method == "duplicate_chain_group"),
         )
         if candidate.detection_method == "duplicate_chain_group":
-            return await self._deterministic_chain_merge(
+            return await self._deterministic_merge(
                 candidate=candidate,
                 decision=decision,
                 evidence_report=evidence_report,
@@ -319,12 +317,23 @@ class ProposalComposerAgent:
         # 2. Schema rules for contextualising the LLM prompt.
         schema_rules = await self._gather_schema_rules(run_id=decision.run_id)
 
+        # 2b. Pre-canonicalize collision_context values so the LLM cannot
+        #     hide behind case/whitespace differences as an excuse to propose
+        #     canonicalize instead of merge.  Title-case value_a / value_b.
+        candidate_for_llm = candidate.model_dump(mode="json")
+        ctx_copy = dict(candidate_for_llm.get("collision_context", {}))
+        for vk in ("value_a", "value_b"):
+            if vk in ctx_copy and isinstance(ctx_copy[vk], str):
+                ctx_copy[vk] = ctx_copy[vk].strip().title()
+        ctx_copy["_canonicalization_applied"] = True
+        candidate_for_llm["collision_context"] = ctx_copy
+
         # 3. Build prompt from versioned template.
         template = load_prompt_template(_JOB_ID, _TEMPLATE_VERSION)
         system_prompt: str = template["system_prompt"]
 
         candidate_json = json.dumps(
-            candidate.model_dump(mode="json"), indent=2, ensure_ascii=True,
+            candidate_for_llm, indent=2, ensure_ascii=True,
         )
         evidence_json = json.dumps(
             evidence_report.model_dump(mode="json"), indent=2, ensure_ascii=True,
@@ -391,7 +400,8 @@ class ProposalComposerAgent:
             )
             return None
 
-        # 4b. Enforce merge for duplicate candidates when LLM downgrades.
+        # 4b. Hard backstop: if the LLM still downgrades a duplicate merge
+        #     despite the v10 prompt, override it deterministically.
         raw_output = _enforce_merge_for_duplicates(
             raw_output, candidate, evidence_report,
         )
@@ -484,10 +494,10 @@ class ProposalComposerAgent:
         return rules
 
     # ------------------------------------------------------------------
-    # Deterministic chain merge (no LLM)
+    # Deterministic merge (no LLM)
     # ------------------------------------------------------------------
 
-    async def _deterministic_chain_merge(
+    async def _deterministic_merge(
         self,
         candidate: Candidate,
         decision: OrchestratorDecision,
@@ -495,18 +505,26 @@ class ProposalComposerAgent:
         metrics: Any,
         t0: float,
     ) -> ProposalPacket | None:
-        """Produce a merge proposal for a chain group candidate without LLM.
+        """Produce a merge proposal without LLM when structural recommendation says merge.
 
-        The candidate was created by the union-find chain detector from proven
-        pairwise duplicates.  The survivor (targets[0]) is the most-connected
-        node.  No LLM reasoning is needed — the deterministic detectors
-        already established the duplicate relationship.
+        The structural recommender already made the decision from deterministic
+        metrics (exact match, JW score, name containment).  The LLM adds zero
+        value here — the human approval gate is the safety net.
+
+        Covers: chain group merges, exact node duplicates, probable duplicates
+        with name containment or high string similarity.
         """
         candidate_id = candidate.candidate_id
         ctx = candidate.collision_context
-        survivor = ctx.get("survivor_key", "?")
-        group_size = ctx.get("conflict_group_size", "?")
-        members = ctx.get("component_members", [])
+        rec = evidence_report.structural_recommendation
+        assert rec is not None  # caller guarantees this
+
+        # Build rationale from the structural recommendation's reasoning.
+        rationale = (
+            f"Deterministic merge (no LLM): {rec.reasoning} "
+            f"Candidate type: {candidate.candidate_type}, "
+            f"detection method: {candidate.detection_method}."
+        )
 
         output = AgentProposalOutput(
             candidate_id=candidate_id,
@@ -515,13 +533,8 @@ class ProposalComposerAgent:
             evidence_ids=tuple(
                 item.chunk_id for item in evidence_report.items if item.chunk_id
             ),
-            rationale=(
-                f"Deterministic chain merge: {group_size} nodes form a connected "
-                f"component of overlapping duplicates. Merging all into survivor "
-                f"'{survivor}' (highest connectivity). Members: "
-                f"{', '.join(members[:5])}{'…' if len(members) > 5 else ''}."
-            ),
-            confidence_score=0.90,
+            rationale=rationale,
+            confidence_score=rec.confidence,
         )
 
         packet = self._build_proposal_packet(
@@ -551,7 +564,7 @@ class ProposalComposerAgent:
             run_id=decision.run_id,
             proposal_id=stored.proposal_id,
             proposal_class="merge",
-            confidence_score=0.90,
+            confidence_score=rec.confidence,
             duration_ms=duration_ms,
             deterministic=True,
         )
