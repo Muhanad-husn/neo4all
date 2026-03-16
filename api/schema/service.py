@@ -405,6 +405,177 @@ class SchemaService:
         return None
 
     # ------------------------------------------------------------------
+    # validate
+    # ------------------------------------------------------------------
+
+    async def validate(
+        self,
+        run_id: str,
+        schema_data: SchemaProposal,
+    ) -> list[str]:
+        """Validate a user-supplied schema without LLM involvement.
+
+        Performs structural and semantic checks beyond Pydantic field
+        validation.  Returns a list of human-readable issue strings.
+        An empty list means the schema is ready for approval.
+
+        Checks performed:
+          1. Schema not already locked for this run.
+          2. Node count within 1–8 range.
+          3. Edge count within 1–15 range.
+          4. Node type uniqueness.
+          5. Node class in allowed set.
+          6. Node type is PascalCase (starts with uppercase, no underscores).
+          7. Edge type is SCREAMING_SNAKE_CASE (uppercase + underscores).
+          8. Edge start/end node types reference defined node types.
+          9. No orphan node types (every node participates in at least one edge).
+         10. Primary property is non-empty snake_case on every node.
+         11. Pydantic validation of NodeTypeDef / EdgeTypeDef construction.
+
+        Args:
+            run_id:      Governed run identifier.
+            schema_data: User-supplied schema to validate.
+
+        Returns:
+            List of issue descriptions.  Empty means valid.
+        """
+        issues: list[str] = []
+
+        # 1. Lock check
+        existing = await self.get_current(run_id)
+        if existing is not None:
+            issues.append(
+                f"Schema for run '{run_id}' is already locked "
+                f"(version_hash={existing.version_hash})."
+            )
+            return issues  # no point continuing
+
+        # 2. Node count
+        if not schema_data.nodes:
+            issues.append("Schema must define at least one node type.")
+        elif len(schema_data.nodes) > 8:
+            issues.append(
+                f"Too many node types ({len(schema_data.nodes)}). Maximum is 8."
+            )
+
+        # 3. Edge count
+        if not schema_data.edges:
+            issues.append("Schema must define at least one edge type.")
+        elif len(schema_data.edges) > 15:
+            issues.append(
+                f"Too many edge types ({len(schema_data.edges)}). Maximum is 15."
+            )
+
+        # 4. Node type uniqueness
+        node_types: list[str] = [n.type for n in schema_data.nodes]
+        seen: set[str] = set()
+        for nt in node_types:
+            if nt in seen:
+                issues.append(f"Duplicate node type: '{nt}'.")
+            seen.add(nt)
+        node_type_set = set(node_types)
+
+        # 5. Allowed node classes
+        allowed_classes = {
+            "Entity", "Event", "Concept", "Document",
+            "Location", "Asset", "Metric", "Role",
+        }
+        for n in schema_data.nodes:
+            if n.node_class not in allowed_classes:
+                issues.append(
+                    f"Node '{n.type}' has invalid node_class '{n.node_class}'. "
+                    f"Allowed: {', '.join(sorted(allowed_classes))}."
+                )
+
+        # 6. Node type PascalCase check
+        for n in schema_data.nodes:
+            t = n.type
+            if not t or not t[0].isupper() or "_" in t:
+                issues.append(
+                    f"Node type '{t}' must be PascalCase "
+                    "(start with uppercase, no underscores)."
+                )
+
+        # 7. Edge type SCREAMING_SNAKE_CASE check
+        for e in schema_data.edges:
+            t = e.type
+            if t != t.upper() or not t.replace("_", "").isalpha():
+                issues.append(
+                    f"Edge type '{t}' must be SCREAMING_SNAKE_CASE "
+                    "(uppercase letters and underscores only)."
+                )
+
+        # 8. Edge references valid node types
+        for e in schema_data.edges:
+            if e.start_node_type not in node_type_set:
+                issues.append(
+                    f"Edge '{e.type}' references undefined start_node_type "
+                    f"'{e.start_node_type}'."
+                )
+            if e.end_node_type not in node_type_set:
+                issues.append(
+                    f"Edge '{e.type}' references undefined end_node_type "
+                    f"'{e.end_node_type}'."
+                )
+
+        # 9. Orphan node check
+        referenced_types: set[str] = set()
+        for e in schema_data.edges:
+            referenced_types.add(e.start_node_type)
+            referenced_types.add(e.end_node_type)
+        for nt in node_type_set:
+            if nt not in referenced_types:
+                issues.append(
+                    f"Node type '{nt}' is not referenced by any edge "
+                    "(orphan node)."
+                )
+
+        # 10. Primary property snake_case check
+        for n in schema_data.nodes:
+            pp = n.primary_property
+            if pp != pp.lower() or " " in pp:
+                issues.append(
+                    f"Node '{n.type}' primary_property '{pp}' must be "
+                    "lowercase snake_case."
+                )
+
+        # 11. Pydantic construction check (catches field-level validation)
+        if not issues:
+            try:
+                tuple(
+                    NodeTypeDef(
+                        node_class=n.node_class,
+                        type=n.type,
+                        primary_property=n.primary_property,
+                        qualifier=n.qualifier,
+                        additional_properties=tuple(n.additional_properties),
+                    )
+                    for n in schema_data.nodes
+                )
+                tuple(
+                    EdgeTypeDef(
+                        start_node_type=e.start_node_type,
+                        end_node_type=e.end_node_type,
+                        type=e.type,
+                        primary_property=e.primary_property,
+                        qualifier=e.qualifier,
+                        additional_properties=tuple(e.additional_properties),
+                    )
+                    for e in schema_data.edges
+                )
+            except ValidationError as exc:
+                issues.append(f"Field validation error: {exc}")
+
+        logger.info(
+            "schema_validate_complete",
+            run_id=run_id,
+            node_count=len(schema_data.nodes),
+            edge_count=len(schema_data.edges),
+            issue_count=len(issues),
+        )
+        return issues
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 

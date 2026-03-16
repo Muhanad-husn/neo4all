@@ -43,6 +43,8 @@ from api.routers.schema_models import (
     ProposeSchemaRequest,
     ProposeSchemaResponse,
     SchemaVersionOut,
+    ValidateSchemaRequest,
+    ValidateSchemaResponse,
 )
 from api.schema.models import SchemaVersion
 from api.schema.service import (
@@ -297,6 +299,76 @@ async def approve_schema(
         run_id=request.run_id,
         status="success",
         schema_version=_schema_version_to_out(schema_version),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schema/validate
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/validate",
+    response_model=ValidateSchemaResponse,
+    summary="Validate a user-supplied schema without LLM involvement",
+)
+async def validate_schema(
+    request: ValidateSchemaRequest,
+    service: SchemaService = Depends(get_schema_service),
+) -> ValidateSchemaResponse:
+    """Validate structural and semantic correctness of a pre-prepared schema.
+
+    Performs all checks that the approval pipeline would perform, plus
+    additional semantic checks (naming conventions, orphan nodes, count
+    limits, dangling edge references). Returns issues in human-readable form.
+
+    When the response has `valid=True`, the schema can be submitted directly
+    to `POST /api/schema/approve` without modification.
+    """
+    logger.info(
+        "schema_validate_requested",
+        run_id=request.run_id,
+        node_count=len(request.schema_data.nodes),
+        edge_count=len(request.schema_data.edges),
+    )
+
+    schema_proposal = SchemaProposal.model_validate({
+        "nodes": [n.model_dump() for n in request.schema_data.nodes],
+        "edges": [e.model_dump() for e in request.schema_data.edges],
+    })
+
+    issues: list[str] = await service.validate(
+        run_id=request.run_id,
+        schema_data=schema_proposal,
+    )
+
+    if issues:
+        logger.info(
+            "schema_validate_issues_found",
+            run_id=request.run_id,
+            issue_count=len(issues),
+        )
+        return ValidateSchemaResponse(
+            run_id=request.run_id,
+            status="success",
+            valid=False,
+            issues=issues,
+            nodes=list(request.schema_data.nodes),
+            edges=list(request.schema_data.edges),
+        )
+
+    logger.info(
+        "schema_validate_success",
+        run_id=request.run_id,
+        node_count=len(request.schema_data.nodes),
+        edge_count=len(request.schema_data.edges),
+    )
+    return ValidateSchemaResponse(
+        run_id=request.run_id,
+        status="success",
+        valid=True,
+        nodes=list(request.schema_data.nodes),
+        edges=list(request.schema_data.edges),
     )
 
 

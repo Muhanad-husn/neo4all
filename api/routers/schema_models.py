@@ -220,3 +220,41 @@ class GetSchemaResponse(BaseResponse):
 
     locked: bool
     schema_version: SchemaVersionOut | None = None
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schema/validate
+# ---------------------------------------------------------------------------
+
+
+class ValidateSchemaRequest(BaseModel):
+    """Request body for POST /api/schema/validate.
+
+    Attributes:
+        run_id:      Governed run identifier.
+        schema_data: Complete node and edge definitions to validate.
+    """
+
+    run_id: str
+    schema_data: SchemaDataPayload
+
+    @field_validator("run_id")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class ValidateSchemaResponse(BaseResponse):
+    """Response for POST /api/schema/validate.
+
+    On success (no issues): status="success", valid=True, issues=[].
+    On validation issues:   status="success", valid=False, issues=[...].
+    On error (locked):      status="error", valid=False.
+    """
+
+    valid: bool = False
+    issues: list[str] = []
+    nodes: list[NodeTypePayload] = []
+    edges: list[EdgeTypePayload] = []

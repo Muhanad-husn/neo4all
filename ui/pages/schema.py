@@ -1,9 +1,15 @@
 """
 ui/pages/schema.py — Phase 1: Domain Schema Definition (SPEC-02 S-02.6).
 
-The user describes their knowledge domain in natural language. The AI proposes
-node and edge types. The user reviews and edits the proposal in data tables.
-On approval, the schema is locked and the run advances to Phase 2 (Ingestion).
+The user defines their knowledge domain schema via one of two paths:
+
+  1. **AI Generate** — describe the domain in natural language; the AI proposes
+     node and edge types for human review.
+  2. **Upload Schema** — paste a pre-prepared JSON schema; the backend validates
+     its structure and, if valid, loads it directly for approval.
+
+In both paths, the user reviews and edits the proposal in data tables before
+locking the schema for this run.
 
 Architecture rules enforced here
 ---------------------------------
@@ -16,8 +22,8 @@ Architecture rules enforced here
 
 Workflow states
 ---------------
-1. Empty    — no proposal yet; show domain description input.
-2. Proposed — LLM proposal received; show editable node/edge tables.
+1. Empty    — no proposal yet; show domain description input or upload form.
+2. Proposed — LLM proposal or uploaded schema received; show editable tables.
 3. Locked   — schema approved; show read-only tables + proceed button.
 
 Startup reconciliation
@@ -30,6 +36,7 @@ UI state is updated to reflect the locked view — no user action required.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -394,6 +401,92 @@ def _handle_approve(
     st.rerun()
 
 
+def _handle_upload(state: StateManager, raw_json: str) -> None:
+    """Handle the Upload & Validate button click.
+
+    Parses the user's raw JSON, sends it to POST /api/schema/validate for
+    structural and semantic checks, and if valid loads the schema into
+    StateManager for review in the editor tables.
+
+    Args:
+        state:    Live StateManager instance.
+        raw_json: User-pasted JSON string.
+    """
+    raw_json = raw_json.strip()
+    if not raw_json:
+        st.error("Paste a JSON schema before uploading.")
+        return
+
+    # --- Client-side JSON parse check ---
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        st.error(f"Invalid JSON: {exc}")
+        return
+
+    if not isinstance(parsed, dict):
+        st.error("JSON must be an object with 'nodes' and 'edges' keys.")
+        return
+
+    nodes_raw = parsed.get("nodes")
+    edges_raw = parsed.get("edges")
+    if not isinstance(nodes_raw, list) or not isinstance(edges_raw, list):
+        st.error(
+            "JSON must have 'nodes' (array) and 'edges' (array) top-level keys."
+        )
+        return
+
+    # --- Call backend validation ---
+    run_id = state.run_id
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "schema_data": {"nodes": nodes_raw, "edges": edges_raw},
+    }
+
+    with st.spinner("Validating schema structure…"):
+        result = _post("/api/schema/validate", payload)
+
+    if result is None:
+        st.error(
+            "Cannot reach the backend API. "
+            "Ensure the API server is running and retry."
+        )
+        return
+
+    if result.get("status") == "error":
+        _show_api_errors(result)
+        return
+
+    issues: list[str] = result.get("issues") or []
+    is_valid: bool = result.get("valid", False)
+
+    if issues:
+        st.warning(f"Schema has {len(issues)} issue(s):")
+        for i, issue in enumerate(issues, 1):
+            st.error(f"{i}. {issue}")
+        st.info(
+            "Fix the issues in your JSON and re-upload, "
+            "or load anyway to edit in the tables below."
+        )
+
+    # Load into editor regardless — user can fix issues in tables
+    validated_nodes: list[dict[str, Any]] = result.get("nodes") or nodes_raw
+    validated_edges: list[dict[str, Any]] = result.get("edges") or edges_raw
+
+    if not validated_nodes:
+        st.error("The schema defines no node types.")
+        return
+
+    if is_valid:
+        st.success(
+            "Schema is valid. Review the tables below and approve when ready.",
+            icon="✅",
+        )
+
+    state.set_proposed_schema(validated_nodes, validated_edges)
+    st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # Panel: Step 1 — domain description input
 # ---------------------------------------------------------------------------
@@ -463,6 +556,92 @@ def _render_propose_section(state: StateManager, *, has_proposal: bool) -> None:
 
     if submitted:
         _handle_propose(state, domain_description, model=schema_model)
+
+
+# ---------------------------------------------------------------------------
+# Panel: Step 1b — upload pre-prepared schema
+# ---------------------------------------------------------------------------
+
+
+_UPLOAD_EXAMPLE = """\
+{
+  "nodes": [
+    {
+      "node_class": "Entity",
+      "type": "Person",
+      "primary_property": "name",
+      "qualifier": null,
+      "additional_properties": ["title", "email"]
+    },
+    {
+      "node_class": "Entity",
+      "type": "Organization",
+      "primary_property": "name",
+      "qualifier": null,
+      "additional_properties": ["sector", "type"]
+    }
+  ],
+  "edges": [
+    {
+      "start_node_type": "Person",
+      "end_node_type": "Organization",
+      "type": "WORKS_FOR",
+      "primary_property": "title",
+      "qualifier": null,
+      "additional_properties": ["start_date"]
+    }
+  ]
+}"""
+
+
+def _render_upload_section(state: StateManager, *, has_proposal: bool) -> None:
+    """Render the JSON upload form for pre-prepared schemas.
+
+    When a proposal is already loaded (has_proposal=True), this section is
+    hidden so the editor can share the page.
+
+    Args:
+        state:        Live StateManager instance.
+        has_proposal: True when a proposal is already held in StateManager.
+    """
+    if has_proposal:
+        return
+
+    st.subheader("Upload a Pre-Prepared Schema")
+    st.write(
+        "Paste a JSON schema with `nodes` and `edges` arrays. "
+        "The backend will validate its structure — no LLM is involved. "
+        "You can edit the schema in the tables after upload."
+    )
+
+    with st.expander("Schema format reference", expanded=False):
+        st.caption(
+            "**Node types** require: `node_class` "
+            "(Entity/Event/Concept/Document/Location/Asset/Metric/Role), "
+            "`type` (PascalCase), `primary_property` (snake_case). "
+            "Optional: `qualifier`, `additional_properties`.\n\n"
+            "**Edge types** require: `start_node_type`, `end_node_type` "
+            "(must match a node type), `type` (SCREAMING_SNAKE_CASE). "
+            "Optional: `primary_property`, `qualifier`, `additional_properties`.\n\n"
+            "**Limits**: 1–8 node types, 1–15 edge types."
+        )
+        st.code(_UPLOAD_EXAMPLE, language="json")
+
+    with st.form("schema_upload_form"):
+        raw_json: str = st.text_area(
+            "Schema JSON",
+            height=300,
+            placeholder="Paste your JSON schema here…",
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button(
+            "Upload & Validate",
+            type="primary",
+            width="stretch",
+        )
+
+    if submitted:
+        _handle_upload(state, raw_json)
 
 
 # ---------------------------------------------------------------------------
@@ -703,8 +882,8 @@ def main() -> None:
     st.title("Phase 1 — Domain Schema Definition")
     st.write(
         "Define the node types and relationship types for your knowledge graph. "
-        "Describe your domain and the AI will propose a schema for your review. "
-        "You can edit the proposal before locking it for this run."
+        "Use **AI Generate** to have the AI propose a schema from a domain "
+        "description, or **Upload Schema** to paste a pre-prepared JSON schema."
     )
 
     run_id = state.run_id
@@ -727,14 +906,20 @@ def main() -> None:
     if schema_locked:
         _render_locked_view(state)
     elif state.proposed_nodes is not None:
-        # Proposal received — show collapsed describe section + editable tables.
-        _render_propose_section(state, has_proposal=True)
+        # Proposal received (from either path) — show editable tables.
         st.divider()
-        st.subheader("Step 2: Review & Edit Proposed Schema")
+        st.subheader("Step 2: Review & Edit Schema")
+        st.caption(
+            "Schema loaded. Edit the tables below, then approve to lock."
+        )
         _render_editor_section(state)
     else:
-        # No proposal yet — show the domain description form.
-        _render_propose_section(state, has_proposal=False)
+        # No proposal yet — show tabbed input.
+        tab_ai, tab_upload = st.tabs(["AI Generate", "Upload Schema"])
+        with tab_ai:
+            _render_propose_section(state, has_proposal=False)
+        with tab_upload:
+            _render_upload_section(state, has_proposal=False)
 
 
 if __name__ == "__main__":
