@@ -211,21 +211,53 @@ class DiffBuilder:
                 target_count=len(proposal.targets),
             )
 
-        merge_keys: list[str] = []
+        node_keys: list[str] = []
+        rel_keys: list[str] = []
         for target in proposal.targets:
-            if target.element_type != "node":
+            if target.element_type == "node":
+                node_keys.append(target.dedupe_key)
+            elif target.element_type == "relationship":
+                rel_keys.append(target.dedupe_key)
+            else:
                 logger.warning(
-                    "diff_merge_non_node_target",
+                    "diff_merge_unknown_element_type",
                     proposal_id=proposal.proposal_id,
                     dedupe_key=target.dedupe_key,
                     element_type=target.element_type,
                 )
-            merge_keys.append(target.dedupe_key)
+
+        # Relationship-only merge: keep first, delete the rest.
+        if rel_keys and not node_keys:
+            steps: list[DiffStep] = []
+            for key in rel_keys[1:]:  # skip survivor (first)
+                steps.append(DiffStep(
+                    operation=DiffOperation.delete_edge,
+                    dedupe_key=key,
+                    rationale=proposal.rationale,
+                    rule_ids=proposal.rule_ids,
+                ))
+            if not steps:
+                logger.warning(
+                    "diff_merge_insufficient_rel_targets",
+                    proposal_id=proposal.proposal_id,
+                    rel_target_count=len(rel_keys),
+                )
+                return ()
+            return tuple(steps)
+
+        # Node merge: collapse nodes, re-point edges to survivor.
+        if len(node_keys) < 2:
+            logger.warning(
+                "diff_merge_insufficient_node_targets",
+                proposal_id=proposal.proposal_id,
+                node_target_count=len(node_keys),
+            )
+            return ()
 
         step = DiffStep(
             operation=DiffOperation.merge_nodes,
-            dedupe_key=proposal.targets[0].dedupe_key,  # survivor
-            merge_keys=tuple(merge_keys),
+            dedupe_key=node_keys[0],  # survivor
+            merge_keys=tuple(node_keys),
             rationale=proposal.rationale,
             rule_ids=proposal.rule_ids,
         )

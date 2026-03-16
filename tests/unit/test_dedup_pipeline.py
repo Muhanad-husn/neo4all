@@ -271,6 +271,18 @@ class TestClassifyConfidence:
     def test_below_medium_threshold(self) -> None:
         assert _classify_confidence(0.59, False) == "low"
 
+    def test_low_composite_high_jw_becomes_medium(self) -> None:
+        """jw >= 0.90 prevents deferral even with low composite score."""
+        assert _classify_confidence(0.49, False, jaro_winkler=0.92) == "medium"
+
+    def test_low_composite_low_jw_stays_low(self) -> None:
+        """jw below 0.90 does not rescue a low composite score."""
+        assert _classify_confidence(0.49, False, jaro_winkler=0.85) == "low"
+
+    def test_high_jw_does_not_override_high_band(self) -> None:
+        """High composite score still yields high regardless of jw."""
+        assert _classify_confidence(0.85, False, jaro_winkler=0.95) == "high"
+
 
 # ===========================================================================
 # Stage 6: Cluster validation (via _enrich_candidates)

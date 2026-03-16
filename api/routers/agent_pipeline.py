@@ -515,28 +515,20 @@ async def run_agent_pipeline(
                 remaining=len(raw_candidates),
             )
 
-    # 2b. Filter out candidates that already have a non-failed proposal.
+    # 2b. Filter out candidates that already have a non-rejected proposal.
     #     Reuses proposal_svc from step 1b; re-fetches because archive may
     #     have cleared old proposals while manual ones could still exist.
     #
-    #     Executed *canonicalize* proposals are NOT filtered — the candidate
-    #     must reach Agent-P so the structural recommender can escalate to
-    #     merge (the canonicalize didn't resolve the duplicate).
+    #     Any executed proposal (including canonicalize) filters the candidate.
+    #     The structural recommender now proposes merge directly for high-
+    #     similarity duplicates, so the canonicalize→merge escalation path
+    #     is no longer needed.  Rejected proposals are skipped (re-triable).
     existing_proposals_list = await proposal_svc.list_for_run(run_id)
-    # Candidates with only executed-canonicalize proposals need escalation.
-    _canonicalize_only_ids: set[str] = set()
     has_proposal_ids: set[str] = set()
     for p in existing_proposals_list:
         if str(p.state) in ("rejected",):
             continue
-        cid = p.candidate_id
-        if str(p.state) == "executed" and str(p.proposal_class) == "canonicalize":
-            # Only mark as canonicalize-only if no other blocking proposal exists.
-            if cid not in has_proposal_ids:
-                _canonicalize_only_ids.add(cid)
-        else:
-            has_proposal_ids.add(cid)
-            _canonicalize_only_ids.discard(cid)
+        has_proposal_ids.add(p.candidate_id)
     if has_proposal_ids:
         before = len(raw_candidates)
         raw_candidates = [

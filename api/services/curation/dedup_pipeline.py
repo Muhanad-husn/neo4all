@@ -150,13 +150,22 @@ def _check_contradictions(
 def _classify_confidence(
     composite_score: float,
     has_contradictions: bool,
+    jaro_winkler: float = 0.0,
 ) -> str:
-    """Map composite score + contradiction status to confidence band."""
+    """Map composite score + contradiction status to confidence band.
+
+    When jaro_winkler >= 0.90 the names are near-identical — the candidate
+    is at least "medium" regardless of composite score so it reaches the
+    agent pipeline without the "deferred" stigma.
+    """
     if composite_score >= _HIGH_THRESHOLD and not has_contradictions:
         return "high"
     if composite_score >= _MEDIUM_THRESHOLD:
         return "medium"
     if composite_score >= _HIGH_THRESHOLD and has_contradictions:
+        return "medium"
+    # High name similarity alone is strong signal — never defer these.
+    if jaro_winkler >= 0.90:
         return "medium"
     return "low"
 
@@ -523,7 +532,8 @@ class DedupPipeline:
             ctx = c.collision_context
             score = ctx.get("composite_score", 0.0)
             has_conflicts = bool(ctx.get("property_conflicts"))
-            band = _classify_confidence(score, has_conflicts)
+            jw = ctx.get("jaro_winkler", 0.0)
+            band = _classify_confidence(score, has_conflicts, jaro_winkler=jw)
             ctx["confidence_band"] = band
 
         # Stage 6: Cluster validation
