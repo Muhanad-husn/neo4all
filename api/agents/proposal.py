@@ -228,7 +228,12 @@ class ProposalComposerAgent:
 
         # 1. Compute and attach structural recommendation (deterministic).
         if evidence_report.structural_recommendation is None:
-            rec = compute_structural_recommendation(candidate)
+            prior_proposals = await self._load_prior_proposals(
+                decision.run_id, candidate.candidate_id
+            )
+            rec = compute_structural_recommendation(
+                candidate, prior_proposals=prior_proposals or None
+            )
             evidence_report = evidence_report.model_copy(
                 update={"structural_recommendation": rec},
             )
@@ -371,6 +376,40 @@ class ProposalComposerAgent:
             duration_ms=final_duration_ms,
         )
         return stored
+
+    # ------------------------------------------------------------------
+    # Prior proposals lookup (escalation support)
+    # ------------------------------------------------------------------
+
+    async def _load_prior_proposals(
+        self, run_id: str, candidate_id: str,
+    ) -> list["PriorProposalSummary"]:
+        """Load prior proposals for this candidate to support escalation.
+
+        Returns summaries of previous proposals matching this candidate_id.
+        Empty list on cache miss or error (best-effort).
+        """
+        from api.agents.models import PriorProposalSummary
+
+        try:
+            svc = self._get_proposal_service()
+            all_proposals = await svc.list_for_run(run_id)
+            summaries: list[PriorProposalSummary] = []
+            for p in all_proposals:
+                if p.candidate_id == candidate_id:
+                    summaries.append(PriorProposalSummary(
+                        proposal_class=str(p.proposal_class),
+                        confidence=p.confidence_score,
+                        outcome=str(p.state),
+                    ))
+            return summaries
+        except Exception:
+            logger.debug(
+                "prior_proposals_load_failed",
+                run_id=run_id,
+                candidate_id=candidate_id,
+            )
+            return []
 
     # ------------------------------------------------------------------
     # Schema rules gathering

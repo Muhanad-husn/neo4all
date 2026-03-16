@@ -666,7 +666,31 @@ async def generate_candidates(
             unique.append(c)
 
     # ------------------------------------------------------------------
-    # 5c. Connected-component conflict detection (stage 1 only).
+    # 5c. Pre-curation dedup pipeline (stage 1 or all detectors).
+    #     Processes probable_duplicate candidates through 7 stages:
+    #     auto-canonicalize, re-detect, score, contradiction check,
+    #     confidence band, cluster validation, emit results.
+    # ------------------------------------------------------------------
+    if stage in (1, None):
+        from api.services.curation.dedup_pipeline import DedupPipeline
+
+        pipeline = DedupPipeline(
+            reader=reader, cache=cache, run_id=run_id, schema=schema
+        )
+        try:
+            unique, _pipeline_result = await pipeline.run(
+                candidates=unique, nodes=nodes, rels=rels
+            )
+        except Exception as exc:
+            logger.warning(
+                "dedup_pipeline_failed",
+                run_id=run_id,
+                error=str(exc),
+            )
+            # Pipeline failure is non-fatal — continue with original candidates
+
+    # ------------------------------------------------------------------
+    # 5d. Connected-component conflict detection (stage 1 only).
     #     For duplicate-type candidates, build a union-find over
     #     involved_element_refs pairs.  When a connected component has
     #     >2 nodes (a chain like A↔M↔R↔B), create a synthetic group

@@ -45,6 +45,25 @@ class EvidenceClassification(StrEnum):
 # ---------------------------------------------------------------------------
 
 
+class PriorProposalSummary(BaseModel):
+    """Summary of a prior proposal for the same candidate, used for escalation.
+
+    When a canonicalize proposal was previously executed for a candidate and the
+    candidate reappears, the structural recommendation escalates to merge.
+
+    Attributes:
+        proposal_class: The class of the prior proposal (e.g. "canonicalize").
+        confidence:     Confidence score of the prior proposal.
+        outcome:        Execution outcome ("applied", "rejected", etc.) or "pending".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_class: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    outcome: str
+
+
 class EvidenceItem(BaseModel):
     """A single piece of evidence linked to a candidate.
 
