@@ -254,6 +254,14 @@ class AgentProposalOutput(BaseModel):
     evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
     rationale: str
     confidence_score: float = Field(ge=0.0, le=1.0)
+    high_risk_override: bool = Field(
+        default=False,
+        description=(
+            "Set to true when proposing a novel relationship type name not "
+            "present in the schema. Triggers two-phase approval regardless "
+            "of proposal_class."
+        ),
+    )
 
     @field_validator("candidate_id")
     @classmethod

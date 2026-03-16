@@ -135,6 +135,30 @@ class TestStructuralEscalation:
         assert rec.suggested_action == "merge"
         assert rec.confidence == 0.80
 
+    def test_canonical_direction_violation_mentions_two_paths(self) -> None:
+        """canonical_direction_violation reasoning mentions both normalize and rename paths."""
+        c = Candidate(
+            run_id=_RUN_ID,
+            schema_version=_SCHEMA_VERSION,
+            candidate_type=CandidateType.canonical_violation,
+            candidate_lane=CandidateLane.relationship,
+            involved_element_refs=("rel_a",),
+            severity=Severity.high,
+            detection_method="canonical_direction_violation",
+            collision_context={
+                "rel_type": "MENTIONS",
+                "actual_start_type": "Document",
+                "actual_end_type": "Location",
+            },
+        )
+        rec = compute_structural_recommendation(c)
+        assert rec.suggested_action == "rename"
+        assert rec.confidence == 0.65
+        # Reasoning must mention both paths
+        assert "normalize" in rec.reasoning.lower()
+        assert "rename" in rec.reasoning.lower()
+        assert "high_risk_override" in rec.reasoning
+
     def test_non_probable_duplicate_ignores_prior_proposals(self) -> None:
         """Prior proposals should only affect probable_duplicate candidates."""
         c = Candidate(

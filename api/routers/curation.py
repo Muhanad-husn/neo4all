@@ -159,6 +159,7 @@ class ProposalOut(BaseModel):
     rule_ids: list[str]
     rationale: str
     confidence_score: float
+    high_risk_override: bool = False
     state: str
 
 
@@ -245,6 +246,7 @@ def _to_proposal_out(packet: ProposalPacket) -> ProposalOut:
         rule_ids=list(packet.rule_ids),
         rationale=packet.rationale,
         confidence_score=packet.confidence_score,
+        high_risk_override=packet.high_risk_override,
         state=str(packet.state),
     )
 

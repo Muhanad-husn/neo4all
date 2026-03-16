@@ -612,3 +612,75 @@ class TestCrossModelConsistency:
             EvidenceClassification.corroborating,
             EvidenceClassification.conflicting,
         }
+
+
+# ===========================================================================
+# Agent-P builder — high_risk_override propagation
+# ===========================================================================
+
+
+class TestBuilderHighRiskOverridePropagation:
+    """Verify high_risk_override flows from AgentProposalOutput to ProposalPacket."""
+
+    @staticmethod
+    def _make_decision() -> "OrchestratorDecision":
+        from api.agents.orchestrator import OrchestratorDecision, RiskClass, ToolBudget
+        return OrchestratorDecision(
+            run_id=_RUN_ID,
+            schema_version=_SCHEMA_VERSION,
+            candidate_id=_HEX64,
+            risk_class=RiskClass.medium,
+            budget=ToolBudget(
+                max_input_tokens_a=4000, max_output_tokens_a=1000,
+                max_input_tokens_b=4000, max_output_tokens_b=1000,
+                max_input_tokens_p=4000, max_output_tokens_p=1000,
+                max_retrieval_rounds=3, cost_limit=0.05, timeout_s=60.0,
+            ),
+            model_a="test/model-a",
+            model_b="test/model-b",
+            model_p="test/model-p",
+        )
+
+    @staticmethod
+    def _make_candidate() -> "Candidate":
+        from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
+        return Candidate(
+            run_id=_RUN_ID,
+            schema_version=_SCHEMA_VERSION,
+            candidate_type=CandidateType.canonical_violation,
+            candidate_lane=CandidateLane.relationship,
+            involved_element_refs=("rel_a",),
+            severity=Severity.high,
+            detection_method="canonical_direction_violation",
+            collision_context={"rel_type": "MENTIONS"},
+        )
+
+    def test_high_risk_override_propagates_true(self) -> None:
+        """high_risk_override=True on AgentProposalOutput reaches ProposalPacket."""
+        from api.agents.proposal import ProposalComposerAgent
+
+        output = _make_proposal_output(
+            proposal_class="rename", high_risk_override=True,
+        )
+        packet = ProposalComposerAgent._build_proposal_packet(
+            output=output,
+            candidate=self._make_candidate(),
+            decision=self._make_decision(),
+            evidence_report=_make_evidence_report(),
+        )
+        assert packet.high_risk_override is True
+        assert packet.is_high_risk() is True
+
+    def test_high_risk_override_propagates_false(self) -> None:
+        """high_risk_override=False (default) also propagates correctly."""
+        from api.agents.proposal import ProposalComposerAgent
+
+        output = _make_proposal_output(proposal_class="normalize")
+        packet = ProposalComposerAgent._build_proposal_packet(
+            output=output,
+            candidate=self._make_candidate(),
+            decision=self._make_decision(),
+            evidence_report=_make_evidence_report(),
+        )
+        assert packet.high_risk_override is False
+        assert packet.is_high_risk() is False

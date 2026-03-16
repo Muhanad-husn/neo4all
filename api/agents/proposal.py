@@ -53,7 +53,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _JOB_ID: str = "proposal_composer"
-_TEMPLATE_VERSION: str = "v7"
+_TEMPLATE_VERSION: str = "v8"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 
@@ -599,6 +599,7 @@ class ProposalComposerAgent:
             rule_ids=output.rule_ids,
             rationale=output.rationale,
             confidence_score=output.confidence_score,
+            high_risk_override=output.high_risk_override,
         )
 
     # ------------------------------------------------------------------

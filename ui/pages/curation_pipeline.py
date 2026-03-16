@@ -55,6 +55,16 @@ from ui.pages.curation import (
 )
 from ui.state import StateManager
 
+
+def _is_high_risk(p: dict[str, Any]) -> bool:
+    """Return True if a proposal dict represents a high-risk action.
+
+    Checks both the inherent class risk (merge/delete) and the
+    high_risk_override flag set by Agent-P for novel type proposals.
+    """
+    return p.get("proposal_class") in _HIGH_RISK_CLASSES or p.get("high_risk_override", False)
+
+
 # ===========================================================================
 # Layer 2 — Evidence, Proposals, Approval Gate, Execution (SPEC-06)
 # ===========================================================================
@@ -212,8 +222,7 @@ def _render_pending_actions(
 ) -> None:
     """Render approve / reject / defer buttons for a pending proposal."""
     pid = proposal["proposal_id"]
-    pclass = proposal["proposal_class"]
-    is_high_risk = pclass in _HIGH_RISK_CLASSES
+    is_high_risk = _is_high_risk(proposal)
 
     sm = StateManager.get()
     pending_token = sm.get_pending_confirmation(pid)
@@ -418,7 +427,7 @@ def _render_proposal_expander(
     state = proposal["state"]
 
     state_badge = _STATE_BADGE.get(state, state.upper())
-    is_high_risk = pclass in _HIGH_RISK_CLASSES
+    is_high_risk = _is_high_risk(proposal)
     risk_tag = "  :red[HIGH RISK]" if is_high_risk else ""
     label = f"`{pid[:12]}…` — {pclass.upper()}{risk_tag} — {state_badge}"
 
@@ -489,11 +498,11 @@ def _do_batch_approve(
     if include_high_risk:
         batch = pending
     else:
-        batch = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
+        batch = [p for p in pending if not _is_high_risk(p)]
         high_risk_count = len(pending) - len(batch)
         if high_risk_count > 0:
             st.warning(
-                f"Skipping {high_risk_count} high-risk proposal(s) (merge/delete) — "
+                f"Skipping {high_risk_count} high-risk proposal(s) — "
                 "check 'Include high-risk' to include them."
             )
 
@@ -602,10 +611,10 @@ def _render_batch_actions(
     approved = [p for p in proposals if p["state"] == "approved"]
     executed = [p for p in proposals if p["state"] == "executed"]
 
-    low_risk_pending = [p for p in pending if p["proposal_class"] not in _HIGH_RISK_CLASSES]
+    low_risk_pending = [p for p in pending if not _is_high_risk(p)]
 
     include_high_risk = st.checkbox(
-        "Include high-risk (merge/delete)",
+        "Include high-risk (merge/delete/override)",
         key="batch_include_high_risk",
         help="When checked, batch Approve All includes high-risk proposals.",
     )
@@ -711,6 +720,14 @@ def _render_proposal_queue_inner(run_id: str, actor: str) -> None:
     dismissed = sm.dismissed_proposals
     hidden_count = sum(1 for p in proposals if p["proposal_id"] in dismissed)
     visible = [p for p in proposals if p["proposal_id"] not in dismissed]
+
+    # Sort: high-risk first, pending first, lower confidence first (most uncertain).
+    _STATE_RANK = {"pending": 0, "approved": 1, "executed": 2, "rejected": 3, "deferred": 4}
+    visible.sort(key=lambda p: (
+        0 if _is_high_risk(p) else 1,
+        _STATE_RANK.get(p.get("state", ""), 9),
+        p.get("confidence_score", 1.0),
+    ))
 
     pending = sum(1 for p in visible if p["state"] == "pending")
     approved = sum(1 for p in visible if p["state"] == "approved")

@@ -205,6 +205,9 @@ class ProposalPacket(BaseModel):
     rationale: str
     confidence_score: float = Field(ge=0.0, le=1.0, default=1.0)
 
+    # ---- Risk override ----
+    high_risk_override: bool = False
+
     # ---- State ----
     state: ProposalState = ProposalState.pending
 
@@ -267,8 +270,13 @@ class ProposalPacket(BaseModel):
     # ---- Transition helper ----
 
     def is_high_risk(self) -> bool:
-        """Return True if this proposal class requires two-phase approval."""
-        return self.proposal_class in HIGH_RISK_CLASSES
+        """Return True if this proposal requires two-phase approval.
+
+        A proposal is high-risk if its class is inherently high-risk (merge,
+        delete) OR if the agent set high_risk_override (e.g. proposing a novel
+        relationship type not in the schema).
+        """
+        return self.proposal_class in HIGH_RISK_CLASSES or self.high_risk_override
 
     def can_transition_to(self, target: ProposalState) -> bool:
         """Return True if a transition from self.state → target is valid."""

@@ -229,6 +229,31 @@ def test_is_not_high_risk_for_low_risk_classes(cls: ProposalClass) -> None:
     assert _make_packet(proposal_class=cls).is_high_risk() is False
 
 
+def test_is_high_risk_with_override_true() -> None:
+    """high_risk_override=True makes a low-risk class high-risk."""
+    packet = _make_packet(
+        proposal_class=ProposalClass.rename, high_risk_override=True,
+    )
+    assert packet.is_high_risk() is True
+
+
+def test_is_high_risk_with_override_false() -> None:
+    """high_risk_override=False does not affect low-risk classes."""
+    packet = _make_packet(
+        proposal_class=ProposalClass.rename, high_risk_override=False,
+    )
+    assert packet.is_high_risk() is False
+
+
+def test_high_risk_override_does_not_affect_proposal_id() -> None:
+    """high_risk_override is excluded from identity — does not change proposal_id."""
+    p_no_override = _make_packet(proposal_class=ProposalClass.rename)
+    p_with_override = _make_packet(
+        proposal_class=ProposalClass.rename, high_risk_override=True,
+    )
+    assert p_no_override.proposal_id == p_with_override.proposal_id
+
+
 @pytest.mark.parametrize(
     "target_state",
     [ProposalState.approved, ProposalState.rejected, ProposalState.deferred],
