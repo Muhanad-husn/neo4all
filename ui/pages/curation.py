@@ -219,13 +219,38 @@ def _clear_candidates(run_id: str) -> None:
 
 
 def _render_trigger_section(run_id: str) -> None:
-    """Render staged candidate generation tabs with per-stage generate buttons."""
-    st.subheader("Generate Candidates")
-    st.caption(
-        "Staged detection pipeline: resolve duplicates first, then canonical "
-        "violations, then structural issues. Each stage runs against the "
-        "current graph state. Zero-LLM — results are fully reproducible."
-    )
+    """Render staged candidate generation tabs with action buttons on the right."""
+    # Header row: title on the left, action buttons on the right.
+    col_title, col_actions = st.columns([3, 2])
+    with col_title:
+        st.subheader("Generate Candidates")
+        st.caption(
+            "Staged detection pipeline: resolve duplicates first, then canonical "
+            "violations, then structural issues. Each stage runs against the "
+            "current graph state. Zero-LLM — results are fully reproducible."
+        )
+    with col_actions:
+        st.write("")  # spacing
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            gen_all = st.button(
+                "Generate All Stages",
+                type="primary",
+                key="gen_all_stages",
+                help="Run all three detection stages sequentially.",
+            )
+        with btn_col2:
+            clear_all = st.button(
+                "Clear All Candidates",
+                key="btn_clear_candidates",
+                help="Remove all cached candidates, proposals, and graph query cache. "
+                "Use this to start fresh before regenerating.",
+            )
+
+    if gen_all:
+        _run_stage_detection(run_id, stage=None, label="All stages")
+    if clear_all:
+        _clear_candidates(run_id)
 
     tab_dup, tab_canon, tab_struct = st.tabs([
         "Stage 1: Duplicates",
@@ -272,16 +297,6 @@ def _render_trigger_section(run_id: str) -> None:
             help="Runs StructuralAnomalyDetector (degree_outlier excluded).",
         ):
             _run_stage_detection(run_id, stage=3, label="Structural issue")
-
-    # Clear candidates button — placed after stage tabs.
-    st.divider()
-    if st.button(
-        "Clear All Candidates",
-        key="btn_clear_candidates",
-        help="Remove all cached candidates, proposals, and graph query cache. "
-        "Use this to start fresh before regenerating.",
-    ):
-        _clear_candidates(run_id)
 
 
 def _render_severity_badges(severity_counts: dict[str, int]) -> None:
@@ -479,6 +494,13 @@ def main() -> None:
             on_click=lambda: StateManager.get().reenter_phase(Phase.EXTRACTION),
             help="Return to extraction to review and re-run failed chunks.",
         )
+
+    # Scroll to top on page load.
+    st.markdown(
+        '<div id="top"></div>'
+        "<script>window.parent.document.querySelector('section.main').scrollTo(0, 0);</script>",
+        unsafe_allow_html=True,
+    )
 
     st.title("Phase 4: Curation")
     st.caption(

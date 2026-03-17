@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from ui.components.api_fetch import fetch
@@ -42,36 +43,54 @@ def render_schema_tab(run_id: str) -> None:
 
     st.divider()
 
-    # Two-column tables
+    # Two-column tables — pandas DataFrames for built-in column sorting
     left, right = st.columns(2)
 
     with left:
         st.markdown("**Node Types**")
         if nodes:
-            rows = [
+            df = pd.DataFrame([
                 {
                     "Label": n.get("label", ""),
                     "Primary Property": n.get("primary_property", ""),
                     "Properties": len(n.get("properties", [])),
                 }
                 for n in nodes
-            ]
-            st.dataframe(rows, width="stretch", hide_index=True)
+            ])
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Label": st.column_config.TextColumn("Label", width="medium"),
+                    "Primary Property": st.column_config.TextColumn("Primary Property", width="medium"),
+                    "Properties": st.column_config.NumberColumn("Properties", width="small"),
+                },
+            )
         else:
             st.caption("No node types defined.")
 
     with right:
         st.markdown("**Edge Types**")
         if edges:
-            rows = [
+            df = pd.DataFrame([
                 {
                     "Type": e.get("type", ""),
                     "Start": e.get("start_node_type", ""),
                     "End": e.get("end_node_type", ""),
                 }
                 for e in edges
-            ]
-            st.dataframe(rows, width="stretch", hide_index=True)
+            ])
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Type": st.column_config.TextColumn("Type", width="medium"),
+                    "Start": st.column_config.TextColumn("Start", width="medium"),
+                    "End": st.column_config.TextColumn("End", width="medium"),
+                },
+            )
         else:
             st.caption("No edge types defined.")
 
@@ -81,4 +100,4 @@ def render_schema_tab(run_id: str) -> None:
         values = [len(n.get("properties", [])) for n in nodes]
         if any(v > 0 for v in values):
             fig = donut_chart(labels, values, "Node Types by Property Count")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)

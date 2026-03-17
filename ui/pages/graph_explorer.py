@@ -390,6 +390,13 @@ def main() -> None:
         st.caption(f"API: `{_API_BASE_URL}`")
         st.caption("Read-only — no mutations.")
 
+    # Scroll to top on page load.
+    st.markdown(
+        '<div id="top"></div>'
+        "<script>window.parent.document.querySelector('section.main').scrollTo(0, 0);</script>",
+        unsafe_allow_html=True,
+    )
+
     st.title("Graph Explorer")
     st.caption(
         "Read-only view of all nodes and edges in the Neo4j graph "

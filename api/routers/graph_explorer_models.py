@@ -137,6 +137,31 @@ class EdgeCountResponse(BaseResponse):
     by_type: list[TypeCount] = []
 
 
+class NodeDegreeOut(BaseModel):
+    """Degree centrality record for a single node."""
+
+    dedupe_key: str
+    node_type: str
+    primary_value: str
+    in_degree: int
+    out_degree: int
+    total_degree: int
+
+
+class NodeDegreeResponse(BaseResponse):
+    """Response for GET /nodes/{run_id}/degrees.
+
+    Attributes:
+        run_id:  The governed run.
+        total:   Total number of nodes with degree data.
+        items:   Degree records sorted by total_degree descending.
+    """
+
+    run_id: str = ""
+    total: int = 0
+    items: list[NodeDegreeOut] = []
+
+
 # ---------------------------------------------------------------------------
 # Pagination helpers
 # ---------------------------------------------------------------------------

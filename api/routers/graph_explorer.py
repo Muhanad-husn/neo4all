@@ -54,6 +54,8 @@ from api.routers.graph_explorer_models import (
     EdgeOut,
     EdgePageResponse,
     NodeCountResponse,
+    NodeDegreeOut,
+    NodeDegreeResponse,
     NodeOut,
     NodePageResponse,
     TypeCount,
@@ -135,6 +137,93 @@ async def count_nodes(
         status="success",
         total=len(result.nodes),
         by_type=by_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /nodes/{run_id}/degrees
+# (Registered BEFORE /nodes/{run_id} to prevent FastAPI from treating
+#  "degrees" as the value of the run_id parameter on that route.)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/nodes/{run_id}/degrees",
+    response_model=NodeDegreeResponse,
+    summary="Degree centrality for all nodes in a run",
+    responses={
+        503: {
+            "model": NodeDegreeResponse,
+            "description": "Neo4j unavailable",
+        },
+    },
+)
+async def node_degrees(
+    run_id: str,
+    response: Response,
+    reader: GraphReader = Depends(get_graph_reader),
+) -> NodeDegreeResponse:
+    """Return in/out/total degree for every node in a run.
+
+    Uses GraphReader's cached ``get_node_degrees`` and ``get_nodes_by_run``
+    results. Items are sorted by total_degree descending.
+
+    **Errors**
+    - ``503 Service Unavailable`` — Neo4j read failed.
+    """
+    logger.info("graph_explorer_node_degrees_requested", run_id=run_id)
+
+    try:
+        degree_result = await reader.get_node_degrees(run_id)
+        node_result = await reader.get_nodes_by_run(run_id)
+    except Exception as exc:
+        logger.error("graph_explorer_read_failed", run_id=run_id, error=str(exc))
+        response.status_code = 503
+        return NodeDegreeResponse(
+            run_id=run_id,
+            status="error",
+            errors=[
+                ErrorDetail(
+                    code="neo4j_unavailable",
+                    message=f"Graph read failed for run '{run_id}'.",
+                )
+            ],
+        )
+
+    # Build a lookup from dedupe_key -> node metadata.
+    node_lookup: dict[str, tuple[str, str]] = {}
+    for n in node_result.nodes:
+        pv = dict(n.properties).get("_primary_value", "")
+        node_lookup[n.dedupe_key] = (n.node_type, str(pv))
+
+    items = []
+    for d in degree_result.degrees:
+        node_type, primary_value = node_lookup.get(d.dedupe_key, ("", ""))
+        total = d.in_degree + d.out_degree
+        items.append(
+            NodeDegreeOut(
+                dedupe_key=d.dedupe_key,
+                node_type=node_type,
+                primary_value=primary_value,
+                in_degree=d.in_degree,
+                out_degree=d.out_degree,
+                total_degree=total,
+            )
+        )
+
+    items.sort(key=lambda x: -x.total_degree)
+
+    logger.info(
+        "graph_explorer_node_degrees_success",
+        run_id=run_id,
+        total=len(items),
+    )
+
+    return NodeDegreeResponse(
+        run_id=run_id,
+        status="success",
+        total=len(items),
+        items=items,
     )
 
 

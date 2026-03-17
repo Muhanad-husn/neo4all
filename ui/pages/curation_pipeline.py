@@ -877,29 +877,57 @@ def _render_candidate_detail_section(
         st.info("Generate candidates first using the button above.")
         return
 
+    # --- Search / filter bar ---
+    filter_col, select_col = st.columns([1, 2])
+    with filter_col:
+        search_term = st.text_input(
+            "Search candidates",
+            key="candidate_search_filter",
+            placeholder="Paste candidate ID or keyword\u2026",
+        )
+
+    # Apply filter to candidate list.
+    if search_term:
+        term = search_term.strip().lower()
+        filtered = [
+            c for c in all_candidates
+            if term in c.get("candidate_id", "").lower()
+            or term in short_summary(c).lower()
+            or term in c.get("severity", "").lower()
+            or term in c.get("candidate_type", "").lower()
+        ]
+    else:
+        filtered = all_candidates
+
     # Build selectbox options.
-    none_opt = "— Select a candidate —"
+    none_opt = "\u2014 Select a candidate \u2014"
     option_labels: dict[str, str] = {
         none_opt: none_opt,
         **{
             c["candidate_id"]: (
                 f"[{c['severity'].upper()}] {short_summary(c)}"
             )
-            for c in all_candidates
+            for c in filtered
         },
     }
-    options = [none_opt] + [c["candidate_id"] for c in all_candidates]
+    options = [none_opt] + [c["candidate_id"] for c in filtered]
 
-    selected_id = st.selectbox(
-        "Select candidate",
-        options=options,
-        format_func=lambda x: option_labels.get(x, x),
-    )
+    with select_col:
+        selected_id = st.selectbox(
+            "Select candidate",
+            options=options,
+            format_func=lambda x: option_labels.get(x, x),
+        )
+
+    if search_term and not filtered:
+        st.warning(f"No candidates match \u201c{search_term}\u201d.")
+        return
 
     if selected_id == none_opt:
         st.caption("Select a candidate to view evidence and create a proposal.")
         return
 
+    # Look up from the full list (filter may have changed after selection).
     candidate = next(
         (c for c in all_candidates if c["candidate_id"] == selected_id), None
     )

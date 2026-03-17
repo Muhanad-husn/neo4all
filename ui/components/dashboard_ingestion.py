@@ -1,7 +1,8 @@
 """
 ui/components/dashboard_ingestion.py — Ingestion tab for the dashboard.
 
-Shows documents with parser tier, expandable chunks, and quality charts.
+Shows documents with parser tier, expandable chunks, quality charts,
+and a chunk text lookup tool.
 
 Architecture rules:
   - No business logic (CLAUDE.md §4.1, SKILL-B R-B3).
@@ -54,7 +55,43 @@ def render_ingestion_tab(run_id: str) -> None:
             list(parser_counts.values()),
             "Parser Tier Distribution",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # --- Chunk Text Lookup Tool ---
+    st.markdown("**Chunk Text Lookup**")
+    st.caption("Enter a chunk ID to retrieve its raw text from Qdrant.")
+    chunk_id_input = st.text_input(
+        "Chunk ID",
+        key="dash_chunk_lookup_input",
+        placeholder="Paste a full chunk_id here\u2026",
+    )
+    if chunk_id_input:
+        chunk_id_clean = chunk_id_input.strip()
+        if chunk_id_clean:
+            chunk_text_data = fetch(
+                f"/api/documents/{run_id}/chunk/{chunk_id_clean}/text"
+            )
+            if chunk_text_data is None:
+                st.error("Could not reach the chunk text endpoint.")
+            elif chunk_text_data.get("status") == "error":
+                for e in chunk_text_data.get("errors", []):
+                    st.error(f"[{e.get('code', 'error')}] {e.get('message', '')}")
+            else:
+                text = chunk_text_data.get("text", "")
+                cid = chunk_text_data.get("chunk_id", chunk_id_clean)
+                if text:
+                    st.success(f"Chunk `{cid[:16]}\u2026` \u2014 {len(text)} characters")
+                    st.text_area(
+                        "Chunk text",
+                        value=text,
+                        height=250,
+                        disabled=True,
+                        key="dash_chunk_text_display",
+                    )
+                else:
+                    st.warning("Chunk not found or has no text content.")
 
     st.divider()
 
@@ -70,7 +107,7 @@ def render_ingestion_tab(run_id: str) -> None:
         }
         for d in documents
     ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
     # Per-document chunk expander
     for d in documents:
@@ -100,7 +137,7 @@ def render_ingestion_tab(run_id: str) -> None:
                 }
                 for c in chunks
             ]
-            st.dataframe(chunk_rows, width="stretch", hide_index=True)
+            st.dataframe(chunk_rows, use_container_width=True, hide_index=True)
 
     # Quality flag distribution across all documents
     all_clean = 0
@@ -122,4 +159,4 @@ def render_ingestion_tab(run_id: str) -> None:
             [all_clean, all_flagged],
             "Chunk Quality Distribution",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
