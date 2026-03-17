@@ -135,9 +135,9 @@ A Proposal Packet (from Agent-P) contains:
 |-------|------|-------------------|
 | Orchestrator | Non-LLM | Route candidates, assign risk/budget |
 | Agent-A | LLM | Read graph/chunks, classify evidence |
-| Structural Rec | Non-LLM | Pre-digest collision_context → action + confidence (`api/agents/structural.py`) |
+| Structural Rec | Non-LLM | Advisory context: pre-digest collision_context → suggested action + confidence (`api/agents/structural.py`) — never overrides LLM |
 | Agent-B | LLM | Budgeted retrieval (loop-guarded) — **dormant** until curation-panel ingestion |
-| Agent-P | LLM | Compose Proposal Packet (anchored on structural recommendation) |
+| Agent-P | LLM | Compose Proposal Packet (informed by structural recommendation, all decisions LLM-reasoned) |
 | Diff Builder | Non-LLM | Translate proposal → deterministic diff |
 | Approval Gate | Human | Approve / Reject / Defer |
 | Agent-C | Tools-only | Apply approved diff (no reasoning) |

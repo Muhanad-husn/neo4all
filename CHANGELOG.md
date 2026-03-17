@@ -2,6 +2,21 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.8] - 2026-03-17
+
+### Removed
+- Deterministic merge logic from curation pipeline — all merge decisions now LLM-reasoned
+- `_enforce_merge_for_duplicates()` backstop that overrode LLM proposal class
+- `_deterministic_merge()` fast-path that skipped LLM for chain groups and high-confidence duplicates
+- Auto-canonicalize stage (Stage 1) in dedup pipeline — was mutating graph without LLM
+- Auto-merge proposal creation (Stage 7) in dedup pipeline
+
+### Changed
+- Structural recommendation is now advisory context only — never overrides LLM decisions
+- Dedup pipeline reduced from 7 stages to 4 enrichment stages (score, contradictions, confidence band, cluster validation)
+
+---
+
 ## [1.0.7] - 2026-03-16
 
 ### Added

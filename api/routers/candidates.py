@@ -727,9 +727,9 @@ async def generate_candidates(
 
     # ------------------------------------------------------------------
     # 5c. Pre-curation dedup pipeline (stage 1 or all detectors).
-    #     Processes probable_duplicate candidates through 7 stages:
-    #     auto-canonicalize, re-detect, score, contradiction check,
-    #     confidence band, cluster validation, emit results.
+    #     Enriches probable_duplicate candidates through 4 stages:
+    #     score, contradiction check, confidence band, cluster validation.
+    #     All decisions are made by the LLM agent pipeline.
     # ------------------------------------------------------------------
     if stage in (1, None):
         from api.services.curation.dedup_pipeline import DedupPipeline
