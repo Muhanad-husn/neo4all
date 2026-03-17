@@ -32,51 +32,6 @@ def compute_structural_recommendation(
     method = candidate.detection_method
     ctype = str(candidate.candidate_type)
 
-    # ----- group merge (duplicate chain) ------------------------------------
-    # Synthetic group candidate created by the density-validated chain
-    # conflict detector.  Confidence scales with group density and size.
-    if candidate.detection_method == "duplicate_chain_group":
-        survivor = ctx.get("survivor_key", "?")
-        group_size = ctx.get("conflict_group_size", 0)
-        density = ctx.get("edge_density", 0.0)
-
-        # Confidence scaling based on density-validated group quality
-        if group_size <= 5 and density >= 0.8:
-            confidence = 0.90
-            label = "Dense"
-        elif group_size <= 8 and density >= 0.5:
-            confidence = 0.75
-            label = "Validated"
-        else:
-            confidence = 0.50
-            label = "Sparse"
-
-        return StructuralRecommendation(
-            suggested_action="merge",
-            confidence=confidence,
-            reasoning=(
-                f"{label} duplicate group of {group_size} overlapping nodes "
-                f"(edge_density={density:.2f}). "
-                f"Merge all into survivor '{survivor}' (highest degree: "
-                f"{ctx.get('survivor_degree', '?')}). Individual pairwise "
-                f"candidates are suppressed in favour of this atomic group merge."
-            ),
-        )
-
-    # ----- suppressed pairwise (part of a chain group) --------------------
-    # Pairwise candidates that belong to a chain are suppressed — the group
-    # candidate handles them.  Defer so the agent pipeline skips them.
-    if ctx.get("suppressed_by_group"):
-        return StructuralRecommendation(
-            suggested_action="defer",
-            confidence=1.0,
-            reasoning=(
-                f"This pairwise candidate is part of a duplicate chain and "
-                f"is handled by group candidate {ctx['suppressed_by_group'][:16]}…. "
-                f"Deferring to avoid redundant proposals."
-            ),
-        )
-
     # ----- exact_node_duplicate -------------------------------------------
     if ctype == "exact_node_duplicate":
         count = ctx.get("duplicate_count", 2)

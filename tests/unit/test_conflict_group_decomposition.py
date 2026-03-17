@@ -1,26 +1,22 @@
 """
-tests/unit/test_conflict_group_decomposition.py — Density-validated conflict group decomposition.
+tests/unit/test_duplicate_neighbourhood.py — Neighbourhood annotation for pairwise duplicates.
 
-No network, no LLM, no Neo4j.  Tests verify that the conflict group detector
-correctly decomposes oversized/sparse components into valid sub-groups.
+No network, no LLM, no Neo4j.  Tests verify that pairwise duplicate candidates
+are annotated with neighbourhood context (how many other candidates share each
+node) WITHOUT creating synthetic group candidates or suppressing any pairs.
 
 Coverage:
-  - 10-node linear chain → decomposed into sub-groups of size <= 8 with density >= 0.5
-  - 4-node clique (all 6 edges) → remains one group
-  - Two 3-node cliques bridged by one weak edge → split into two groups
+  - Linear chain: no group candidates created, no suppression, all pairs survive
+  - Neighbourhood counts are correct per-node
+  - Neighbour value lists are populated
+  - Candidates with no shared nodes get zero neighbours
   - Determinism: same input always produces same output
 """
 
 from __future__ import annotations
 
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
-from api.routers.candidates import (
-    MAX_GROUP_SIZE,
-    MIN_DENSITY,
-    _annotate_conflict_groups,
-    _decompose_component,
-    _is_valid_group,
-)
+from api.routers.candidates import _annotate_duplicate_neighbourhood
 
 
 def _make_pairwise(
@@ -49,216 +45,147 @@ def _make_pairwise(
     )
 
 
-class TestLinearChainDecomposition:
-    """A 10-node linear chain (A-B-C-...-J) has density ~0.09 and must be decomposed."""
+class TestNoGroupCandidates:
+    """The neighbourhood annotator must never create group candidates or suppress pairs."""
 
-    def test_no_mega_group(self) -> None:
-        """10-node chain must NOT produce a single group of 10."""
+    def test_chain_produces_no_groups(self) -> None:
+        """A 10-node linear chain should NOT produce any group candidates."""
         nodes = [chr(65 + i) for i in range(10)]  # A..J
         candidates = [
             _make_pairwise(nodes[i], nodes[i + 1], jw=0.92)
             for i in range(9)
         ]
+        original_count = len(candidates)
 
-        groups = _annotate_conflict_groups(candidates)
+        _annotate_duplicate_neighbourhood(candidates)
 
-        # No group should exceed MAX_GROUP_SIZE
-        for g in groups:
-            assert len(g.involved_element_refs) <= MAX_GROUP_SIZE, (
-                f"Group has {len(g.involved_element_refs)} members, "
-                f"exceeds MAX_GROUP_SIZE={MAX_GROUP_SIZE}"
-            )
+        # No new candidates added (function mutates in-place, returns None)
+        assert len(candidates) == original_count
 
-    def test_subgroups_have_valid_density(self) -> None:
-        """Every sub-group from decomposition must have density >= MIN_DENSITY."""
+    def test_no_suppression(self) -> None:
+        """No candidate should have suppressed_by_group after annotation."""
         nodes = [chr(65 + i) for i in range(10)]
         candidates = [
             _make_pairwise(nodes[i], nodes[i + 1], jw=0.92)
             for i in range(9)
         ]
 
-        groups = _annotate_conflict_groups(candidates)
+        _annotate_duplicate_neighbourhood(candidates)
 
-        for g in groups:
-            ctx = g.collision_context
-            density = ctx.get("edge_density", 0.0)
-            size = ctx.get("conflict_group_size", 0)
-            if size >= 3:
-                assert density >= MIN_DENSITY, (
-                    f"Group of {size} has density {density}, "
-                    f"below MIN_DENSITY={MIN_DENSITY}"
-                )
+        for c in candidates:
+            assert "suppressed_by_group" not in c.collision_context
 
-    def test_pairwise_candidates_not_all_suppressed(self) -> None:
-        """Cross-group pairwise candidates (bridge edges) must remain unsuppressed."""
-        nodes = [chr(65 + i) for i in range(10)]
+    def test_no_detection_method_change(self) -> None:
+        """All candidates keep their original detection_method."""
         candidates = [
-            _make_pairwise(nodes[i], nodes[i + 1], jw=0.92)
-            for i in range(9)
+            _make_pairwise("A", "B"),
+            _make_pairwise("B", "C"),
+            _make_pairwise("C", "D"),
         ]
 
-        _annotate_conflict_groups(candidates)
+        _annotate_duplicate_neighbourhood(candidates)
 
-        unsuppressed = [
-            c for c in candidates
-            if not c.collision_context.get("suppressed_by_group")
-        ]
-        # Some pairwise candidates (bridge edges between sub-groups) should survive
-        assert len(unsuppressed) > 0, "All pairwise candidates were suppressed"
+        for c in candidates:
+            assert c.detection_method == "probable_duplicate"
 
 
-class TestCliquePreservation:
-    """A 4-node clique (all 6 edges present) should remain one group."""
+class TestNeighbourhoodCounts:
+    """Neighbourhood counts should reflect how many OTHER candidates share each node."""
 
-    def test_4_node_clique_stays_one_group(self) -> None:
-        nodes = ["W", "X", "Y", "Z"]
-        # All 6 pairwise edges
-        candidates = []
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                candidates.append(_make_pairwise(nodes[i], nodes[j], jw=0.95))
-
-        groups = _annotate_conflict_groups(candidates)
-
-        assert len(groups) == 1, f"Expected 1 group, got {len(groups)}"
-        assert groups[0].collision_context["conflict_group_size"] == 4
-
-    def test_clique_density_is_1(self) -> None:
-        nodes = ["W", "X", "Y", "Z"]
-        candidates = []
-        for i in range(len(nodes)):
-            for j in range(i + 1, len(nodes)):
-                candidates.append(_make_pairwise(nodes[i], nodes[j], jw=0.95))
-
-        groups = _annotate_conflict_groups(candidates)
-
-        assert len(groups) == 1
-        assert groups[0].collision_context["edge_density"] == 1.0
-
-
-class TestBridgedCliques:
-    """Two 3-node cliques bridged by one weak edge → split into two groups."""
-
-    def test_bridged_cliques_split(self) -> None:
-        # Clique 1: A-B-C (3 edges, JW=0.95)
-        # Clique 2: D-E-F (3 edges, JW=0.95)
-        # Bridge: C-D (1 edge, JW=0.80 — weakest)
+    def test_chain_middle_node_has_neighbours(self) -> None:
+        """In A-B-C, node B appears in two candidates. Each should report 1 neighbour."""
         candidates = [
-            # Clique 1
-            _make_pairwise("A", "B", jw=0.95),
-            _make_pairwise("A", "C", jw=0.95),
-            _make_pairwise("B", "C", jw=0.95),
-            # Clique 2
-            _make_pairwise("D", "E", jw=0.95),
-            _make_pairwise("D", "F", jw=0.95),
-            _make_pairwise("E", "F", jw=0.95),
-            # Bridge
-            _make_pairwise("C", "D", jw=0.80),
+            _make_pairwise("A", "B"),
+            _make_pairwise("B", "C"),
         ]
 
-        groups = _annotate_conflict_groups(candidates)
+        _annotate_duplicate_neighbourhood(candidates)
 
-        # Should get 2 groups of 3 (not 1 group of 6)
-        assert len(groups) == 2, f"Expected 2 groups, got {len(groups)}"
-        sizes = sorted(g.collision_context["conflict_group_size"] for g in groups)
-        assert sizes == [3, 3], f"Expected [3, 3], got {sizes}"
+        # A-B candidate: ref_b is B, which also appears in B-C
+        ab = candidates[0]
+        assert ab.collision_context["other_candidates_ref_a"] == 0  # A has no other
+        assert ab.collision_context["other_candidates_ref_b"] == 1  # B also in B-C
 
-    def test_bridge_edge_unsuppressed(self) -> None:
-        """The bridge pairwise candidate (C-D) should NOT be suppressed."""
+        # B-C candidate: ref_a is B, which also appears in A-B
+        bc = candidates[1]
+        assert bc.collision_context["other_candidates_ref_a"] == 1  # B also in A-B
+        assert bc.collision_context["other_candidates_ref_b"] == 0  # C has no other
+
+    def test_hub_node_reports_many_neighbours(self) -> None:
+        """A hub node (connected to many) should have high neighbour count."""
+        # Hub: X connected to A, B, C, D
         candidates = [
-            _make_pairwise("A", "B", jw=0.95),
-            _make_pairwise("A", "C", jw=0.95),
-            _make_pairwise("B", "C", jw=0.95),
-            _make_pairwise("D", "E", jw=0.95),
-            _make_pairwise("D", "F", jw=0.95),
-            _make_pairwise("E", "F", jw=0.95),
-            _make_pairwise("C", "D", jw=0.80),
+            _make_pairwise("X", "A"),
+            _make_pairwise("X", "B"),
+            _make_pairwise("X", "C"),
+            _make_pairwise("X", "D"),
         ]
 
-        _annotate_conflict_groups(candidates)
+        _annotate_duplicate_neighbourhood(candidates)
 
-        # Find the C-D candidate
-        bridge = [
-            c for c in candidates
-            if set(c.involved_element_refs) == {"C", "D"}
+        # X-A candidate: X has 3 other neighbours (B, C, D)
+        xa = candidates[0]
+        assert xa.collision_context["other_candidates_ref_a"] == 3
+
+    def test_isolated_pair_has_zero_neighbours(self) -> None:
+        """A pair with no shared nodes gets zero neighbours."""
+        candidates = [
+            _make_pairwise("A", "B"),
+            _make_pairwise("C", "D"),  # completely disjoint
         ]
-        assert len(bridge) == 1
-        assert not bridge[0].collision_context.get("suppressed_by_group"), (
-            "Bridge edge C-D should NOT be suppressed"
-        )
+
+        _annotate_duplicate_neighbourhood(candidates)
+
+        ab = candidates[0]
+        assert ab.collision_context["other_candidates_ref_a"] == 0
+        assert ab.collision_context["other_candidates_ref_b"] == 0
+
+        cd = candidates[1]
+        assert cd.collision_context["other_candidates_ref_a"] == 0
+        assert cd.collision_context["other_candidates_ref_b"] == 0
+
+
+class TestNeighbourValues:
+    """Neighbour value lists should contain the names of nodes paired with each ref."""
+
+    def test_neighbour_values_populated(self) -> None:
+        """ref_a_neighbours should list the values of other nodes paired with ref_a."""
+        candidates = [
+            _make_pairwise("X", "A"),
+            _make_pairwise("X", "B"),
+            _make_pairwise("X", "C"),
+        ]
+
+        _annotate_duplicate_neighbourhood(candidates)
+
+        xa = candidates[0]
+        # X is also paired with B and C
+        assert sorted(xa.collision_context["ref_a_neighbours"]) == ["B", "C"]
+
+    def test_neighbour_values_capped(self) -> None:
+        """Neighbour lists are capped at 10 entries."""
+        candidates = [
+            _make_pairwise("X", chr(65 + i))  # X-A, X-B, ..., X-L (12 pairs)
+            for i in range(12)
+        ]
+
+        _annotate_duplicate_neighbourhood(candidates)
+
+        # First candidate X-A: X has 11 other neighbours, capped at 10
+        xa = candidates[0]
+        assert len(xa.collision_context["ref_a_neighbours"]) <= 10
 
 
 class TestDeterminism:
     """Same input always produces same output."""
 
     def test_deterministic_output(self) -> None:
-        def run() -> list[tuple[str, list[str]]]:
-            nodes = [chr(65 + i) for i in range(10)]
+        def run() -> list[dict]:
             candidates = [
-                _make_pairwise(nodes[i], nodes[i + 1], jw=0.92)
-                for i in range(9)
+                _make_pairwise(chr(65 + i), chr(65 + i + 1))
+                for i in range(10)
             ]
-            groups = _annotate_conflict_groups(candidates)
-            return [
-                (g.candidate_id, list(g.involved_element_refs))
-                for g in groups
-            ]
+            _annotate_duplicate_neighbourhood(candidates)
+            return [dict(c.collision_context) for c in candidates]
 
-        result1 = run()
-        result2 = run()
-        assert result1 == result2, "Non-deterministic conflict group output"
-
-
-class TestIsValidGroup:
-    """Direct tests for _is_valid_group helper."""
-
-    def test_pair_always_valid(self) -> None:
-        assert _is_valid_group({"A", "B"}, {frozenset({"A", "B"})}) is True
-
-    def test_oversized_invalid(self) -> None:
-        members = {str(i) for i in range(MAX_GROUP_SIZE + 1)}
-        assert _is_valid_group(members, set()) is False
-
-    def test_sparse_chain_invalid(self) -> None:
-        # 5-node chain: A-B-C-D-E (4 edges, max 10)
-        members = {"A", "B", "C", "D", "E"}
-        edges = {
-            frozenset({"A", "B"}),
-            frozenset({"B", "C"}),
-            frozenset({"C", "D"}),
-            frozenset({"D", "E"}),
-        }
-        # density = 4/10 = 0.4 < 0.5
-        assert _is_valid_group(members, edges) is False
-
-    def test_dense_clique_valid(self) -> None:
-        members = {"A", "B", "C", "D"}
-        edges = {
-            frozenset({"A", "B"}), frozenset({"A", "C"}), frozenset({"A", "D"}),
-            frozenset({"B", "C"}), frozenset({"B", "D"}), frozenset({"C", "D"}),
-        }
-        assert _is_valid_group(members, edges) is True
-
-
-class TestDecomposeComponent:
-    """Direct tests for _decompose_component helper."""
-
-    def test_singleton_fallback(self) -> None:
-        """When no valid grouping exists, all nodes become singletons."""
-        # 4-node path: A-B-C-D (chain, density < 0.5 even after cuts)
-        # Actually a 4-node path has density 3/6 = 0.5 which passes.
-        # Use a 5-node path instead.
-        nodes = {"A", "B", "C", "D", "E"}
-        edge_map: dict[frozenset[str], Candidate] = {}
-        for a, b in [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E")]:
-            edge_map[frozenset({a, b})] = _make_pairwise(a, b, jw=0.90)
-
-        result = _decompose_component(nodes, edge_map)
-
-        # All sub-groups should be valid
-        for sg in result:
-            if len(sg) >= 3:
-                sg_edges = {e for e in edge_map if e <= sg}
-                assert _is_valid_group(sg, sg_edges), (
-                    f"Sub-group {sg} is not valid"
-                )
+        assert run() == run()
