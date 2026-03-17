@@ -45,7 +45,7 @@ _GOVERNANCE_KEYS: frozenset[str] = frozenset({
 
 _HIGH_THRESHOLD: float = 0.80
 _MEDIUM_THRESHOLD: float = 0.60
-_MAX_CLUSTER_SIZE: int = 10
+_MAX_CLUSTER_SIZE: int = 8
 
 # ---------------------------------------------------------------------------
 # Composite score weights

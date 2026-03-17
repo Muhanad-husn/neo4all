@@ -295,6 +295,11 @@ def _build_groups(
 # Union-find for duplicate chain conflict detection
 # ---------------------------------------------------------------------------
 
+# Density-validated decomposition thresholds (see plan §1 "Why these thresholds")
+MAX_GROUP_SIZE: int = 8
+MIN_DENSITY: float = 0.5
+MIN_INTERNAL_DEGREE_RATIO: float = 0.4
+
 
 class _UnionFind:
     """Minimal union-find (disjoint set) for grouping duplicate chain nodes."""
@@ -330,17 +335,152 @@ def _pick_survivor(
     )
 
 
+def _edge_weight(candidate: Candidate) -> float:
+    """Extract edge weight from a candidate's collision_context.
+
+    Prefers composite_score (enriched by DedupPipeline) over raw jaro_winkler.
+    Returns 0.0 if neither is present.
+    """
+    ctx = candidate.collision_context
+    return float(ctx.get("composite_score", ctx.get("jaro_winkler", 0.0)))
+
+
+def _components_from_edges(
+    nodes: set[str],
+    edges: set[frozenset[str]],
+) -> list[set[str]]:
+    """Compute connected components from a node set and edge set.
+
+    Uses union-find internally.  Returns a list of node sets, one per
+    component, sorted by size descending then lexicographic first member
+    for determinism.
+    """
+    uf = _UnionFind()
+    for edge in edges:
+        pair = list(edge)
+        if len(pair) == 2:
+            uf.union(pair[0], pair[1])
+        else:
+            # Self-loop or degenerate edge — just ensure node is registered
+            uf.find(pair[0])
+
+    # Ensure all nodes are registered (singletons)
+    for n in nodes:
+        uf.find(n)
+
+    comp_map: dict[str, set[str]] = defaultdict(set)
+    for n in nodes:
+        comp_map[uf.find(n)].add(n)
+
+    # Deterministic ordering: largest first, then by sorted first member
+    return sorted(
+        comp_map.values(),
+        key=lambda s: (-len(s), sorted(s)[0]),
+    )
+
+
+def _is_valid_group(
+    members: set[str],
+    internal_edges: set[frozenset[str]],
+) -> bool:
+    """Check whether a group passes density validation.
+
+    A group is valid if ALL of:
+    - size <= MAX_GROUP_SIZE
+    - edge_density >= MIN_DENSITY
+    - Every node connects to >= MIN_INTERNAL_DEGREE_RATIO of other members
+    """
+    n = len(members)
+    if n <= 2:
+        return True  # pairs always valid
+    if n > MAX_GROUP_SIZE:
+        return False
+
+    max_edges = n * (n - 1) / 2
+    density = len(internal_edges) / max_edges if max_edges > 0 else 0.0
+    if density < MIN_DENSITY:
+        return False
+
+    # Check per-node internal degree
+    degree: dict[str, int] = {m: 0 for m in members}
+    for edge in internal_edges:
+        for node in edge:
+            if node in degree:
+                degree[node] += 1
+
+    min_required = (n - 1) * MIN_INTERNAL_DEGREE_RATIO
+    for node in members:
+        if degree[node] < min_required:
+            return False
+
+    return True
+
+
+def _decompose_component(
+    members: set[str],
+    edge_map: dict[frozenset[str], Candidate],
+) -> list[set[str]]:
+    """Decompose a component into valid sub-groups by cutting weak edges.
+
+    Iteratively removes the weakest edge (by composite_score/jaro_winkler)
+    and re-computes sub-components until all are valid.  Ties broken by
+    lexicographic sort of edge endpoints for determinism.
+    """
+    current_edges: set[frozenset[str]] = {
+        e for e in edge_map if e <= members  # edges internal to this component
+    }
+
+    # Fast path: already valid
+    if _is_valid_group(members, current_edges):
+        return [members]
+
+    # Build a weight-sorted list of edges (weakest first for removal)
+    weighted: list[tuple[float, tuple[str, ...], frozenset[str]]] = []
+    for edge in current_edges:
+        w = _edge_weight(edge_map[edge])
+        # Deterministic tiebreaker: lexicographic sort of endpoints
+        endpoints = tuple(sorted(edge))
+        weighted.append((w, endpoints, edge))
+    # Sort: weakest first, then lexicographic endpoints for ties
+    weighted.sort(key=lambda t: (t[0], t[1]))
+
+    # Iteratively cut weakest edge until all components are valid
+    remaining_edges = set(current_edges)
+    for _w, _endpoints, edge_to_cut in weighted:
+        remaining_edges.discard(edge_to_cut)
+
+        # Recompute components
+        components = _components_from_edges(members, remaining_edges)
+
+        # Check if all components are valid
+        all_valid = True
+        for comp in components:
+            comp_internal = {e for e in remaining_edges if e <= comp}
+            if not _is_valid_group(comp, comp_internal):
+                all_valid = False
+                break
+
+        if all_valid:
+            return components
+
+    # All edges removed — every node is a singleton (correct fallback)
+    return [{m} for m in sorted(members)]
+
+
 def _annotate_conflict_groups(
     candidates: list[Candidate],
     degree_map: dict[str, int] | None = None,
 ) -> list[Candidate]:
-    """Detect duplicate chains and create synthetic group-merge candidates.
+    """Detect duplicate chains and create density-validated group-merge candidates.
 
-    For each connected component with >2 nodes:
-    1. Create a synthetic group candidate (detection_method=duplicate_chain_group)
-       with all component nodes in involved_element_refs, survivor first.
-    2. Mark pairwise candidates in the chain as suppressed
-       (collision_context["suppressed_by_group"] = group candidate_id).
+    Algorithm:
+    1. Build edge map from pairwise duplicate candidates.
+    2. Union-find + component discovery.
+    3. For each component with >2 nodes, decompose into valid sub-groups
+       (density >= MIN_DENSITY, size <= MAX_GROUP_SIZE, per-node degree check).
+    4. Create group candidates for sub-groups of size >= 3.
+    5. Sub-groups of size 2: no group candidate; pairwise candidate stays.
+    6. Singletons / cross-group edges: pairwise candidates remain unsuppressed.
 
     Returns the list of newly-created group candidates (caller appends them).
     Mutates collision_context dicts in-place on existing candidates.
@@ -362,23 +502,34 @@ def _annotate_conflict_groups(
     if not dup_candidates:
         return []
 
-    # Build union-find from ref pairs.
+    # 1. Build edge map: frozenset({ref_a, ref_b}) -> strongest Candidate
+    edge_map: dict[frozenset[str], Candidate] = {}
+    for c in dup_candidates:
+        refs = list(c.involved_element_refs)
+        if len(refs) >= 2:
+            key = frozenset({refs[0], refs[1]})
+            existing = edge_map.get(key)
+            if existing is None or _edge_weight(c) > _edge_weight(existing):
+                edge_map[key] = c
+
+    # 2. Union-find from ref pairs.
     uf = _UnionFind()
     for c in dup_candidates:
         refs = list(c.involved_element_refs)
         for i in range(len(refs) - 1):
             uf.union(refs[i], refs[i + 1])
 
-    # Find component sizes.
-    components: dict[str, set[str]] = defaultdict(set)
+    # Discover components.
     all_refs: set[str] = set()
     for c in dup_candidates:
         all_refs.update(c.involved_element_refs)
+
+    components: dict[str, set[str]] = defaultdict(set)
     for ref in all_refs:
         root = uf.find(ref)
         components[root].add(ref)
 
-    # Identify chain components (>2 nodes).
+    # Only process components with >2 nodes.
     chain_components: dict[str, set[str]] = {
         root: members
         for root, members in components.items()
@@ -388,47 +539,83 @@ def _annotate_conflict_groups(
     if not chain_components:
         return []
 
-    # Build a group candidate for each chain component.
-    # Use the first pairwise candidate in the chain for run_id / schema_version.
+    # 3. Decompose each component into valid sub-groups.
     first_dup = dup_candidates[0]
     group_candidates: list[Candidate] = []
 
-    for root, members in chain_components.items():
-        survivor = _pick_survivor(members, degree_map)
-        # Order: survivor first, rest sorted for determinism.
-        ordered_refs = (survivor,) + tuple(sorted(members - {survivor}))
+    # Track which refs end up in a group (size >= 3) for suppression
+    grouped_refs: dict[str, str] = {}  # ref -> group candidate_id
 
-        group = Candidate(
-            run_id=first_dup.run_id,
-            schema_version=first_dup.schema_version,
-            candidate_type=CandidateType.probable_duplicate,
-            candidate_lane=CandidateLane.node,
-            involved_element_refs=ordered_refs,
-            severity=Severity.high,
-            detection_method="duplicate_chain_group",
-            collision_context={
-                "conflict_group_size": len(members),
-                "survivor_key": survivor,
-                "survivor_degree": degree_map.get(survivor, 0),
-                "component_members": list(sorted(members)),
-            },
-        )
-        group_candidates.append(group)
+    for _root, members in sorted(
+        chain_components.items(), key=lambda kv: sorted(kv[1])[0]
+    ):
+        sub_groups = _decompose_component(members, edge_map)
 
-        # Mark pairwise candidates in this chain as suppressed.
-        for c in dup_candidates:
-            if any(uf.find(ref) == root for ref in c.involved_element_refs):
-                c.collision_context["suppressed_by_group"] = group.candidate_id
-                c.collision_context["conflict_group_size"] = len(members)
+        for sg in sub_groups:
+            if len(sg) < 3:
+                # Sub-groups of size 1-2: no group candidate; pairwise stays
+                continue
+
+            # Compute density for metadata
+            sg_edges = {e for e in edge_map if e <= sg}
+            n = len(sg)
+            max_edges = n * (n - 1) / 2
+            density = len(sg_edges) / max_edges if max_edges > 0 else 0.0
+
+            # Compute min internal degree
+            node_degree: dict[str, int] = {m: 0 for m in sg}
+            for edge in sg_edges:
+                for node in edge:
+                    if node in node_degree:
+                        node_degree[node] += 1
+            min_deg = min(node_degree.values()) if node_degree else 0
+            min_deg_ratio = min_deg / (n - 1) if n > 1 else 0.0
+
+            survivor = _pick_survivor(sg, degree_map)
+            ordered_refs = (survivor,) + tuple(sorted(sg - {survivor}))
+
+            group = Candidate(
+                run_id=first_dup.run_id,
+                schema_version=first_dup.schema_version,
+                candidate_type=CandidateType.probable_duplicate,
+                candidate_lane=CandidateLane.node,
+                involved_element_refs=ordered_refs,
+                severity=Severity.high,
+                detection_method="duplicate_chain_group",
+                collision_context={
+                    "conflict_group_size": len(sg),
+                    "survivor_key": survivor,
+                    "survivor_degree": degree_map.get(survivor, 0),
+                    "component_members": list(sorted(sg)),
+                    "edge_density": round(density, 4),
+                    "min_internal_degree": min_deg,
+                    "min_internal_degree_ratio": round(min_deg_ratio, 4),
+                },
+            )
+            group_candidates.append(group)
+
+            for ref in sg:
+                grouped_refs[ref] = group.candidate_id
+
+    # Suppress pairwise candidates whose BOTH refs are in the same group.
+    suppressed_count = 0
+    for c in dup_candidates:
+        refs = list(c.involved_element_refs)
+        if len(refs) >= 2:
+            gid_a = grouped_refs.get(refs[0])
+            gid_b = grouped_refs.get(refs[1])
+            if gid_a and gid_a == gid_b:
+                c.collision_context["suppressed_by_group"] = gid_a
+                c.collision_context["conflict_group_size"] = len([
+                    r for r, g in grouped_refs.items() if g == gid_a
+                ])
+                suppressed_count += 1
 
     logger.info(
         "conflict_groups_detected",
         chain_count=len(chain_components),
         group_candidates_created=len(group_candidates),
-        suppressed_pairwise=sum(
-            1 for c in dup_candidates
-            if c.collision_context.get("suppressed_by_group")
-        ),
+        suppressed_pairwise=suppressed_count,
     )
 
     return group_candidates

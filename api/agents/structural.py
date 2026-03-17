@@ -33,16 +33,30 @@ def compute_structural_recommendation(
     ctype = str(candidate.candidate_type)
 
     # ----- group merge (duplicate chain) ------------------------------------
-    # Synthetic group candidate created by the chain conflict detector.
-    # All nodes in the chain should be merged into the most-connected survivor.
+    # Synthetic group candidate created by the density-validated chain
+    # conflict detector.  Confidence scales with group density and size.
     if candidate.detection_method == "duplicate_chain_group":
         survivor = ctx.get("survivor_key", "?")
-        group_size = ctx.get("conflict_group_size", "?")
+        group_size = ctx.get("conflict_group_size", 0)
+        density = ctx.get("edge_density", 0.0)
+
+        # Confidence scaling based on density-validated group quality
+        if group_size <= 5 and density >= 0.8:
+            confidence = 0.90
+            label = "Dense"
+        elif group_size <= 8 and density >= 0.5:
+            confidence = 0.75
+            label = "Validated"
+        else:
+            confidence = 0.50
+            label = "Sparse"
+
         return StructuralRecommendation(
             suggested_action="merge",
-            confidence=0.90,
+            confidence=confidence,
             reasoning=(
-                f"Duplicate chain of {group_size} overlapping nodes detected. "
+                f"{label} duplicate group of {group_size} overlapping nodes "
+                f"(edge_density={density:.2f}). "
                 f"Merge all into survivor '{survivor}' (highest degree: "
                 f"{ctx.get('survivor_degree', '?')}). Individual pairwise "
                 f"candidates are suppressed in favour of this atomic group merge."
