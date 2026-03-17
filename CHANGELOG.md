@@ -2,6 +2,20 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.9] - 2026-03-17
+
+### Fixed
+- Single-token containment false positives ("Tom" vs "Tom Hanks", "Sophia" vs "Sophia van Dijk") — `_token_containment()` now requires shorter string to have >= 2 tokens
+- Containment composite score inflated to 0.85 base regardless of corroboration — lowered to 0.70 base with up to 0.25 bonus from shared neighbours and property overlap
+- JW floor (`max(weighted, jw)`) in composite scoring produced artificially high scores for uncorroborated name matches — removed
+- Confidence band overrides (`jaro_winkler`, `is_containment` params) bypassed composite score classifier — removed, now pure score-based
+
+### Changed
+- Structural recommender: containment, name-subset, and high-JW patterns now defer when `context_jaccard == 0` (no shared graph neighbours) instead of always recommending merge
+- Proposal composer prompt upgraded to v13 — removed misleading merge example, added containment caution and structural defer guidance, softened key principle (false merge > deferred duplicate)
+
+---
+
 ## [1.0.8] - 2026-03-17
 
 ### Removed

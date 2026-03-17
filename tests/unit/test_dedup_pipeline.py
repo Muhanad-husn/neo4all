@@ -139,11 +139,13 @@ class TestCompositeScore:
         expected = 0.50 * 0.95 + 0.25 * 0.80 + 0.15 * 0.60 + 0.10 * 1.0
         assert abs(score - expected) < 0.001
 
-    def test_high_jw_no_context_uses_jw_floor(self) -> None:
-        """JW >= 0.90 with CJ=0: composite floored at JW value."""
+    def test_high_jw_no_context_weighted(self) -> None:
+        """JW >= 0.90 with CJ=0: weighted score, no JW floor."""
         ctx = {"jaro_winkler": 0.92, "token_overlap": 0.667, "context_jaccard": 0.0}
         score = _compute_composite_score(ctx, {}, {})
-        assert score >= 0.92
+        expected = (0.50 + 0.15) * 0.92 + 0.25 * 0.667
+        assert abs(score - expected) < 0.001
+        assert score < 0.92  # no floor
 
     def test_cj_zero_below_jw_gate_redistributes(self) -> None:
         """JW < 0.90 with CJ=0: CJ weight redistributed, no JW floor."""
@@ -227,17 +229,26 @@ class TestClassifyConfidence:
     def test_below_medium_threshold(self) -> None:
         assert _classify_confidence(0.59, False) == "low"
 
-    def test_low_composite_high_jw_becomes_medium(self) -> None:
-        """jw >= 0.90 prevents deferral even with low composite score."""
-        assert _classify_confidence(0.49, False, jaro_winkler=0.92) == "medium"
+    def test_low_composite_stays_low(self) -> None:
+        """Low composite score → low band (no override logic)."""
+        assert _classify_confidence(0.49, False) == "low"
 
-    def test_low_composite_low_jw_stays_low(self) -> None:
-        """jw below 0.90 does not rescue a low composite score."""
-        assert _classify_confidence(0.49, False, jaro_winkler=0.85) == "low"
+    def test_containment_no_corroboration_medium(self) -> None:
+        """Containment with CJ=0 → score 0.70 (medium band)."""
+        ctx = {"jaro_winkler": 0.88, "token_overlap": 0.667, "context_jaccard": 0.0, "containment": True}
+        score = _compute_composite_score(ctx, {}, {})
+        assert abs(score - 0.70) < 0.001
+        assert _classify_confidence(score, False) == "medium"
 
-    def test_high_jw_does_not_override_high_band(self) -> None:
-        """High composite score still yields high regardless of jw."""
-        assert _classify_confidence(0.85, False, jaro_winkler=0.95) == "high"
+    def test_containment_with_corroboration_high(self) -> None:
+        """Containment with CJ=0.5 → score > 0.80 (high band)."""
+        ctx = {"jaro_winkler": 0.88, "token_overlap": 0.667, "context_jaccard": 0.5, "containment": True}
+        props_a = {"role": "analyst"}
+        props_b = {"role": "analyst"}
+        score = _compute_composite_score(ctx, props_a, props_b)
+        # base=0.70, bonus=min(0.5*0.15 + 1.0*0.10, 0.25) = min(0.175, 0.25) = 0.175
+        assert score > 0.80
+        assert _classify_confidence(score, False) == "high"
 
 
 # ===========================================================================

@@ -68,11 +68,19 @@ class TestStructuralProbableDuplicate:
         assert rec.suggested_action == "merge"
         assert rec.confidence <= 0.90
 
-    def test_high_similarity_no_context_recommends_merge(self) -> None:
-        """JW >= 0.90 without context overlap → merge."""
-        c = _make_probable_dup(jw=0.92, cj=0.0)
+    def test_high_similarity_no_context_low_tok_defers(self) -> None:
+        """JW >= 0.90 without context overlap and low tok → defer."""
+        c = _make_probable_dup(jw=0.92, cj=0.0, tok=0.60)
+        rec = compute_structural_recommendation(c)
+        assert rec.suggested_action == "defer"
+        assert rec.confidence == 0.45
+
+    def test_high_similarity_no_context_high_tok_merges(self) -> None:
+        """JW >= 0.90 without context overlap but high tok → merge."""
+        c = _make_probable_dup(jw=0.92, cj=0.0, tok=0.85)
         rec = compute_structural_recommendation(c)
         assert rec.suggested_action == "merge"
+        assert rec.confidence == 0.65
 
     def test_canonical_direction_violation_mentions_two_paths(self) -> None:
         """canonical_direction_violation reasoning mentions both normalize and rename paths."""
@@ -97,6 +105,37 @@ class TestStructuralProbableDuplicate:
         assert "normalize" in rec.reasoning.lower()
         assert "rename" in rec.reasoning.lower()
         assert "high_risk_override" in rec.reasoning
+
+    def test_containment_no_corroboration_defers(self) -> None:
+        """Token containment + CJ=0 → defer."""
+        c = _make_probable_dup(val_a="ingrid bos", val_b="ingrid bos van dijk", jw=0.88, tok=0.667, cj=0.0)
+        c.collision_context["containment"] = True
+        rec = compute_structural_recommendation(c)
+        assert rec.suggested_action == "defer"
+        assert rec.confidence == 0.55
+
+    def test_containment_with_corroboration_merges(self) -> None:
+        """Token containment + CJ>0 → merge."""
+        c = _make_probable_dup(val_a="ingrid bos", val_b="ingrid bos van dijk", jw=0.88, tok=0.667, cj=0.30)
+        c.collision_context["containment"] = True
+        rec = compute_structural_recommendation(c)
+        assert rec.suggested_action == "merge"
+        assert rec.confidence == 0.80
+
+    def test_name_subset_no_corroboration_defers(self) -> None:
+        """Name subset (JW>=0.90) + CJ=0 → defer."""
+        c = _make_probable_dup(val_a="ingrid", val_b="ingrid bos", jw=0.92, tok=0.667, cj=0.0)
+        rec = compute_structural_recommendation(c)
+        # Pattern 3 (name subset, JW>=0.90, CJ=0) → defer
+        assert rec.suggested_action == "defer"
+        assert rec.confidence == 0.50
+
+    def test_jw_092_tok_04_cj_0_defers(self) -> None:
+        """JW=0.92 + tok=0.4 + CJ=0 → defer (insufficient corroboration)."""
+        c = _make_probable_dup(val_a="Zenith Corp", val_b="Zenith Co", jw=0.92, tok=0.40, cj=0.0)
+        rec = compute_structural_recommendation(c)
+        assert rec.suggested_action == "defer"
+        assert rec.confidence == 0.45
 
     def test_exact_node_duplicate_recommends_merge(self) -> None:
         """Exact node duplicate → merge at high confidence."""

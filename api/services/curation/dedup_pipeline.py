@@ -119,22 +119,13 @@ def _compute_composite_score(
     po = _property_overlap(props_a, props_b)
 
     # Token containment: qualitatively different from edit distance.
-    # "Aiko" ⊂ "Aiko Nakamura" is strong evidence regardless of JW score.
+    # Strong with corroboration, moderate without.
     if ctx.get("containment"):
-        base = 0.85
-        bonus = min(cj * 0.10 + po * 0.05, 0.10)
+        base = 0.70
+        bonus = min(cj * 0.15 + po * 0.10, 0.25)
         return base + bonus
 
-    # When context_jaccard is 0 and name similarity is high (JW >= 0.90),
-    # the name IS the evidence.  No shared neighbors is the normal state
-    # for duplicates.  Use JW directly as the floor — don't let partial
-    # token overlap or missing properties drag an obvious duplicate below
-    # the merge threshold.
-    if cj == 0.0 and jw >= 0.90:
-        weighted = (_W_JW + _W_CJ) * jw + _W_TOK * tok + _W_PO * po
-        return max(weighted, jw)
-
-    # Redistribute CJ weight to JW when CJ is 0 but JW is below 0.90.
+    # Redistribute CJ weight to JW when CJ is 0 (no shared neighbors).
     if cj == 0.0:
         return (_W_JW + _W_CJ) * jw + _W_TOK * tok + _W_PO * po
 
@@ -158,29 +149,16 @@ def _check_contradictions(
 def _classify_confidence(
     composite_score: float,
     has_contradictions: bool,
-    jaro_winkler: float = 0.0,
-    is_containment: bool = False,
 ) -> str:
     """Map composite score + contradiction status to confidence band.
 
-    When jaro_winkler >= 0.90 the names are near-identical — the candidate
-    is at least "medium" regardless of composite score so it reaches the
-    agent pipeline without the "deferred" stigma.
-
-    Token containment candidates are at least "medium" — they represent
-    genuine name subset relationships that should never be deferred.
+    Pure composite-score classifier — no override logic.
     """
     if composite_score >= _HIGH_THRESHOLD and not has_contradictions:
         return "high"
     if composite_score >= _MEDIUM_THRESHOLD:
         return "medium"
     if composite_score >= _HIGH_THRESHOLD and has_contradictions:
-        return "medium"
-    # High name similarity alone is strong signal — never defer these.
-    if jaro_winkler >= 0.90:
-        return "medium"
-    # Token containment is a strong structural signal — never defer.
-    if is_containment:
         return "medium"
     return "low"
 
@@ -340,12 +318,7 @@ class DedupPipeline:
             ctx = c.collision_context
             score = ctx.get("composite_score", 0.0)
             has_conflicts = bool(ctx.get("property_conflicts"))
-            jw = ctx.get("jaro_winkler", 0.0)
-            band = _classify_confidence(
-                score, has_conflicts,
-                jaro_winkler=jw,
-                is_containment=bool(ctx.get("containment")),
-            )
+            band = _classify_confidence(score, has_conflicts)
             ctx["confidence_band"] = band
 
         # Stage 6: Cluster validation

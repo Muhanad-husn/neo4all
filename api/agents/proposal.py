@@ -55,7 +55,7 @@ logger = get_logger(__name__)
 
 _JOB_ID: str = "proposal_composer"
 _TEMPLATE_VERSION: str = "v11"
-_BATCH_TEMPLATE_VERSION: str = "v12"
+_BATCH_TEMPLATE_VERSION: str = "v13"
 _AGENT_NAME: str = "agent-p"
 _COST_PER_1K_TOKENS: float = 0.001
 

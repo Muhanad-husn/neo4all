@@ -151,24 +151,34 @@ def _recommend_probable_duplicate(
     if ctx.get("containment"):
         shorter = val_a if len(val_a) <= len(val_b) else val_b
         longer = val_b if shorter == val_a else val_a
-        conf = round(0.82 + min(cj * 0.08, 0.08), 2)
+        if cj > 0:
+            return StructuralRecommendation(
+                suggested_action="merge",
+                confidence=0.80,
+                reasoning=(
+                    f"Token containment: every word in '{shorter}' appears in "
+                    f"'{longer}' (similarity: {jw:.2f}) with shared graph "
+                    f"neighbours (context overlap: {cj:.2f}). Corroborated — "
+                    f"merge into the more complete form."
+                ),
+            )
         return StructuralRecommendation(
-            suggested_action="merge",
-            confidence=min(1.0, conf),
+            suggested_action="defer",
+            confidence=0.55,
             reasoning=(
                 f"Token containment: every word in '{shorter}' appears in "
-                f"'{longer}' (similarity: {jw:.2f}). This is a name "
-                f"abbreviation or partial reference — merge into the more "
-                f"complete form."
+                f"'{longer}' (similarity: {jw:.2f}) but no shared graph "
+                f"neighbours. Without corroboration, '{shorter}' could refer "
+                f"to a different entity — defer for review."
             ),
         )
 
     # Pattern 2: Near-identical (typo / formatting / encoding variant)
     if jw >= 0.95:
-        conf = round(0.90 + min(cj, 0.05), 2)
+        conf = 0.90 if cj > 0 else 0.85
         return StructuralRecommendation(
             suggested_action="merge",
-            confidence=min(1.0, conf),
+            confidence=conf,
             reasoning=(
                 f"Near-identical values '{val_a}' and '{val_b}' "
                 f"(similarity: {jw:.2f}). Minor formatting or "
@@ -177,22 +187,33 @@ def _recommend_probable_duplicate(
         )
 
     # Pattern 3: Name containment — one value's tokens are a subset of
-    # the other's (e.g. "Ingrid" vs "Ingrid Bos", "Jason" vs "Jason Chen").
+    # the other's (e.g. "Ingrid Bos" vs "Ingrid Bos van Dijk").
     if val_a and val_b and jw >= 0.90:
         toks_a = set(val_a.lower().split())
         toks_b = set(val_b.lower().split())
         if toks_a != toks_b and (toks_a <= toks_b or toks_b <= toks_a):
             longer = val_a if len(toks_a) >= len(toks_b) else val_b
             shorter = val_b if longer == val_a else val_a
-            conf = round(0.80 + min(tok * 0.10, 0.10), 2)
+            if cj > 0:
+                return StructuralRecommendation(
+                    suggested_action="merge",
+                    confidence=0.80,
+                    reasoning=(
+                        f"Name containment: '{shorter}' is a subset of "
+                        f"'{longer}' (similarity: {jw:.2f}, word overlap: "
+                        f"{tok:.2f}) with shared graph neighbours. "
+                        f"Corroborated — merge into the more complete form."
+                    ),
+                )
             return StructuralRecommendation(
-                suggested_action="merge",
-                confidence=min(1.0, conf),
+                suggested_action="defer",
+                confidence=0.50,
                 reasoning=(
                     f"Name containment: '{shorter}' is a subset of "
                     f"'{longer}' (similarity: {jw:.2f}, word overlap: "
-                    f"{tok:.2f}). This is a name abbreviation — merge "
-                    f"into the more complete form."
+                    f"{tok:.2f}) but no shared graph neighbours. Without "
+                    f"corroboration this could be a different entity — "
+                    f"defer for review."
                 ),
             )
 
@@ -200,23 +221,34 @@ def _recommend_probable_duplicate(
     if jw >= 0.90:
         if cj > 0:
             conf = round(0.75 + min(cj, 0.15), 2)
-            reasoning = (
-                f"High similarity between '{val_a}' and '{val_b}' "
-                f"(similarity: {jw:.2f}) with shared graph neighbours "
-                f"(context overlap: {cj:.2f}). Same entity — merge."
+            return StructuralRecommendation(
+                suggested_action="merge",
+                confidence=conf,
+                reasoning=(
+                    f"High similarity between '{val_a}' and '{val_b}' "
+                    f"(similarity: {jw:.2f}) with shared graph neighbours "
+                    f"(context overlap: {cj:.2f}). Same entity — merge."
+                ),
             )
-        else:
-            conf = round(0.70 + min(tok * 0.1, 0.10), 2)
-            reasoning = (
-                f"High similarity between '{val_a}' and '{val_b}' "
-                f"(similarity: {jw:.2f}, word overlap: {tok:.2f}). "
-                f"Merge recommended — human approval gate provides "
-                f"the safety check."
+        if tok >= 0.8:
+            return StructuralRecommendation(
+                suggested_action="merge",
+                confidence=0.65,
+                reasoning=(
+                    f"High similarity between '{val_a}' and '{val_b}' "
+                    f"(similarity: {jw:.2f}, word overlap: {tok:.2f}). "
+                    f"Strong token overlap supports merge."
+                ),
             )
         return StructuralRecommendation(
-            suggested_action="merge",
-            confidence=conf,
-            reasoning=reasoning,
+            suggested_action="defer",
+            confidence=0.45,
+            reasoning=(
+                f"High similarity between '{val_a}' and '{val_b}' "
+                f"(similarity: {jw:.2f}, word overlap: {tok:.2f}) but no "
+                f"shared graph neighbours and low token overlap. "
+                f"Insufficient corroboration — defer for review."
+            ),
         )
 
     # Below thresholds (shouldn't happen — detector gate is 0.90)
