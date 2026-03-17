@@ -31,6 +31,8 @@ from typing import Any
 from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
+from collections import defaultdict
+
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.config import AgentConfig, AgentModelConfig, get_settings
@@ -41,6 +43,101 @@ from api.observability.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["agent-pipeline"])
+
+
+# ---------------------------------------------------------------------------
+# Node-safe batch grouping
+# ---------------------------------------------------------------------------
+
+
+def _group_by_shared_refs(
+    candidates: list,
+    decisions: list,
+    max_batch_size: int,
+) -> list[tuple[list, list]]:
+    """Group candidates that share involved_element_refs into the same batch.
+
+    Ensures no node is touched by two different batches — candidates sharing
+    any entity ref are always processed together so the LLM sees the full
+    cluster and execution never produces conflicting mutations.
+
+    Unrelated candidates (no shared refs) are packed together up to
+    max_batch_size for efficiency.
+
+    Returns a list of (candidates, decisions) tuples — one per batch.
+    """
+    # Build union-find over involved_element_refs.
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        if x not in parent:
+            parent[x] = x
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    # Use candidate index as a node in the union-find, linked through shared refs.
+    # ref_to_idx: maps each entity ref to the first candidate index that uses it.
+    ref_to_idx: dict[str, int] = {}
+    # Also union candidate indices together via a parallel namespace ("cand:N").
+    for i, c in enumerate(candidates):
+        cand_key = f"cand:{i}"
+        find(cand_key)  # register
+        for ref in c.involved_element_refs:
+            if ref in ref_to_idx:
+                # This ref was seen in another candidate — union them.
+                union(cand_key, f"cand:{ref_to_idx[ref]}")
+            else:
+                ref_to_idx[ref] = i
+
+    # Collect groups by root.
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i in range(len(candidates)):
+        root = find(f"cand:{i}")
+        groups[root].append(i)
+
+    # Sort groups deterministically: by first candidate index.
+    sorted_groups = sorted(groups.values(), key=lambda g: g[0])
+
+    # Pack groups into batches. Each ref-connected group stays together.
+    # Unrelated groups can share a batch up to max_batch_size.
+    batches: list[tuple[list, list]] = []
+    current_cands: list = []
+    current_decs: list = []
+
+    for group_indices in sorted_groups:
+        group_cands = [candidates[i] for i in group_indices]
+        group_decs = [decisions[i] for i in group_indices]
+
+        # If this group alone exceeds max_batch_size, it gets its own batch.
+        if len(group_indices) > max_batch_size:
+            # Flush current batch if non-empty.
+            if current_cands:
+                batches.append((current_cands, current_decs))
+                current_cands, current_decs = [], []
+            batches.append((group_cands, group_decs))
+            continue
+
+        # Would adding this group exceed the batch limit?
+        if len(current_cands) + len(group_indices) > max_batch_size:
+            # Flush current batch.
+            batches.append((current_cands, current_decs))
+            current_cands, current_decs = [], []
+
+        current_cands.extend(group_cands)
+        current_decs.extend(group_decs)
+
+    # Flush remaining.
+    if current_cands:
+        batches.append((current_cands, current_decs))
+
+    return batches
 
 
 # ---------------------------------------------------------------------------
@@ -692,11 +789,25 @@ async def run_agent_pipeline(
             errors=[ErrorDetail(code="arq_unavailable", message=str(exc))],
         )
 
-    enqueued = 0
-    for batch_start in range(0, len(candidates), batch_size):
-        batch_candidates = candidates[batch_start : batch_start + batch_size]
-        batch_decisions = decisions[batch_start : batch_start + batch_size]
+    # ------------------------------------------------------------------
+    # 6a. Group candidates by shared entity refs (node-safe batching).
+    #     Candidates that share involved_element_refs MUST go in the same
+    #     batch so the LLM sees the full cluster and execution never
+    #     touches the same node twice.  Unrelated candidates are packed
+    #     together up to batch_size for efficiency.
+    # ------------------------------------------------------------------
+    batches = _group_by_shared_refs(candidates, decisions, batch_size)
 
+    logger.info(
+        "agent_pipeline_batches_grouped",
+        run_id=run_id,
+        total_candidates=len(candidates),
+        batches_formed=len(batches),
+        batch_sizes=[len(b[0]) for b in batches],
+    )
+
+    enqueued = 0
+    for batch_candidates, batch_decisions in batches:
         batch_cands_payload = _json.dumps(
             [c.model_dump(mode="json") for c in batch_candidates]
         )
@@ -717,7 +828,6 @@ async def run_agent_pipeline(
             logger.error(
                 "agent_pipeline_batch_enqueue_failed",
                 run_id=run_id,
-                batch_start=batch_start,
                 batch_size=len(batch_candidates),
                 error=str(exc),
             )
