@@ -197,6 +197,27 @@ def _run_stage_detection(
     st.rerun()
 
 
+def _clear_candidates(run_id: str) -> None:
+    """Clear all cached candidates, proposals, and graph query cache for a run."""
+    data, err = _delete(f"/api/curation/candidates/{run_id}")
+    if err or data is None:
+        st.error(f"Clear failed: {err or 'No response from API.'}")
+        return
+    if data.get("status") == "error":
+        for e in data.get("errors", []):
+            st.error(f"[{e.get('code')}] {e.get('message')}")
+        return
+
+    cand = data.get("candidates_cleared", 0)
+    props = data.get("proposals_cleared", 0)
+    st.success(
+        f"Cleared {cand} candidate cache entries and {props} proposals. "
+        "You can now regenerate candidates."
+    )
+    StateManager.get().clear_dismissed_proposals()
+    st.rerun()
+
+
 def _render_trigger_section(run_id: str) -> None:
     """Render staged candidate generation tabs with per-stage generate buttons."""
     st.subheader("Generate Candidates")
@@ -251,6 +272,16 @@ def _render_trigger_section(run_id: str) -> None:
             help="Runs StructuralAnomalyDetector (degree_outlier excluded).",
         ):
             _run_stage_detection(run_id, stage=3, label="Structural issue")
+
+    # Clear candidates button — placed after stage tabs.
+    st.divider()
+    if st.button(
+        "Clear All Candidates",
+        key="btn_clear_candidates",
+        help="Remove all cached candidates, proposals, and graph query cache. "
+        "Use this to start fresh before regenerating.",
+    ):
+        _clear_candidates(run_id)
 
 
 def _render_severity_badges(severity_counts: dict[str, int]) -> None:

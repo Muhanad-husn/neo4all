@@ -1042,3 +1042,78 @@ async def generate_candidates_scoped(
         counts_by_type=_build_type_counts(candidates_out),
         schema_version=schema.version_hash,
     )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/curation/candidates/{run_id}
+# ---------------------------------------------------------------------------
+
+
+class ClearCandidatesResponse(BaseResponse):
+    """Response for DELETE /api/curation/candidates/{run_id}.
+
+    Attributes:
+        candidates_cleared:  Number of candidate cache keys deleted.
+        proposals_cleared:   Number of proposals deleted.
+        graph_cache_cleared: Number of graph query cache keys deleted.
+    """
+
+    candidates_cleared: int = 0
+    proposals_cleared: int = 0
+    graph_cache_cleared: int = 0
+
+
+@router.delete(
+    "/candidates/{run_id}",
+    response_model=ClearCandidatesResponse,
+    summary="Clear all cached candidates, proposals, and graph query cache for a run",
+)
+async def clear_candidates(run_id: str) -> ClearCandidatesResponse:
+    """Remove all candidate-related data from cache so candidates can be regenerated.
+
+    Clears:
+    - All candidate detection cache keys (candidates:{run_id}:*)
+    - The excluded candidates set
+    - All graph query cache keys (gq:{run_id}:*) so regeneration reads fresh data
+    - All proposals for the run (S3 + Redis)
+
+    Returns HTTP 200 with counts of cleared items.
+    """
+    from api.proposals.service import ProposalService
+
+    logger.info("candidates_clear_requested", run_id=run_id)
+
+    cache = get_cache_client()
+
+    # 1. Clear candidate cache keys.
+    cand_deleted = await cache.invalidate_prefix(
+        CacheKey.candidates_prefix(run_id)
+    )
+
+    # 2. Clear excluded candidates set.
+    await cache.delete(CacheKey.excluded_candidates(run_id))
+
+    # 3. Clear graph query cache so regeneration gets fresh reads.
+    gq_deleted = await cache.invalidate_prefix(
+        CacheKey.graph_query_prefix(run_id)
+    )
+
+    # 4. Clear proposals (they reference old candidates).
+    service = ProposalService()
+    proposals_deleted = await service.clear_for_run(run_id)
+
+    logger.info(
+        "candidates_clear_complete",
+        run_id=run_id,
+        candidates_cleared=cand_deleted,
+        proposals_cleared=proposals_deleted,
+        graph_cache_cleared=gq_deleted,
+    )
+
+    return ClearCandidatesResponse(
+        run_id=run_id,
+        status="success",
+        candidates_cleared=cand_deleted,
+        proposals_cleared=proposals_deleted,
+        graph_cache_cleared=gq_deleted,
+    )
