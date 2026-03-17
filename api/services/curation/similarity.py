@@ -141,8 +141,8 @@ def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
     else:
         # Same token count but different sets — not a containment relationship.
         return False
-    # Guard: fewer than 2 content tokens is too ambiguous.
-    if len(shorter_tokens) < 2:
+    # Guard: shorter must have at least 1 content token.
+    if len(shorter_tokens) < 1:
         return False
     # Guard: shorter string must meet minimum character length.
     if len(shorter_str.strip()) < min_short_len:
