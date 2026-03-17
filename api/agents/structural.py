@@ -147,6 +147,22 @@ def _recommend_probable_duplicate(
             ),
         )
 
+    # Pattern 1.5: Token containment (detected by containment detector, JW < 0.90)
+    if ctx.get("containment"):
+        shorter = val_a if len(val_a) <= len(val_b) else val_b
+        longer = val_b if shorter == val_a else val_a
+        conf = round(0.82 + min(cj * 0.08, 0.08), 2)
+        return StructuralRecommendation(
+            suggested_action="merge",
+            confidence=min(1.0, conf),
+            reasoning=(
+                f"Token containment: every word in '{shorter}' appears in "
+                f"'{longer}' (similarity: {jw:.2f}). This is a name "
+                f"abbreviation or partial reference — merge into the more "
+                f"complete form."
+            ),
+        )
+
     # Pattern 2: Near-identical (typo / formatting / encoding variant)
     if jw >= 0.95:
         conf = round(0.90 + min(cj, 0.05), 2)

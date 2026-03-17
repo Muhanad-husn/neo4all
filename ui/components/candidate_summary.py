@@ -22,6 +22,7 @@ _METHOD_LABELS: dict[str, str] = {
     "missing_provenance_rel": "Missing provenance (rel)",
     "qualifier_missing": "Missing qualifier",
     "duplicate_chain_group": "Duplicate chain",
+    "token_containment": "Name containment",
 }
 
 
@@ -125,6 +126,12 @@ def summarize_candidate(candidate: dict[str, Any]) -> str:
         qualifier = ctx.get("qualifier", ctx.get("missing_field", "unknown"))
         return f"{nt} node missing qualifier: {qualifier}"
 
+    if method == "token_containment":
+        nt = _node_type(ctx)
+        va = ctx.get("value_a", "?")
+        vb = ctx.get("value_b", "?")
+        return f"Name containment: '{va}' / '{vb}' ({nt})"
+
     if method == "duplicate_chain_group":
         chain_len = ctx.get("chain_length", count)
         return f"Chain of {chain_len} connected duplicates \u2014 merge group"
@@ -188,6 +195,11 @@ def short_summary(candidate: dict[str, Any]) -> str:
         nt = _node_type(ctx)
         qualifier = ctx.get("qualifier", ctx.get("missing_field", "?"))
         return f"{nt} missing: {qualifier}"
+
+    if method == "token_containment":
+        va = str(ctx.get("value_a", "?"))[:12]
+        vb = str(ctx.get("value_b", "?"))[:12]
+        return f"Contains: '{va}' / '{vb}'"
 
     if method == "duplicate_chain_group":
         chain_len = ctx.get("chain_length", count)

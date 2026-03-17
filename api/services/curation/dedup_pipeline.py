@@ -142,6 +142,13 @@ def _compute_composite_score(
     cj = ctx.get("context_jaccard", 0.0)
     po = _property_overlap(props_a, props_b)
 
+    # Token containment: qualitatively different from edit distance.
+    # "Aiko" ⊂ "Aiko Nakamura" is strong evidence regardless of JW score.
+    if ctx.get("containment"):
+        base = 0.85
+        bonus = min(cj * 0.10 + po * 0.05, 0.10)
+        return base + bonus
+
     # When context_jaccard is 0 and name similarity is high (JW >= 0.90),
     # the name IS the evidence.  No shared neighbors is the normal state
     # for duplicates.  Use JW directly as the floor — don't let partial
@@ -176,12 +183,16 @@ def _classify_confidence(
     composite_score: float,
     has_contradictions: bool,
     jaro_winkler: float = 0.0,
+    is_containment: bool = False,
 ) -> str:
     """Map composite score + contradiction status to confidence band.
 
     When jaro_winkler >= 0.90 the names are near-identical — the candidate
     is at least "medium" regardless of composite score so it reaches the
     agent pipeline without the "deferred" stigma.
+
+    Token containment candidates are at least "medium" — they represent
+    genuine name subset relationships that should never be deferred.
     """
     if composite_score >= _HIGH_THRESHOLD and not has_contradictions:
         return "high"
@@ -191,6 +202,9 @@ def _classify_confidence(
         return "medium"
     # High name similarity alone is strong signal — never defer these.
     if jaro_winkler >= 0.90:
+        return "medium"
+    # Token containment is a strong structural signal — never defer.
+    if is_containment:
         return "medium"
     return "low"
 
@@ -558,7 +572,11 @@ class DedupPipeline:
             score = ctx.get("composite_score", 0.0)
             has_conflicts = bool(ctx.get("property_conflicts"))
             jw = ctx.get("jaro_winkler", 0.0)
-            band = _classify_confidence(score, has_conflicts, jaro_winkler=jw)
+            band = _classify_confidence(
+                score, has_conflicts,
+                jaro_winkler=jw,
+                is_containment=bool(ctx.get("containment")),
+            )
             ctx["confidence_band"] = band
 
         # Stage 6: Cluster validation

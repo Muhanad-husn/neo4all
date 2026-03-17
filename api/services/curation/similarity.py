@@ -85,6 +85,46 @@ def _token_overlap(s: str, t: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Token containment
+# ---------------------------------------------------------------------------
+
+
+def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
+    """True when every token of the shorter string appears in the longer string.
+
+    Guards:
+      - The shorter string must be >= *min_short_len* characters (prevents
+        trivially short matches like "a", "de").
+      - Token sets must not be equal (same-token pairs are already handled
+        by Jaro-Winkler / auto-canonical).
+
+    Pure, deterministic, no external deps.
+    """
+    import re as _re
+
+    _TOKEN_RE = _re.compile(r"[a-z0-9]+")
+    tokens_s = set(_TOKEN_RE.findall(s.lower()))
+    tokens_t = set(_TOKEN_RE.findall(t.lower()))
+    if not tokens_s or not tokens_t:
+        return False
+    # Reject equal token sets — handled elsewhere.
+    if tokens_s == tokens_t:
+        return False
+    # Identify shorter / longer by token count (break ties by char length).
+    if len(tokens_s) < len(tokens_t):
+        shorter_tokens, shorter_str = tokens_s, s
+    elif len(tokens_s) > len(tokens_t):
+        shorter_tokens, shorter_str = tokens_t, t
+    else:
+        # Same token count but different sets — not a containment relationship.
+        return False
+    # Guard: shorter string must meet minimum character length.
+    if len(shorter_str.strip()) < min_short_len:
+        return False
+    return shorter_tokens < (tokens_s | tokens_t)
+
+
+# ---------------------------------------------------------------------------
 # Set similarity
 # ---------------------------------------------------------------------------
 

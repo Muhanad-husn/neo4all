@@ -37,6 +37,7 @@ from api.services.curation.similarity import (
     _jaccard,
     _jaro_winkler,
     _primary_value,
+    _token_containment,
     _token_overlap,
 )
 
@@ -63,6 +64,9 @@ JW_SOFT_THRESHOLD: float = 0.95
 
 TOKEN_OVERLAP_GATE: float = 0.5
 """Minimum token overlap required to emit candidates in the [0.90, 0.95) band."""
+
+CONTAINMENT_DETECTION_METHOD = "token_containment"
+"""Detection method label for candidates found via token containment fallback."""
 
 DEGREE_OUTLIER_SIGMA: float = 3.0
 """Standard-deviation multiplier for flagging degree outliers."""
@@ -237,39 +241,62 @@ class ProbableDuplicateDetector:
                     if not val_a or not val_b:
                         continue
                     jw = _jaro_winkler(val_a, val_b)
-                    if jw < JW_THRESHOLD:
-                        continue
                     tok = _token_overlap(val_a, val_b)
-                    # Soft gate: JW in [0.90, 0.95) requires token overlap >= 0.5
-                    if jw < JW_SOFT_THRESHOLD and tok < TOKEN_OVERLAP_GATE:
-                        continue
                     context_score = _jaccard(
                         adj.get(a.dedupe_key, set()),
                         adj.get(b.dedupe_key, set()),
                     )
-                    # Sort refs for order-independent candidate_id (Candidate model
-                    # also sorts, but explicit here for clarity).
                     refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
-                    candidates.append(
-                        Candidate(
-                            run_id=run_id,
-                            schema_version=schema_version,
-                            candidate_type=CandidateType.probable_duplicate,
-                            candidate_lane=CandidateLane.node,
-                            involved_element_refs=refs,
-                            severity=Severity.medium,
-                            detection_method=self.DETECTION_METHOD,
-                            collision_context={
-                                "node_type": node_type,
-                                "primary_property": prop,
-                                "value_a": val_a,
-                                "value_b": val_b,
-                                "jaro_winkler": round(jw, 6),
-                                "token_overlap": round(tok, 6),
-                                "context_jaccard": round(context_score, 6),
-                            },
+
+                    # Path 1: JW-based detection (existing logic)
+                    jw_pass = False
+                    if jw >= JW_THRESHOLD:
+                        if jw >= JW_SOFT_THRESHOLD or tok >= TOKEN_OVERLAP_GATE:
+                            jw_pass = True
+                            candidates.append(
+                                Candidate(
+                                    run_id=run_id,
+                                    schema_version=schema_version,
+                                    candidate_type=CandidateType.probable_duplicate,
+                                    candidate_lane=CandidateLane.node,
+                                    involved_element_refs=refs,
+                                    severity=Severity.medium,
+                                    detection_method=self.DETECTION_METHOD,
+                                    collision_context={
+                                        "node_type": node_type,
+                                        "primary_property": prop,
+                                        "value_a": val_a,
+                                        "value_b": val_b,
+                                        "jaro_winkler": round(jw, 6),
+                                        "token_overlap": round(tok, 6),
+                                        "context_jaccard": round(context_score, 6),
+                                    },
+                                )
+                            )
+
+                    # Path 2: Token containment fallback (only when JW didn't fire)
+                    if not jw_pass and _token_containment(val_a, val_b):
+                        candidates.append(
+                            Candidate(
+                                run_id=run_id,
+                                schema_version=schema_version,
+                                candidate_type=CandidateType.probable_duplicate,
+                                candidate_lane=CandidateLane.node,
+                                involved_element_refs=refs,
+                                severity=Severity.medium,
+                                detection_method=CONTAINMENT_DETECTION_METHOD,
+                                collision_context={
+                                    "node_type": node_type,
+                                    "primary_property": prop,
+                                    "value_a": val_a,
+                                    "value_b": val_b,
+                                    "jaro_winkler": round(jw, 6),
+                                    "token_overlap": round(tok, 6),
+                                    "context_jaccard": round(context_score, 6),
+                                    "containment": True,
+                                },
+                            )
                         )
-                    )
 
         logger.info(
             "detector_run_complete",
@@ -317,36 +344,62 @@ class ProbableDuplicateDetector:
                     if not val_a or not val_b:
                         continue
                     jw = _jaro_winkler(val_a, val_b)
-                    if jw < JW_THRESHOLD:
-                        continue
                     tok = _token_overlap(val_a, val_b)
-                    if jw < JW_SOFT_THRESHOLD and tok < TOKEN_OVERLAP_GATE:
-                        continue
                     context_score = _jaccard(
                         adj.get(a.dedupe_key, set()),
                         adj.get(b.dedupe_key, set()),
                     )
                     refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
-                    candidates.append(
-                        Candidate(
-                            run_id=run_id,
-                            schema_version=schema_version,
-                            candidate_type=CandidateType.probable_duplicate,
-                            candidate_lane=CandidateLane.node,
-                            involved_element_refs=refs,
-                            severity=Severity.medium,
-                            detection_method=self.DETECTION_METHOD,
-                            collision_context={
-                                "node_type": node_type,
-                                "primary_property": prop,
-                                "value_a": val_a,
-                                "value_b": val_b,
-                                "jaro_winkler": round(jw, 6),
-                                "token_overlap": round(tok, 6),
-                                "context_jaccard": round(context_score, 6),
-                            },
+
+                    # Path 1: JW-based detection
+                    jw_pass = False
+                    if jw >= JW_THRESHOLD:
+                        if jw >= JW_SOFT_THRESHOLD or tok >= TOKEN_OVERLAP_GATE:
+                            jw_pass = True
+                            candidates.append(
+                                Candidate(
+                                    run_id=run_id,
+                                    schema_version=schema_version,
+                                    candidate_type=CandidateType.probable_duplicate,
+                                    candidate_lane=CandidateLane.node,
+                                    involved_element_refs=refs,
+                                    severity=Severity.medium,
+                                    detection_method=self.DETECTION_METHOD,
+                                    collision_context={
+                                        "node_type": node_type,
+                                        "primary_property": prop,
+                                        "value_a": val_a,
+                                        "value_b": val_b,
+                                        "jaro_winkler": round(jw, 6),
+                                        "token_overlap": round(tok, 6),
+                                        "context_jaccard": round(context_score, 6),
+                                    },
+                                )
+                            )
+
+                    # Path 2: Token containment fallback
+                    if not jw_pass and _token_containment(val_a, val_b):
+                        candidates.append(
+                            Candidate(
+                                run_id=run_id,
+                                schema_version=schema_version,
+                                candidate_type=CandidateType.probable_duplicate,
+                                candidate_lane=CandidateLane.node,
+                                involved_element_refs=refs,
+                                severity=Severity.medium,
+                                detection_method=CONTAINMENT_DETECTION_METHOD,
+                                collision_context={
+                                    "node_type": node_type,
+                                    "primary_property": prop,
+                                    "value_a": val_a,
+                                    "value_b": val_b,
+                                    "jaro_winkler": round(jw, 6),
+                                    "token_overlap": round(tok, 6),
+                                    "context_jaccard": round(context_score, 6),
+                                    "containment": True,
+                                },
+                            )
                         )
-                    )
 
         logger.info(
             "detector_run_complete",
