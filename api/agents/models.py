@@ -147,6 +147,15 @@ class EvidenceReport(BaseModel):
             "not that evidence is missing."
         ),
     )
+    linked_candidates: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description=(
+            "Candidate IDs in the same batch that share entity references "
+            "with this candidate. When non-empty, these candidates form a "
+            "pool — Agent-P should handle them as one atomic merge instead "
+            "of separate pairwise proposals."
+        ),
+    )
     run_id: str
     schema_version: str
 

@@ -52,7 +52,7 @@ _AGENT_NAME: str = "agent-a"
 _COST_PER_1K_TOKENS: float = 0.001
 
 _BATCH_JOB_ID: str = "evidence_assembly"
-_BATCH_TEMPLATE_VERSION: str = "v5"
+_BATCH_TEMPLATE_VERSION: str = "v6"
 
 
 # ---------------------------------------------------------------------------
