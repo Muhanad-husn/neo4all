@@ -68,6 +68,16 @@ TOKEN_OVERLAP_GATE: float = 0.5
 CONTAINMENT_DETECTION_METHOD = "token_containment"
 """Detection method label for candidates found via token containment fallback."""
 
+SORTED_WINDOW_SIZE: int = 5
+"""Sorted neighbourhood window size for probable duplicate detection.
+
+Nodes within a type are sorted by their primary value and only compared
+with their (SORTED_WINDOW_SIZE - 1) nearest neighbours.  This reduces
+O(n²) exhaustive comparison to O(n·w) and eliminates false-positive
+JW matches between lexicographically distant names (e.g., "Maria Alvarez"
+vs "Aiko Nakamura" score JW≈0.90 but are never neighbours in sorted order).
+"""
+
 DEGREE_OUTLIER_SIGMA: float = 3.0
 """Standard-deviation multiplier for flagging degree outliers."""
 
@@ -199,7 +209,19 @@ class ExactRelDuplicateDetector:
 class ProbableDuplicateDetector:
     """Flag same-type node pairs with Jaro-Winkler similarity >= JW_THRESHOLD.
 
-    Blocking key: node_type (pairs are only formed within the same type).
+    Two-pass blocking strategy:
+
+    **Pass 1 — Sorted neighbourhood** (catches typos, casing, near-identical):
+    Nodes within a type are sorted by primary value and compared with their
+    nearest neighbours (window = SORTED_WINDOW_SIZE).  O(n·w) instead of O(n²).
+    "Maria Alvarez" and "Mario Alvarez" are adjacent; "Aiko Nakamura" is far.
+
+    **Pass 2 — Token blocking** (catches containment across sorted distance):
+    Nodes are grouped by each of their tokens.  Within each token bucket,
+    pairs not already seen in pass 1 are checked for token containment.
+    This catches "Sophia van Dijk" ↔ "Dr. Sophia van Dijk" which sort far
+    apart but share the tokens {sophia, van, dijk}.
+
     Comparison value: primary_property from SchemaVersion (lower-cased str).
     Context score: Jaccard similarity of neighbor sets from RelListResult
                    (stored in collision_context; not used as a filter).
@@ -210,6 +232,78 @@ class ProbableDuplicateDetector:
 
     DETECTION_METHOD = f"jaro_winkler_{JW_THRESHOLD:.2f}"
 
+    def _emit_pair(
+        self,
+        a: GraphNodeRecord,
+        b: GraphNodeRecord,
+        val_a: str,
+        val_b: str,
+        prop: str,
+        node_type: str,
+        run_id: str,
+        schema_version: str,
+        adj: dict[str, set[str]],
+        candidates: list[Candidate],
+    ) -> None:
+        """Compare a pair and emit candidate(s) if thresholds are met."""
+        jw = _jaro_winkler(val_a, val_b)
+        tok = _token_overlap(val_a, val_b)
+        context_score = _jaccard(
+            adj.get(a.dedupe_key, set()),
+            adj.get(b.dedupe_key, set()),
+        )
+        refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
+
+        # Path 1: JW-based detection
+        jw_pass = False
+        if jw >= JW_THRESHOLD:
+            if jw >= JW_SOFT_THRESHOLD or tok >= TOKEN_OVERLAP_GATE:
+                jw_pass = True
+                candidates.append(
+                    Candidate(
+                        run_id=run_id,
+                        schema_version=schema_version,
+                        candidate_type=CandidateType.probable_duplicate,
+                        candidate_lane=CandidateLane.node,
+                        involved_element_refs=refs,
+                        severity=Severity.medium,
+                        detection_method=self.DETECTION_METHOD,
+                        collision_context={
+                            "node_type": node_type,
+                            "primary_property": prop,
+                            "value_a": val_a,
+                            "value_b": val_b,
+                            "jaro_winkler": round(jw, 6),
+                            "token_overlap": round(tok, 6),
+                            "context_jaccard": round(context_score, 6),
+                        },
+                    )
+                )
+
+        # Path 2: Token containment fallback (only when JW didn't fire)
+        if not jw_pass and _token_containment(val_a, val_b):
+            candidates.append(
+                Candidate(
+                    run_id=run_id,
+                    schema_version=schema_version,
+                    candidate_type=CandidateType.probable_duplicate,
+                    candidate_lane=CandidateLane.node,
+                    involved_element_refs=refs,
+                    severity=Severity.medium,
+                    detection_method=CONTAINMENT_DETECTION_METHOD,
+                    collision_context={
+                        "node_type": node_type,
+                        "primary_property": prop,
+                        "value_a": val_a,
+                        "value_b": val_b,
+                        "jaro_winkler": round(jw, 6),
+                        "token_overlap": round(tok, 6),
+                        "context_jaccard": round(context_score, 6),
+                        "containment": True,
+                    },
+                )
+            )
+
     def detect(
         self,
         run_id: str,
@@ -218,7 +312,15 @@ class ProbableDuplicateDetector:
         schema: SchemaVersion,
         rels: RelListResult | None = None,
     ) -> list[Candidate]:
-        """Return Candidates for node pairs with Jaro-Winkler >= JW_THRESHOLD."""
+        """Return Candidates for probable duplicate node pairs.
+
+        Two-pass detection: sorted neighbourhood (JW + containment for
+        adjacent names) then token-blocked containment (for names that share
+        words but sort far apart).
+        """
+        import re as _re
+        _TOKEN_RE = _re.compile(r"[a-z0-9]+")
+
         primary_props: dict[str, str] = {
             ndef.type: ndef.primary_property for ndef in schema.nodes
         }
@@ -229,30 +331,84 @@ class ProbableDuplicateDetector:
         adj: dict[str, set[str]] = _build_adjacency(rels) if rels is not None else {}
 
         candidates: list[Candidate] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        w = SORTED_WINDOW_SIZE
+
         for node_type, members in by_type.items():
             prop = primary_props.get(node_type)
             if prop is None or len(members) < 2:
                 continue
-            for i in range(len(members)):
-                for j in range(i + 1, len(members)):
-                    a, b = members[i], members[j]
-                    val_a = _primary_value(a, prop)
-                    val_b = _primary_value(b, prop)
-                    if not val_a or not val_b:
-                        continue
-                    jw = _jaro_winkler(val_a, val_b)
-                    tok = _token_overlap(val_a, val_b)
-                    context_score = _jaccard(
-                        adj.get(a.dedupe_key, set()),
-                        adj.get(b.dedupe_key, set()),
-                    )
-                    refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
 
-                    # Path 1: JW-based detection (existing logic)
-                    jw_pass = False
-                    if jw >= JW_THRESHOLD:
-                        if jw >= JW_SOFT_THRESHOLD or tok >= TOKEN_OVERLAP_GATE:
-                            jw_pass = True
+            # Build value cache for this type.
+            val_cache: dict[str, str] = {}
+            for n in members:
+                val_cache[n.dedupe_key] = _primary_value(n, prop)
+            node_by_key: dict[str, GraphNodeRecord] = {n.dedupe_key: n for n in members}
+
+            # --- Pass 1: Sorted neighbourhood (JW + containment) ---
+            sorted_members = sorted(
+                members,
+                key=lambda n: (val_cache[n.dedupe_key], n.dedupe_key),
+            )
+
+            for i in range(len(sorted_members)):
+                a = sorted_members[i]
+                val_a = val_cache[a.dedupe_key]
+                if not val_a:
+                    continue
+                for j in range(i + 1, min(i + w, len(sorted_members))):
+                    b = sorted_members[j]
+                    val_b = val_cache[b.dedupe_key]
+                    if not val_b:
+                        continue
+
+                    refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
+                    if refs in seen_pairs:
+                        continue
+                    seen_pairs.add(refs)
+
+                    self._emit_pair(
+                        a, b, val_a, val_b, prop, node_type,
+                        run_id, schema_version, adj, candidates,
+                    )
+
+            # --- Pass 2: Token-blocked containment ---
+            # Group nodes by each token in their primary value.
+            # Within each token bucket, check unseen pairs for containment.
+            # This catches "Sophia van Dijk" ↔ "Dr. Sophia van Dijk" which
+            # share tokens but are far apart in sorted order.
+            token_buckets: dict[str, list[GraphNodeRecord]] = defaultdict(list)
+            for n in members:
+                val = val_cache[n.dedupe_key]
+                if not val:
+                    continue
+                for tok in _TOKEN_RE.findall(val):
+                    token_buckets[tok].append(n)
+
+            for _tok_key, bucket in token_buckets.items():
+                if len(bucket) < 2:
+                    continue
+                # Sort bucket for deterministic iteration.
+                bucket_sorted = sorted(bucket, key=lambda n: n.dedupe_key)
+                for i in range(len(bucket_sorted)):
+                    a = bucket_sorted[i]
+                    val_a = val_cache[a.dedupe_key]
+                    for j in range(i + 1, len(bucket_sorted)):
+                        b = bucket_sorted[j]
+                        refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
+                        if refs in seen_pairs:
+                            continue
+                        seen_pairs.add(refs)
+                        val_b = val_cache[b.dedupe_key]
+                        if not val_b:
+                            continue
+                        # Only check containment in pass 2 — JW was already
+                        # evaluated in the sorted window for nearby names.
+                        if _token_containment(val_a, val_b):
+                            context_score = _jaccard(
+                                adj.get(a.dedupe_key, set()),
+                                adj.get(b.dedupe_key, set()),
+                            )
                             candidates.append(
                                 Candidate(
                                     run_id=run_id,
@@ -261,48 +417,32 @@ class ProbableDuplicateDetector:
                                     candidate_lane=CandidateLane.node,
                                     involved_element_refs=refs,
                                     severity=Severity.medium,
-                                    detection_method=self.DETECTION_METHOD,
+                                    detection_method=CONTAINMENT_DETECTION_METHOD,
                                     collision_context={
                                         "node_type": node_type,
                                         "primary_property": prop,
                                         "value_a": val_a,
                                         "value_b": val_b,
-                                        "jaro_winkler": round(jw, 6),
-                                        "token_overlap": round(tok, 6),
-                                        "context_jaccard": round(context_score, 6),
+                                        "jaro_winkler": round(
+                                            _jaro_winkler(val_a, val_b), 6
+                                        ),
+                                        "token_overlap": round(
+                                            _token_overlap(val_a, val_b), 6
+                                        ),
+                                        "context_jaccard": round(
+                                            context_score, 6
+                                        ),
+                                        "containment": True,
                                     },
                                 )
                             )
-
-                    # Path 2: Token containment fallback (only when JW didn't fire)
-                    if not jw_pass and _token_containment(val_a, val_b):
-                        candidates.append(
-                            Candidate(
-                                run_id=run_id,
-                                schema_version=schema_version,
-                                candidate_type=CandidateType.probable_duplicate,
-                                candidate_lane=CandidateLane.node,
-                                involved_element_refs=refs,
-                                severity=Severity.medium,
-                                detection_method=CONTAINMENT_DETECTION_METHOD,
-                                collision_context={
-                                    "node_type": node_type,
-                                    "primary_property": prop,
-                                    "value_a": val_a,
-                                    "value_b": val_b,
-                                    "jaro_winkler": round(jw, 6),
-                                    "token_overlap": round(tok, 6),
-                                    "context_jaccard": round(context_score, 6),
-                                    "containment": True,
-                                },
-                            )
-                        )
 
         logger.info(
             "detector_run_complete",
             detector_name="ProbableDuplicateDetector",
             run_id=run_id,
             candidates_found=len(candidates),
+            window_size=w,
         )
         return candidates
 
@@ -317,7 +457,8 @@ class ProbableDuplicateDetector:
     ) -> list[Candidate]:
         """Like ``detect`` but only emits candidates where at least one node is in *focus_keys*.
 
-        Reduces the O(n^2) comparison to O(n * k) where k = len(focus_keys).
+        Uses sorted neighbourhood (same as detect) with an additional filter:
+        only emits pairs where at least one node is in focus_keys.
         """
         primary_props: dict[str, str] = {
             ndef.type: ndef.primary_property for ndef in schema.nodes
@@ -329,27 +470,44 @@ class ProbableDuplicateDetector:
         adj: dict[str, set[str]] = _build_adjacency(rels) if rels is not None else {}
 
         candidates: list[Candidate] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        w = SORTED_WINDOW_SIZE
+
         for node_type, members in by_type.items():
             prop = primary_props.get(node_type)
             if prop is None or len(members) < 2:
                 continue
-            for i in range(len(members)):
-                for j in range(i + 1, len(members)):
-                    a, b = members[i], members[j]
+
+            sorted_members = sorted(
+                members,
+                key=lambda n: (_primary_value(n, prop), n.dedupe_key),
+            )
+
+            for i in range(len(sorted_members)):
+                a = sorted_members[i]
+                val_a = _primary_value(a, prop)
+                if not val_a:
+                    continue
+                for j in range(i + 1, min(i + w, len(sorted_members))):
+                    b = sorted_members[j]
                     # Scoped: skip pairs where neither node is in focus_keys.
                     if a.dedupe_key not in focus_keys and b.dedupe_key not in focus_keys:
                         continue
-                    val_a = _primary_value(a, prop)
                     val_b = _primary_value(b, prop)
-                    if not val_a or not val_b:
+                    if not val_b:
                         continue
+
+                    refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
+                    if refs in seen_pairs:
+                        continue
+                    seen_pairs.add(refs)
+
                     jw = _jaro_winkler(val_a, val_b)
                     tok = _token_overlap(val_a, val_b)
                     context_score = _jaccard(
                         adj.get(a.dedupe_key, set()),
                         adj.get(b.dedupe_key, set()),
                     )
-                    refs = tuple(sorted([a.dedupe_key, b.dedupe_key]))
 
                     # Path 1: JW-based detection
                     jw_pass = False
@@ -407,6 +565,7 @@ class ProbableDuplicateDetector:
             run_id=run_id,
             candidates_found=len(candidates),
             focus_keys_count=len(focus_keys),
+            window_size=w,
         )
         return candidates
 
