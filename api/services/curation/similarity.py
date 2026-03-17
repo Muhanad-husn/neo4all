@@ -135,9 +135,9 @@ def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
         return False
     # Identify shorter / longer by token count (break ties by char length).
     if len(tokens_s) < len(tokens_t):
-        shorter_tokens, shorter_str = tokens_s, s
+        shorter_tokens, longer_tokens, shorter_str = tokens_s, tokens_t, s
     elif len(tokens_s) > len(tokens_t):
-        shorter_tokens, shorter_str = tokens_t, t
+        shorter_tokens, longer_tokens, shorter_str = tokens_t, tokens_s, t
     else:
         # Same token count but different sets — not a containment relationship.
         return False
@@ -147,7 +147,8 @@ def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
     # Guard: shorter string must meet minimum character length.
     if len(shorter_str.strip()) < min_short_len:
         return False
-    return shorter_tokens < (tokens_s | tokens_t)
+    # Every content token in the shorter must appear in the longer.
+    return shorter_tokens <= longer_tokens
 
 
 # ---------------------------------------------------------------------------
