@@ -2,8 +2,6 @@
 tests/unit/test_dedup_pipeline.py — Unit tests for pre-curation dedup pipeline.
 
 No network, no LLM, no Neo4j.  Tests the pure-function stages of the pipeline:
-  - _is_deterministic_canonical
-  - _canonical_form
   - _property_overlap
   - _compute_composite_score
   - _check_contradictions
@@ -13,17 +11,13 @@ No network, no LLM, no Neo4j.  Tests the pure-function stages of the pipeline:
 
 from __future__ import annotations
 
-import pytest
-
-from api.graph.reader_models import GraphNodeRecord, NodeListResult, RelListResult
+from api.graph.reader_models import GraphNodeRecord
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
 from api.services.curation.dedup_pipeline import (
     DedupPipeline,
-    _canonical_form,
     _check_contradictions,
     _classify_confidence,
     _compute_composite_score,
-    _is_deterministic_canonical,
     _property_overlap,
 )
 
@@ -86,60 +80,7 @@ def _make_node(
 
 
 # ===========================================================================
-# Stage 1: _is_deterministic_canonical
-# ===========================================================================
-
-
-class TestIsDeterministicCanonical:
-    """Tests for _is_deterministic_canonical()."""
-
-    def test_case_only_difference(self) -> None:
-        assert _is_deterministic_canonical("Engrid", "engrid") is True
-
-    def test_case_and_whitespace(self) -> None:
-        assert _is_deterministic_canonical("John Smith", "john  smith") is True
-
-    def test_punctuation_difference(self) -> None:
-        assert _is_deterministic_canonical("O'Brien", "OBrien") is True
-
-    def test_identical_values_returns_false(self) -> None:
-        assert _is_deterministic_canonical("Engrid", "Engrid") is False
-
-    def test_substantive_difference_returns_false(self) -> None:
-        assert _is_deterministic_canonical("Engrid", "Ingrid") is False
-
-    def test_empty_strings(self) -> None:
-        assert _is_deterministic_canonical("", "") is False
-
-    def test_hyphenated_vs_space(self) -> None:
-        assert _is_deterministic_canonical("Mary-Jane", "Mary Jane") is True
-
-    def test_accented_vs_plain(self) -> None:
-        # Accented characters are stripped by the regex, so "café" → "caf"
-        # vs "cafe" → "cafe" — these are different
-        assert _is_deterministic_canonical("café", "cafe") is False
-
-
-# ===========================================================================
-# _canonical_form
-# ===========================================================================
-
-
-class TestCanonicalForm:
-    """Tests for _canonical_form()."""
-
-    def test_longer_value_title_cased(self) -> None:
-        assert _canonical_form("engrid", "ENGRID BOSS") == "Engrid Boss"
-
-    def test_equal_length_first_value(self) -> None:
-        assert _canonical_form("john", "JOHN") == "John"
-
-    def test_preserves_title_case(self) -> None:
-        assert _canonical_form("alice smith", "Alice Smith") == "Alice Smith"
-
-
-# ===========================================================================
-# Stage 3: _property_overlap
+# _property_overlap
 # ===========================================================================
 
 

@@ -1,23 +1,19 @@
 """api/services/curation/dedup_pipeline.py — Pre-curation deduplication pipeline.
 
 Runs between candidate generation and the agent pipeline, processing only
-``probable_duplicate`` candidates through 7 stages:
+``probable_duplicate`` candidates through enrichment stages:
 
-  1. Auto-canonicalize  — deterministic-only mutations (case/whitespace/punctuation)
-  2. Re-detect          — refresh probable duplicates after Stage 1 mutations
-  3. Multi-signal score — composite scoring from collision_context + property overlap
-  4. Contradiction check — property conflict detection
-  5. Confidence band    — classify into high / medium / low
-  6. Cluster validation — union-find coherence + safety caps
-  7. Emit results       — create merge proposals (high) or pass through (medium/low)
+  1. Multi-signal score — composite scoring from collision_context + property overlap
+  2. Contradiction check — property conflict detection
+  3. Confidence band    — classify into high / medium / low
+  4. Cluster validation — union-find coherence + safety caps
 
-Auto-canonicalize (Stage 1) bypasses CLAUDE.md §4.2 for deterministic-only
-mutations.  All merges still go through the standard approval pipeline.
+All enrichment data is passed as context to the LLM agent pipeline for
+reasoned decision-making.  No deterministic merges or auto-canonicalization.
 """
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from typing import Any
 
@@ -26,12 +22,7 @@ from api.graph.reader import GraphReader
 from api.graph.reader_models import GraphNodeRecord, NodeListResult, RelListResult
 from api.models.candidate import Candidate, CandidateType
 from api.observability.logger import get_logger
-from api.proposals.models import ElementRef, ProposalClass, ProposalPacket
-from api.proposals.service import ProposalService
 from api.schema.models import SchemaVersion
-from api.services.curation.candidates import ProbableDuplicateDetector
-from api.services.curation.similarity import _build_adjacency
-from api.services.curation.snapshots import build_snapshot, save_snapshot
 
 logger = get_logger(__name__)
 
@@ -77,31 +68,16 @@ _W_PO: float = 0.10
 class DedupPipelineResult:
     """Container for pipeline outputs."""
 
-    __slots__ = ("candidates", "auto_canonicalized", "merge_proposals_created", "deferred")
+    __slots__ = ("candidates", "enriched_count")
 
     def __init__(self) -> None:
         self.candidates: list[Candidate] = []
-        self.auto_canonicalized: int = 0
-        self.merge_proposals_created: int = 0
-        self.deferred: int = 0
+        self.enriched_count: int = 0
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
-
-
-def _is_deterministic_canonical(val_a: str, val_b: str) -> bool:
-    """True when the difference is purely case, whitespace, or punctuation."""
-    norm_a = re.sub(r"[^a-z0-9]", "", val_a.lower())
-    norm_b = re.sub(r"[^a-z0-9]", "", val_b.lower())
-    return norm_a == norm_b and val_a != val_b
-
-
-def _canonical_form(val_a: str, val_b: str) -> str:
-    """Select canonical form: title case of the longer value (deterministic)."""
-    longer = val_a if len(val_a) >= len(val_b) else val_b
-    return longer.title()
 
 
 def _property_overlap(
@@ -240,10 +216,11 @@ class _UnionFind:
 
 
 class DedupPipeline:
-    """Pre-curation deduplication pipeline.
+    """Pre-curation enrichment pipeline.
 
-    Processes probable_duplicate candidates through 7 stages to auto-resolve
-    deterministic cases and enrich remaining candidates for the agent pipeline.
+    Processes probable_duplicate candidates through scoring, contradiction
+    checking, confidence banding, and cluster validation to provide rich
+    context for LLM-based reasoning in the agent pipeline.
 
     Args:
         reader:  GraphReader for fresh graph queries after mutations.
@@ -270,7 +247,7 @@ class DedupPipeline:
         nodes: NodeListResult,
         rels: RelListResult,
     ) -> tuple[list[Candidate], DedupPipelineResult]:
-        """Execute all 7 pipeline stages.
+        """Enrich probable_duplicate candidates with scoring and context.
 
         Args:
             candidates: All candidates from the five detectors.
@@ -278,8 +255,7 @@ class DedupPipeline:
             rels:       Current graph relationships.
 
         Returns:
-            Tuple of (remaining_candidates, pipeline_result).
-            remaining_candidates excludes auto-canonicalized pairs and deferred pairs.
+            Tuple of (enriched_candidates, pipeline_result).
         """
         result = DedupPipelineResult()
 
@@ -306,231 +282,24 @@ class DedupPipeline:
             probable_duplicate_count=len(probable_dups),
         )
 
-        # Stage 1: Auto-canonicalize
-        remaining_dups, auto_count = await self._auto_canonicalize(
-            probable_dups, node_map
-        )
-        result.auto_canonicalized = auto_count
-
-        # Stage 2: Re-detect if any auto-canonicalization occurred
-        if auto_count > 0:
-            remaining_dups, nodes, rels, node_map = await self._redetect(
-                remaining_dups
-            )
+        remaining_dups = probable_dups
 
         # Stages 3-6: Score, check contradictions, classify, validate clusters
+        # (enrichment provides useful context for LLM reasoning)
         enriched = self._enrich_candidates(remaining_dups, node_map)
 
-        # Stage 7: Emit results
-        final_dups, proposals_created, deferred_count = await self._emit_results(
-            enriched, node_map
-        )
-        result.merge_proposals_created = proposals_created
-        result.deferred = deferred_count
-
-        final_candidates = other_candidates + final_dups
+        final_candidates = other_candidates + enriched
         result.candidates = final_candidates
+        result.enriched_count = len(enriched)
 
         logger.info(
             "dedup_pipeline_complete",
             run_id=self._run_id,
-            auto_canonicalized=auto_count,
-            merge_proposals=proposals_created,
-            deferred=deferred_count,
-            remaining_probable_dups=len(final_dups),
+            enriched_count=len(enriched),
+            total_candidates=len(final_candidates),
         )
 
         return final_candidates, result
-
-    # ------------------------------------------------------------------
-    # Stage 1: Auto-canonicalize
-    # ------------------------------------------------------------------
-
-    async def _auto_canonicalize(
-        self,
-        candidates: list[Candidate],
-        node_map: dict[str, GraphNodeRecord],
-    ) -> tuple[list[Candidate], int]:
-        """Auto-resolve pairs differing only in case/whitespace/punctuation.
-
-        Returns (remaining_candidates, count_of_auto_canonicalized).
-        """
-        remaining: list[Candidate] = []
-        auto_count = 0
-
-        for c in candidates:
-            ctx = c.collision_context
-            val_a = str(ctx.get("value_a", ""))
-            val_b = str(ctx.get("value_b", ""))
-
-            if not val_a or not val_b or not _is_deterministic_canonical(val_a, val_b):
-                remaining.append(c)
-                continue
-
-            # Determine canonical form and which node to update
-            canonical = _canonical_form(val_a, val_b)
-            refs = list(c.involved_element_refs)
-            if len(refs) < 2:
-                remaining.append(c)
-                continue
-
-            # Find the node whose value differs from canonical
-            key_a, key_b = refs[0], refs[1]
-            node_a = node_map.get(key_a)
-            node_b = node_map.get(key_b)
-            if not node_a or not node_b:
-                remaining.append(c)
-                continue
-
-            # Create proposal, diff, and apply for the auto-canonical mutation
-            try:
-                await self._apply_auto_canonical(
-                    candidate=c,
-                    canonical_value=canonical,
-                    node_a=node_a,
-                    node_b=node_b,
-                    key_a=key_a,
-                    key_b=key_b,
-                    val_a=val_a,
-                    val_b=val_b,
-                )
-                auto_count += 1
-                logger.info(
-                    "auto_canonical_applied",
-                    run_id=self._run_id,
-                    value_a=val_a,
-                    value_b=val_b,
-                    canonical=canonical,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "auto_canonical_failed",
-                    run_id=self._run_id,
-                    candidate_id=c.candidate_id,
-                    error=str(exc),
-                )
-                remaining.append(c)
-
-        return remaining, auto_count
-
-    async def _apply_auto_canonical(
-        self,
-        candidate: Candidate,
-        canonical_value: str,
-        node_a: GraphNodeRecord,
-        node_b: GraphNodeRecord,
-        key_a: str,
-        key_b: str,
-        val_a: str,
-        val_b: str,
-    ) -> None:
-        """Compose and submit auto-canonical proposal + execute through governed pipeline.
-
-        Creates a ProposalPacket, submits via ProposalService, then auto-approves
-        and executes through ExecutionAgent with actor='system:auto_canonical'.
-        """
-        from api.agents.execution import ApprovalRecord, ExecutionAgent
-        from api.cache.keys import CacheKey
-        from api.diff.builder import DiffBuilder
-
-        # Determine which node(s) need updating
-        targets: list[ElementRef] = []
-        for key, val, node in [(key_a, val_a, node_a), (key_b, val_b, node_b)]:
-            if val != canonical_value:
-                targets.append(ElementRef(
-                    element_type="node",
-                    dedupe_key=key,
-                    label=key,
-                    properties={"_primary_value": canonical_value},
-                ))
-
-        packet = ProposalPacket(
-            run_id=self._run_id,
-            candidate_id=candidate.candidate_id,
-            proposal_class=ProposalClass.canonicalize,
-            schema_version=self._schema.version_hash,
-            targets=tuple(targets),
-            rationale=(
-                f"Auto-canonical: values '{val_a}' and '{val_b}' differ only in "
-                f"case/whitespace/punctuation. Standardising to '{canonical_value}'."
-            ),
-            confidence_score=1.0,
-        )
-
-        # Submit proposal
-        svc = ProposalService()
-        stored = await svc.create(packet)
-
-        # Approve and execute
-        approval_id = f"auto_canonical_{stored.proposal_id[:16]}"
-        approval = ApprovalRecord(
-            approval_id=approval_id,
-            proposal_id=stored.proposal_id,
-            run_id=self._run_id,
-            actor="system:auto_canonical",
-            is_confirmed=True,
-        )
-        await self._cache.set(
-            CacheKey.approval(approval_id), approval
-        )
-
-        from api.proposals.models import ProposalState
-
-        # Transition proposal to approved
-        await svc.transition(self._run_id, stored.proposal_id, ProposalState.approved)
-
-        # Build diff
-        diff_builder = DiffBuilder()
-        diff = diff_builder.build(stored)
-
-        # Execute
-        agent = ExecutionAgent(cache=self._cache)
-        audit = await agent.execute(diff, approval_id, actor="system:auto_canonical")
-
-        if str(audit.outcome) != "applied":
-            raise RuntimeError(
-                f"Auto-canonical execution failed: {audit.error_detail}"
-            )
-
-    # ------------------------------------------------------------------
-    # Stage 2: Re-detect
-    # ------------------------------------------------------------------
-
-    async def _redetect(
-        self,
-        remaining: list[Candidate],
-    ) -> tuple[list[Candidate], NodeListResult, RelListResult, dict[str, GraphNodeRecord]]:
-        """Re-run probable duplicate detection on updated graph."""
-        try:
-            nodes = await self._reader.get_nodes_by_run(self._run_id)
-            rels = await self._reader.get_relationships_by_run(self._run_id)
-        except Exception as exc:
-            logger.warning(
-                "dedup_redetect_graph_read_failed",
-                run_id=self._run_id,
-                error=str(exc),
-            )
-            node_map = {}
-            return remaining, NodeListResult(nodes=()), RelListResult(rels=()), node_map
-
-        fresh_dups = ProbableDuplicateDetector().detect(
-            run_id=self._run_id,
-            schema_version=self._schema.version_hash,
-            nodes=nodes,
-            schema=self._schema,
-            rels=rels,
-        )
-
-        node_map = {n.dedupe_key: n for n in nodes.nodes}
-
-        logger.info(
-            "dedup_redetect_complete",
-            run_id=self._run_id,
-            previous_count=len(remaining),
-            fresh_count=len(fresh_dups),
-        )
-
-        return fresh_dups, nodes, rels, node_map
 
     # ------------------------------------------------------------------
     # Stages 3-6: Enrich candidates
@@ -643,120 +412,3 @@ class DedupPipeline:
                         c.collision_context["confidence_band"] = "medium"
                         c.collision_context["cluster_downgraded"] = True
 
-    # ------------------------------------------------------------------
-    # Stage 7: Emit results
-    # ------------------------------------------------------------------
-
-    async def _emit_results(
-        self,
-        candidates: list[Candidate],
-        node_map: dict[str, GraphNodeRecord],
-    ) -> tuple[list[Candidate], int, int]:
-        """Emit merge proposals for high-confidence, pass through medium, defer low.
-
-        Returns (remaining_candidates, proposals_created, deferred_count).
-        """
-        remaining: list[Candidate] = []
-        proposals_created = 0
-        deferred_count = 0
-
-        for c in candidates:
-            band = c.collision_context.get("confidence_band", "low")
-
-            if band == "high":
-                # Snapshot + create merge proposal
-                try:
-                    await self._create_merge_proposal(c, node_map)
-                    proposals_created += 1
-                except Exception as exc:
-                    logger.warning(
-                        "dedup_merge_proposal_failed",
-                        run_id=self._run_id,
-                        candidate_id=c.candidate_id,
-                        error=str(exc),
-                    )
-                    # Fall through to agent pipeline on failure
-                    remaining.append(c)
-                    continue
-                # High-confidence merge proposal created — still include candidate
-                # so it appears in the approval queue
-                remaining.append(c)
-
-            elif band == "medium":
-                # Pass through to agent pipeline unchanged
-                remaining.append(c)
-
-            else:
-                # Low confidence — defer
-                c.collision_context["deferred_by_pipeline"] = True
-                deferred_count += 1
-                remaining.append(c)
-
-        return remaining, proposals_created, deferred_count
-
-    async def _create_merge_proposal(
-        self,
-        candidate: Candidate,
-        node_map: dict[str, GraphNodeRecord],
-    ) -> None:
-        """Snapshot obsolete node and create a merge ProposalPacket."""
-        refs = list(candidate.involved_element_refs)
-        if len(refs) < 2:
-            return
-
-        key_a, key_b = refs[0], refs[1]
-        node_a = node_map.get(key_a)
-        node_b = node_map.get(key_b)
-
-        # Snapshot the node that will be merged away (shorter primary value)
-        for key, node in [(key_a, node_a), (key_b, node_b)]:
-            if node is None:
-                continue
-            try:
-                snapshot = build_snapshot(
-                    run_id=self._run_id,
-                    schema_version=self._schema.version_hash,
-                    dedupe_key=key,
-                    node_type=node.node_type,
-                    properties=dict(node.properties),
-                    outgoing_rels=[],
-                    incoming_rels=[],
-                )
-                await save_snapshot(snapshot)
-            except Exception as exc:
-                logger.warning(
-                    "dedup_snapshot_failed",
-                    run_id=self._run_id,
-                    dedupe_key=key,
-                    error=str(exc),
-                )
-
-        # Build target ElementRefs
-        targets = tuple(
-            ElementRef(
-                element_type="node",
-                dedupe_key=ref,
-                label=ref,
-            )
-            for ref in refs
-        )
-
-        ctx = candidate.collision_context
-        score = ctx.get("composite_score", 0.0)
-
-        packet = ProposalPacket(
-            run_id=self._run_id,
-            candidate_id=candidate.candidate_id,
-            proposal_class=ProposalClass.merge,
-            schema_version=self._schema.version_hash,
-            targets=targets,
-            rationale=(
-                f"Pre-curation pipeline: high-confidence merge "
-                f"(composite_score={score:.4f}, no property contradictions). "
-                f"Values: '{ctx.get('value_a', '')}' / '{ctx.get('value_b', '')}'."
-            ),
-            confidence_score=min(1.0, score),
-        )
-
-        svc = ProposalService()
-        await svc.create(packet)

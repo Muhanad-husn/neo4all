@@ -33,7 +33,7 @@ import time
 from typing import Any
 
 from api.agents.evidence import load_prompt_template
-from api.agents.models import AgentProposalOutput, EvidenceReport, StructuralRecommendation
+from api.agents.models import AgentProposalOutput, EvidenceReport
 from api.agents.orchestrator import OrchestratorDecision
 from api.agents.structural import compute_structural_recommendation
 from api.cache.client import CacheClient, get_cache_client
@@ -157,16 +157,6 @@ def _guard_no_cypher_or_executable(output: AgentProposalOutput) -> None:
             )
 
 
-# ---------------------------------------------------------------------------
-# Merge enforcement for duplicate candidates
-# ---------------------------------------------------------------------------
-
-_MERGE_ENFORCEABLE_TYPES: frozenset[CandidateType] = frozenset({
-    CandidateType.probable_duplicate,
-    CandidateType.exact_node_duplicate,
-})
-
-
 def _validate_normalize_target(
     output: AgentProposalOutput,
     candidate: Candidate,
@@ -241,57 +231,6 @@ def _validate_normalize_target(
     )
 
 
-def _enforce_merge_for_duplicates(
-    output: AgentProposalOutput,
-    candidate: Candidate,
-    evidence_report: EvidenceReport,
-) -> AgentProposalOutput:
-    """Override LLM proposal_class when it ignores a structural merge recommendation.
-
-    When all three conditions hold:
-      1. candidate_type is probable_duplicate or exact_node_duplicate
-      2. structural recommendation suggested_action == "merge"
-      3. LLM returned anything other than "merge"
-
-    the LLM has incorrectly downgraded the action.  This function overrides
-    the proposal_class to "merge" and takes the higher confidence score.
-
-    Returns the original output unchanged if conditions are not met.
-    """
-    if candidate.candidate_type not in _MERGE_ENFORCEABLE_TYPES:
-        return output
-
-    rec: StructuralRecommendation | None = evidence_report.structural_recommendation
-    if rec is None or rec.suggested_action != "merge":
-        return output
-
-    if output.proposal_class == "merge":
-        return output  # already correct
-
-    # Override: LLM downgraded merge → something else
-    enforced_confidence = max(rec.confidence, output.confidence_score)
-    enforced = AgentProposalOutput(
-        candidate_id=output.candidate_id,
-        proposal_class="merge",
-        rule_ids=output.rule_ids,
-        evidence_ids=output.evidence_ids,
-        rationale=output.rationale,
-        confidence_score=enforced_confidence,
-        high_risk_override=output.high_risk_override,
-    )
-    logger.warning(
-        "proposal_merge_enforcement",
-        candidate_id=output.candidate_id,
-        candidate_type=str(candidate.candidate_type),
-        original_class=output.proposal_class,
-        enforced_class="merge",
-        structural_confidence=rec.confidence,
-        llm_confidence=output.confidence_score,
-        enforced_confidence=enforced_confidence,
-    )
-    return enforced
-
-
 # ---------------------------------------------------------------------------
 # ProposalComposerAgent (Agent-P)
 # ---------------------------------------------------------------------------
@@ -363,31 +302,11 @@ class ProposalComposerAgent:
             evidence_sufficient=evidence_report.sufficient,
         )
 
-        # 1. Compute and attach structural recommendation (deterministic).
+        # 1. Compute and attach structural recommendation (advisory context for LLM).
         if evidence_report.structural_recommendation is None:
             rec = compute_structural_recommendation(candidate)
             evidence_report = evidence_report.model_copy(
                 update={"structural_recommendation": rec},
-            )
-
-        # 1b. Deterministic fast-path for chain group merges.
-        #     These candidates are created by union-find from proven pairwise
-        #     duplicates — no LLM reasoning needed.  Skip the LLM call and
-        #     produce the merge proposal directly.
-        logger.info(
-            "proposal_fast_path_check",
-            candidate_id=candidate_id,
-            detection_method=candidate.detection_method,
-            candidate_type=str(candidate.candidate_type),
-            is_chain_group=(candidate.detection_method == "duplicate_chain_group"),
-        )
-        if candidate.detection_method == "duplicate_chain_group":
-            return await self._deterministic_merge(
-                candidate=candidate,
-                decision=decision,
-                evidence_report=evidence_report,
-                metrics=metrics,
-                t0=t0,
             )
 
         # 2. Schema rules for contextualising the LLM prompt.
@@ -476,13 +395,7 @@ class ProposalComposerAgent:
             )
             return None
 
-        # 4b. Hard backstop: if the LLM still downgrades a duplicate merge
-        #     despite the v10 prompt, override it deterministically.
-        raw_output = _enforce_merge_for_duplicates(
-            raw_output, candidate, evidence_report,
-        )
-
-        # 4c. Validate normalize target for canonical violations.
+        # 4b. Validate normalize target for canonical violations.
         #     Prevents no-op normalize proposals that cause infinite
         #     re-detection loops (direction violations without a target type).
         raw_output = _validate_normalize_target(raw_output, candidate)
@@ -579,34 +492,15 @@ class ProposalComposerAgent:
 
         results: dict[str, ProposalPacket | None] = {}
 
-        # Separate deterministic fast-paths from LLM candidates.
+        # Attach structural recommendation (advisory context for LLM).
         llm_candidates: list[tuple[Candidate, OrchestratorDecision, EvidenceReport]] = []
-
         for cand, dec, ev in zip(candidates, decisions, evidence_reports):
-            # Attach structural recommendation if missing.
             if ev.structural_recommendation is None:
                 rec = compute_structural_recommendation(cand)
                 ev = ev.model_copy(update={"structural_recommendation": rec})
-
-            # Deterministic fast-path for chain group merges.
-            if cand.detection_method == "duplicate_chain_group":
-                packet = await self._deterministic_merge(
-                    candidate=cand,
-                    decision=dec,
-                    evidence_report=ev,
-                    metrics=metrics,
-                    t0=t0,
-                )
-                results[cand.candidate_id] = packet
-            else:
-                llm_candidates.append((cand, dec, ev))
+            llm_candidates.append((cand, dec, ev))
 
         if not llm_candidates:
-            logger.info(
-                "proposal_composition_batch_all_deterministic",
-                run_id=run_id,
-                deterministic_count=len(results),
-            )
             return results
 
         # Gather schema rules once (shared context).
@@ -727,8 +621,7 @@ class ProposalComposerAgent:
                 )
                 continue
 
-            # Merge enforcement and normalize validation.
-            raw_output = _enforce_merge_for_duplicates(raw_output, cand, ev)
+            # Validate normalize target for canonical violations.
             raw_output = _validate_normalize_target(raw_output, cand)
 
             # Build ProposalPacket.
@@ -778,7 +671,7 @@ class ProposalComposerAgent:
             "proposal_composition_batch_complete",
             run_id=run_id,
             batch_size=len(llm_candidates),
-            deterministic_count=len(results) - len(llm_candidates),
+            llm_count=len(llm_candidates),
             success_count=sum(1 for v in results.values() if v is not None),
             duration_ms=duration_ms,
         )
@@ -826,89 +719,6 @@ class ProposalComposerAgent:
                 "additional_properties": list(edge_type.additional_properties),
             })
         return rules
-
-    # ------------------------------------------------------------------
-    # Deterministic merge (no LLM)
-    # ------------------------------------------------------------------
-
-    async def _deterministic_merge(
-        self,
-        candidate: Candidate,
-        decision: OrchestratorDecision,
-        evidence_report: EvidenceReport,
-        metrics: Any,
-        t0: float,
-    ) -> ProposalPacket | None:
-        """Produce a merge proposal without LLM when structural recommendation says merge.
-
-        The structural recommender already made the decision from deterministic
-        metrics (exact match, JW score, name containment).  The LLM adds zero
-        value here — the human approval gate is the safety net.
-
-        Covers: chain group merges, exact node duplicates, probable duplicates
-        with name containment or high string similarity.
-        """
-        candidate_id = candidate.candidate_id
-        ctx = candidate.collision_context
-        rec = evidence_report.structural_recommendation
-        assert rec is not None  # caller guarantees this
-
-        # Build rationale from the structural recommendation's reasoning.
-        rationale = (
-            f"Deterministic merge (no LLM): {rec.reasoning} "
-            f"Candidate type: {candidate.candidate_type}, "
-            f"detection method: {candidate.detection_method}."
-        )
-
-        output = AgentProposalOutput(
-            candidate_id=candidate_id,
-            proposal_class="merge",
-            rule_ids=(),
-            evidence_ids=tuple(
-                item.chunk_id for item in evidence_report.items if item.chunk_id
-            ),
-            rationale=rationale,
-            confidence_score=rec.confidence,
-        )
-
-        packet = self._build_proposal_packet(
-            output=output,
-            candidate=candidate,
-            decision=decision,
-            evidence_report=evidence_report,
-        )
-
-        duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-
-        try:
-            stored = await self._get_proposal_service().create(packet)
-        except Exception as exc:
-            logger.error(
-                "proposal_composition_storage_failed",
-                candidate_id=candidate_id,
-                run_id=decision.run_id,
-                error=str(exc),
-                duration_ms=duration_ms,
-            )
-            return None
-
-        logger.info(
-            "proposal_composition_complete",
-            candidate_id=candidate_id,
-            run_id=decision.run_id,
-            proposal_id=stored.proposal_id,
-            proposal_class="merge",
-            confidence_score=rec.confidence,
-            duration_ms=duration_ms,
-            deterministic=True,
-        )
-
-        self._record_telemetry(
-            metrics, decision.run_id, candidate_id, duration_ms,
-            0, 0, success=True,
-        )
-
-        return stored
 
     # ------------------------------------------------------------------
     # ProposalPacket builder
