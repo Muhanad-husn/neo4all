@@ -2,6 +2,21 @@
 
 All notable changes to neo4all are documented in this file.
 
+## [1.0.10] - 2026-03-17
+
+### Removed
+- `api/services/curation/snapshots.py` — unused module (designed for pre-merge snapshot persistence, never integrated)
+- Duplicate `_property_overlap()` from `similarity.py` (active version in `dedup_pipeline.py`)
+- Unused imports across 28 files (ruff F401 sweep)
+
+### Changed
+- Extracted shared `load_prompt_template()` into `api/common/prompts.py` — replaces 3 duplicate implementations in extraction, schema, and evidence agent modules
+- Extracted Pydantic models and cache helpers from `api/routers/candidates.py` into `candidates_models.py` — consolidated duplicated `_ExcludedCandidatesCache` from `approvals.py`
+- Split `api/worker/jobs_agents.py` (1,104 → 579 lines) — batch jobs moved to `jobs_agents_batch.py` (553 lines)
+- Split `ui/pages/curation_pipeline.py` (1,336 → 973 lines) — agent pipeline UI moved to `curation_agents.py` (391 lines)
+
+---
+
 ## [1.0.9] - 2026-03-17
 
 ### Fixed
