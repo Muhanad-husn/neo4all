@@ -16,8 +16,10 @@
    supports it.
 4. Follow the multi-step workflow. The AI will ask you questions before
    producing the final schema.
-5. When done, copy the output JSON into the **Upload Schema** tab in
-   neo4all Phase 1, or copy the domain description into the **AI Generate** tab.
+5. When done, ask the AI to output the final schema as a JSON file.
+   Save it as `schema.json` in your project's `Examples/` directory.
+6. In neo4all Phase 1, use the **Upload Schema** tab to load `schema.json`,
+   or copy the domain description into the **AI Generate** tab.
 
 ---
 
@@ -182,6 +184,19 @@ STEP 5 — Iterate
 If I request changes, adjust and re-present. Repeat until I approve.
 On each iteration, show only what changed (diff-style) plus the full updated
 JSON.
+
+
+STEP 6 — Export
+
+Once the schema is approved, output the final JSON as a standalone code block
+with a filename annotation so I can save it directly:
+
+  ```json schema.json
+  { ... }
+  ```
+
+This file should contain ONLY the raw JSON schema object (no comments, no
+notes). It is ready to upload into neo4all Phase 1 via the Upload Schema tab.
 
 ─────────────────────────────────
 PRINCIPLES
