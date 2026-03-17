@@ -747,6 +747,176 @@ async def batch_evidence_assembly_job(
 
 
 # ---------------------------------------------------------------------------
+# Cluster consolidation for N-way merge
+# ---------------------------------------------------------------------------
+
+
+def _consolidate_clusters(
+    candidates: list,
+    decisions: list,
+    evidence_reports: list,
+) -> tuple[tuple[list, list, list], dict[str, list[str]]]:
+    """Consolidate overlapping pairwise candidates into cluster candidates.
+
+    Candidates that share involved_element_refs are merged into a single
+    synthetic cluster candidate with ALL unique node refs.  This ensures
+    Agent-P proposes ONE N-way merge instead of N conflicting pairwise merges.
+
+    Returns:
+        (consolidated_candidates, consolidated_decisions, consolidated_evidence):
+            The reduced lists for Agent-P.
+        cluster_map: dict mapping consolidated candidate_id -> list of original
+            candidate_ids it represents.
+    """
+    from collections import defaultdict
+
+    from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
+
+    n = len(candidates)
+    if n == 0:
+        return ([], [], []), {}
+
+    # --- Union-find over candidate indices via shared refs ---
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        if x not in parent:
+            parent[x] = x
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    ref_to_idx: dict[str, int] = {}
+    for i, c in enumerate(candidates):
+        cand_key = f"c:{i}"
+        find(cand_key)
+        for ref in c.involved_element_refs:
+            if ref in ref_to_idx:
+                union(cand_key, f"c:{ref_to_idx[ref]}")
+            else:
+                ref_to_idx[ref] = i
+
+    # Group by root.
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i in range(n):
+        root = find(f"c:{i}")
+        groups[root].append(i)
+
+    sorted_groups = sorted(groups.values(), key=lambda g: g[0])
+
+    cons_candidates: list = []
+    cons_decisions: list = []
+    cons_evidence: list = []
+    cluster_map: dict[str, list[str]] = {}
+
+    for group_indices in sorted_groups:
+        if len(group_indices) == 1:
+            # Singleton — pass through unchanged.
+            idx = group_indices[0]
+            cid = candidates[idx].candidate_id
+            cons_candidates.append(candidates[idx])
+            cons_decisions.append(decisions[idx])
+            cons_evidence.append(evidence_reports[idx])
+            cluster_map[cid] = [cid]
+            continue
+
+        # --- Build cluster candidate from multiple pairwise candidates ---
+        group_cands = [candidates[i] for i in group_indices]
+        group_decs = [decisions[i] for i in group_indices]
+        group_evs = [evidence_reports[i] for i in group_indices]
+
+        # Collect all unique node refs across the cluster.
+        all_refs: set[str] = set()
+        for c in group_cands:
+            all_refs.update(c.involved_element_refs)
+
+        # Pick survivor: highest-degree node from collision_context,
+        # fallback to lexicographic first.
+        degree_map: dict[str, int] = {}
+        for c in group_cands:
+            ctx = c.collision_context
+            survivor_key = ctx.get("survivor_key")
+            survivor_deg = ctx.get("survivor_degree", 0)
+            if survivor_key:
+                degree_map[survivor_key] = max(
+                    degree_map.get(survivor_key, 0), survivor_deg
+                )
+
+        survivor = max(
+            sorted(all_refs),
+            key=lambda k: degree_map.get(k, 0),
+        ) if degree_map else sorted(all_refs)[0]
+
+        ordered_refs = (survivor,) + tuple(sorted(all_refs - {survivor}))
+
+        # Use first candidate as template for run_id / schema_version.
+        first = group_cands[0]
+
+        # Build synthetic cluster candidate.
+        cluster_cand = Candidate(
+            run_id=first.run_id,
+            schema_version=first.schema_version,
+            candidate_type=CandidateType.probable_duplicate,
+            candidate_lane=CandidateLane.node,
+            involved_element_refs=ordered_refs,
+            severity=Severity.high,
+            detection_method="cluster_merge",
+            collision_context={
+                "cluster_size": len(all_refs),
+                "pairwise_count": len(group_cands),
+                "survivor_key": survivor,
+                "survivor_degree": degree_map.get(survivor, 0),
+                "component_members": list(sorted(all_refs)),
+                "original_candidate_ids": [c.candidate_id for c in group_cands],
+            },
+        )
+
+        # Use the decision from the first candidate (model config is shared).
+        cluster_dec = group_decs[0]
+
+        # Merge evidence: combine items from all evidence reports,
+        # use the highest sufficiency score.
+        all_items = []
+        best_score = 0.0
+        best_ev = group_evs[0]
+        for ev in group_evs:
+            all_items.extend(ev.items)
+            if ev.sufficiency_score > best_score:
+                best_score = ev.sufficiency_score
+                best_ev = ev
+
+        from api.agents.models import EvidenceReport
+
+        cluster_ev = EvidenceReport(
+            candidate_id=cluster_cand.candidate_id,
+            items=tuple(all_items),
+            sufficiency_score=best_score,
+            sufficient=best_ev.sufficient,
+            structural_recommendation=best_ev.structural_recommendation,
+            linked_candidates=tuple(c.candidate_id for c in group_cands),
+            run_id=first.run_id,
+            schema_version=first.schema_version,
+        )
+
+        cons_candidates.append(cluster_cand)
+        cons_decisions.append(cluster_dec)
+        cons_evidence.append(cluster_ev)
+
+        # Map cluster candidate_id → all original candidate_ids.
+        cluster_map[cluster_cand.candidate_id] = [
+            c.candidate_id for c in group_cands
+        ]
+
+    return (cons_candidates, cons_decisions, cons_evidence), cluster_map
+
+
+# ---------------------------------------------------------------------------
 # batch_proposal_composition_job
 # ---------------------------------------------------------------------------
 
@@ -821,19 +991,43 @@ async def batch_proposal_composition_job(
             updated_at=datetime.now(UTC).isoformat(),
         ))
 
+    # ------------------------------------------------------------------
+    # Consolidate overlapping pairwise candidates into cluster candidates.
+    # Candidates sharing entity refs become ONE cluster candidate with all
+    # unique refs (survivor first).  Agent-P proposes ONE N-way merge per
+    # cluster.  The result is mapped back to all original candidate_ids.
+    # ------------------------------------------------------------------
+    consolidated, cluster_map = _consolidate_clusters(
+        candidates, decisions, evidence_reports
+    )
+    cons_candidates, cons_decisions, cons_evidence = consolidated
+
     logger.info(
         "batch_proposal_composition_job_start",
         run_id=run_id,
-        batch_size=len(candidates),
+        original_count=len(candidates),
+        consolidated_count=len(cons_candidates),
+        clusters=[len(v) for v in cluster_map.values() if len(v) > 1],
     )
 
     try:
         agent = ProposalComposerAgent()
         results = await agent.run_batch(
-            candidates=candidates,
-            decisions=decisions,
-            evidence_reports=evidence_reports,
+            candidates=cons_candidates,
+            decisions=cons_decisions,
+            evidence_reports=cons_evidence,
         )
+
+        # Expand cluster results back to all original candidate_ids.
+        expanded_results: dict[str, Any] = {}
+        for cons_cid, packet in results.items():
+            if packet is None:
+                continue
+            # Map to all original candidate_ids in this cluster.
+            original_cids = cluster_map.get(cons_cid, [cons_cid])
+            for orig_cid in original_cids:
+                expanded_results[orig_cid] = packet
+        results = expanded_results
 
         updated_at = datetime.now(UTC).isoformat()
 
