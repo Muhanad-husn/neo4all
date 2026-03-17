@@ -89,22 +89,45 @@ def _token_overlap(s: str, t: str) -> float:
 # ---------------------------------------------------------------------------
 
 
+# Stopwords filtered from token containment and token-blocking passes.
+# These are function words that appear in most English phrases and cause
+# false containment matches between unrelated long descriptions.
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
+    "from", "had", "has", "have", "he", "her", "his", "how", "i",
+    "if", "in", "into", "is", "it", "its", "may", "my", "no", "nor",
+    "not", "of", "on", "or", "our", "out", "own", "per", "she", "so",
+    "than", "that", "the", "their", "them", "then", "there", "these",
+    "they", "this", "to", "too", "up", "us", "was", "we", "were",
+    "what", "when", "which", "who", "why", "will", "with", "would",
+    "you", "your",
+})
+
+
+def _content_tokens(s: str) -> set[str]:
+    """Extract content tokens (no stopwords, no single chars) from a string.
+
+    Pure, deterministic.  Used by _token_containment and the token-blocking
+    pass in ProbableDuplicateDetector.
+    """
+    import re as _re
+    _TOKEN_RE = _re.compile(r"[a-z0-9]+")
+    return {t for t in _TOKEN_RE.findall(s.lower()) if t not in _STOPWORDS and len(t) > 1}
+
+
 def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
-    """True when every token of the shorter string appears in the longer string.
+    """True when every content token of the shorter string appears in the longer.
 
     Guards:
-      - The shorter string must be >= *min_short_len* characters (prevents
-        trivially short matches like "a", "de").
-      - Token sets must not be equal (same-token pairs are already handled
-        by Jaro-Winkler / auto-canonical).
+      - Stopwords and single-character tokens are excluded from comparison.
+      - The shorter string must have >= 2 content tokens.
+      - The shorter string must be >= *min_short_len* characters.
+      - Token sets must not be equal (handled by JW / auto-canonical).
 
     Pure, deterministic, no external deps.
     """
-    import re as _re
-
-    _TOKEN_RE = _re.compile(r"[a-z0-9]+")
-    tokens_s = set(_TOKEN_RE.findall(s.lower()))
-    tokens_t = set(_TOKEN_RE.findall(t.lower()))
+    tokens_s = _content_tokens(s)
+    tokens_t = _content_tokens(t)
     if not tokens_s or not tokens_t:
         return False
     # Reject equal token sets — handled elsewhere.
@@ -118,7 +141,7 @@ def _token_containment(s: str, t: str, min_short_len: int = 3) -> bool:
     else:
         # Same token count but different sets — not a containment relationship.
         return False
-    # Guard: single-token shorter strings are inherently ambiguous (first name in full name).
+    # Guard: fewer than 2 content tokens is too ambiguous.
     if len(shorter_tokens) < 2:
         return False
     # Guard: shorter string must meet minimum character length.

@@ -34,6 +34,7 @@ from api.observability.logger import get_logger
 from api.schema.models import SchemaVersion
 from api.services.curation.similarity import (
     _build_adjacency,
+    _content_tokens,
     _jaccard,
     _jaro_winkler,
     _primary_value,
@@ -318,9 +319,6 @@ class ProbableDuplicateDetector:
         adjacent names) then token-blocked containment (for names that share
         words but sort far apart).
         """
-        import re as _re
-        _TOKEN_RE = _re.compile(r"[a-z0-9]+")
-
         primary_props: dict[str, str] = {
             ndef.type: ndef.primary_property for ndef in schema.nodes
         }
@@ -373,16 +371,16 @@ class ProbableDuplicateDetector:
                     )
 
             # --- Pass 2: Token-blocked containment ---
-            # Group nodes by each token in their primary value.
-            # Within each token bucket, check unseen pairs for containment.
-            # This catches "Sophia van Dijk" ↔ "Dr. Sophia van Dijk" which
-            # share tokens but are far apart in sorted order.
+            # Group nodes by each content token (stopwords excluded) in their
+            # primary value.  Within each token bucket, check unseen pairs for
+            # containment.  This catches "Sophia van Dijk" ↔ "Dr. Sophia van
+            # Dijk" which share content tokens but sort far apart.
             token_buckets: dict[str, list[GraphNodeRecord]] = defaultdict(list)
             for n in members:
                 val = val_cache[n.dedupe_key]
                 if not val:
                     continue
-                for tok in _TOKEN_RE.findall(val):
+                for tok in _content_tokens(val):
                     token_buckets[tok].append(n)
 
             for _tok_key, bucket in token_buckets.items():
