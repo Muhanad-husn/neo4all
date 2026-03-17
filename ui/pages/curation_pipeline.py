@@ -138,8 +138,24 @@ def _render_proposal_form(
     candidate_id: str = candidate.get("candidate_id", "")
     element_refs: list[str] = candidate.get("involved_element_refs", [])
 
+    # Determine per-key element types from the candidate metadata.
+    # For relationship-lane candidates, collision_context identifies the
+    # relationship dedupe_key explicitly — all other refs are endpoint nodes.
+    candidate_lane: str = candidate.get("candidate_lane", "node")
+    ctx: dict[str, Any] = candidate.get("collision_context", {})
+    rel_dk: str = ""
+    if candidate_lane == "relationship":
+        rel_dk = ctx.get("rel_dedupe_key") or ctx.get("dedupe_key", "")
+
+    def _element_type_for(key: str) -> str:
+        """Return 'relationship' for the identified rel key, 'node' otherwise."""
+        if rel_dk and key == rel_dk:
+            return "relationship"
+        return "node"
+
     # Pre-populate target dedupe keys from the candidate's element refs.
     default_keys = "\n".join(element_refs)
+    is_rel_candidate = candidate_lane == "relationship"
 
     with st.form(key=f"propose_form_{candidate_id[:16]}"):
         proposal_class = st.selectbox(
@@ -156,11 +172,20 @@ def _render_proposal_form(
             value=default_keys,
             help="Paste the dedupe_key for each graph element this proposal will act on.",
         )
-        element_type = st.radio(
-            "Target element type",
-            ["node", "relationship"],
-            horizontal=True,
-        )
+        # For node-lane candidates, let the user pick the element type (default node).
+        # For relationship-lane candidates, types are auto-assigned per key.
+        if is_rel_candidate:
+            st.caption(
+                "Element types auto-assigned: relationship key from "
+                "collision context, remaining keys treated as nodes."
+            )
+            element_type_override: str | None = None
+        else:
+            element_type_override = st.radio(
+                "Target element type",
+                ["node", "relationship"],
+                horizontal=True,
+            )
         rule_ids_raw = st.text_input(
             "Rule IDs (comma-separated, optional)",
             placeholder="e.g. SCHEMA-001, SCHEMA-004",
@@ -183,7 +208,16 @@ def _render_proposal_form(
 
         target_keys = [k.strip() for k in target_keys_raw.splitlines() if k.strip()]
         targets = [
-            {"element_type": element_type, "dedupe_key": k, "label": "", "properties": {}}
+            {
+                "element_type": (
+                    element_type_override
+                    if element_type_override is not None
+                    else _element_type_for(k)
+                ),
+                "dedupe_key": k,
+                "label": "",
+                "properties": {},
+            }
             for k in target_keys
         ]
         rule_ids = [r.strip() for r in rule_ids_raw.split(",") if r.strip()]
