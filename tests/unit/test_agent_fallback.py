@@ -57,7 +57,7 @@ from api.agents.orchestrator import (
 )
 from api.config import AgentConfig
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
-from api.observability.metrics import MetricsCollector, get_metrics
+from api.observability.metrics import MetricsCollector
 
 # ---------------------------------------------------------------------------
 # Constants

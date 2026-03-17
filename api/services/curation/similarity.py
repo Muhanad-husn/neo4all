@@ -7,8 +7,6 @@ No external dependencies beyond the graph reader models.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
-
 from api.graph.reader_models import GraphNodeRecord, RelListResult
 
 
@@ -181,35 +179,6 @@ def _primary_value(node: GraphNodeRecord, prop: str) -> str:
     if raw is None:
         raw = node.properties.get("_primary_value")
     return str(raw).lower().strip() if raw is not None else ""
-
-
-def _property_overlap(
-    props_a: dict[str, Any],
-    props_b: dict[str, Any],
-    governance_keys: set[str] | None = None,
-) -> float:
-    """Ratio of matching non-governance property key-value pairs to total unique keys.
-
-    Compares non-governance, non-primary properties.  Returns 0.0 when both
-    property dicts have no comparable keys.
-    """
-    if governance_keys is None:
-        governance_keys = {
-            "_dedupe_key", "_schema_version", "_chunk_id",
-            "_primary_value", "run_id", "schema_version",
-        }
-    keys_a = set(props_a) - governance_keys
-    keys_b = set(props_b) - governance_keys
-    all_keys = keys_a | keys_b
-    if not all_keys:
-        return 0.0
-    matching = 0
-    for key in all_keys:
-        va = props_a.get(key)
-        vb = props_b.get(key)
-        if va is not None and vb is not None and str(va).strip() == str(vb).strip():
-            matching += 1
-    return matching / len(all_keys)
 
 
 def _build_adjacency(rels: RelListResult) -> dict[str, set[str]]:

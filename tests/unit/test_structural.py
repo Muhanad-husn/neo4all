@@ -10,7 +10,7 @@ No network, no LLM, no Neo4j.
 
 from __future__ import annotations
 
-from api.agents.models import AgentProposalOutput, StructuralRecommendation
+from api.agents.models import AgentProposalOutput
 from api.agents.proposal import _validate_normalize_target
 from api.agents.structural import compute_structural_recommendation
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity

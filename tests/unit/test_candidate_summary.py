@@ -1,6 +1,5 @@
 """Unit tests for ui.components.candidate_summary."""
 
-import pytest
 
 from ui.components.candidate_summary import (
     method_label,

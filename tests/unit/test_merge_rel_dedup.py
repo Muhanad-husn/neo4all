@@ -11,14 +11,12 @@ No network, no LLM, no Neo4j.  Tests cover:
 
 from __future__ import annotations
 
-import pytest
 
 from api.cache.keys import CacheKey
 from api.graph.reader_models import (
     GraphNodeRecord,
     GraphRelRecord,
     NodeListResult,
-    RelListResult,
 )
 from api.graph.safety import _extract_chunk_id, _rel_dedupe_key
 from api.models.candidate import CandidateType

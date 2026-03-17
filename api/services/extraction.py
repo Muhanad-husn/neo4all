@@ -21,57 +21,25 @@ Cache (SKILL-D R-D8): locked schema — CacheKey.schema(run_id), no TTL.
 Prompts (CLAUDE.md §14): template loaded from prompts/, no inline strings.
 Sensitive data (SKILL-D R-D5): chunk_text passed to LLM, never logged.
 
-NOTE: _load_prompt_template duplicates api/schema/service.py — candidate for
-extraction to api/common/prompts.py per SKILL-B R-B7 (deferred to governance pass).
+Prompt loading uses the shared loader from api/common/prompts.py (SKILL-B R-B7).
 """
 
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, field_validator
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
+from api.common.prompts import load_prompt_template
 from api.models.extraction import ExtractedEdge, ExtractedNode, ExtractionResult
 from api.observability.logger import get_logger
 from api.schema.models import SchemaVersion
 from api.services.llm import JobConfig, LLMClient
 
 logger = get_logger(__name__)
-
-_PROMPTS_ROOT = (
-    Path(os.environ["PROMPTS_DIR"])
-    if "PROMPTS_DIR" in os.environ
-    else Path(__file__).resolve().parents[2] / "prompts"
-)
-
-
-# ---------------------------------------------------------------------------
-# Prompt helpers
-# ---------------------------------------------------------------------------
-
-def _load_prompt_template(job_id: str, template_version: str) -> dict[str, Any]:
-    """Load prompts/{job_id}/{template_version}.yaml. Raises FileNotFoundError
-    or ValueError on missing file or missing required keys."""
-    import yaml
-
-    path = _PROMPTS_ROOT / job_id / f"{template_version}.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Prompt template not found: {path}."
-        )
-    with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-    if not isinstance(data, dict):
-        raise ValueError(f"Prompt template {path} must be a YAML mapping.")
-    for key in ("system_prompt", "user_template"):
-        if key not in data:
-            raise ValueError(f"Prompt template {path} missing required key '{key}'.")
-    return data  # type: ignore[return-value]
 
 
 def _schema_to_prompt_json(schema: SchemaVersion) -> str:
@@ -269,7 +237,7 @@ class ExtractionService:
         logger.info("extraction_start", run_id=run_id, chunk_id=chunk_id)
 
         schema = await self._get_schema(run_id=run_id, chunk_id=chunk_id)
-        template = _load_prompt_template(self._JOB_ID, self._TEMPLATE_VERSION)
+        template = load_prompt_template(self._JOB_ID, self._TEMPLATE_VERSION)
         system_prompt: str = template["system_prompt"]
         user_message: str = template["user_template"].format(
             schema_json=_schema_to_prompt_json(schema),
@@ -365,7 +333,7 @@ class ExtractionService:
         chunks_block = "\n\n---\n\n".join(chunk_sections)
 
         # Load batch prompt template (v2).
-        template = _load_prompt_template(self._JOB_ID, self._BATCH_TEMPLATE_VERSION)
+        template = load_prompt_template(self._JOB_ID, self._BATCH_TEMPLATE_VERSION)
         system_prompt: str = template["system_prompt"]
         user_message: str = template["user_template"].format(
             schema_json=schema_json,

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response
 from pydantic import BaseModel, field_validator
 
 from api.cache.client import get_cache_client
@@ -567,7 +567,7 @@ async def delete_all_orphans(
 
     from api.agents.execution import ApprovalRecord, ExecutionAgent
     from api.diff.builder import DiffBuilder
-    from api.proposals.service import ProposalService, ProposalStorageError
+    from api.proposals.service import ProposalService
 
     run_id = request.run_id
     actor = request.actor

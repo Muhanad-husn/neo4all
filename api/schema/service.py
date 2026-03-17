@@ -38,58 +38,16 @@ response fails validation, propose() raises LLMProposalError (fail-closed).
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Any
-
-import yaml
 from pydantic import BaseModel, ValidationError
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
+from api.common.prompts import load_prompt_template
 from api.observability.logger import get_logger
 from api.schema.models import EdgeTypeDef, NodeTypeDef, SchemaVersion
 from api.services.llm import JobConfig, LLMClient
 
 logger = get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Prompt template resolution
-# ---------------------------------------------------------------------------
-
-_PROMPTS_ROOT = (
-    Path(os.environ["PROMPTS_DIR"])
-    if "PROMPTS_DIR" in os.environ
-    else Path(__file__).resolve().parents[2] / "prompts"
-)
-
-
-def _load_prompt_template(job_id: str, template_version: str) -> dict[str, Any]:
-    """Load and parse a YAML prompt template.
-
-    Path: prompts/{job_id}/{template_version}.yaml
-
-    Raises:
-        FileNotFoundError: If the template file does not exist.
-        ValueError: If the YAML is malformed or missing required keys.
-    """
-    path = _PROMPTS_ROOT / job_id / f"{template_version}.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Prompt template not found: {path}. "
-            "Ensure prompts/{job_id}/{template_version}.yaml exists."
-        )
-    with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Prompt template {path} must be a YAML mapping.")
-    for required in ("system_prompt", "user_template"):
-        if required not in data:
-            raise ValueError(
-                f"Prompt template {path} is missing required key '{required}'."
-            )
-    return data  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +182,7 @@ class SchemaService:
         """
         await self._assert_not_locked(run_id)
 
-        template = _load_prompt_template(self._JOB_ID, self._TEMPLATE_VERSION)
+        template = load_prompt_template(self._JOB_ID, self._TEMPLATE_VERSION)
         system_prompt: str = template["system_prompt"]
         user_message: str = template["user_template"].format(
             domain_description=domain_description,

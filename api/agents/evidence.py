@@ -12,18 +12,16 @@ chunk text via CacheKey.chunk (30 min).  Fail-closed on malformed LLM output.
 from __future__ import annotations
 
 import json
-import os
 import time
-from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict
 
 from api.agents.models import EvidenceReport
 from api.agents.orchestrator import OrchestratorDecision
 from api.cache.client import CacheClient, get_cache_client
 from api.cache.keys import CacheKey
+from api.common.prompts import load_prompt_template
 from api.graph.reader import GraphReader, get_graph_reader
 from api.graph.reader_models import NeighborResult
 from api.models.candidate import Candidate
@@ -38,11 +36,6 @@ logger = get_logger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROMPTS_ROOT: Path = (
-    Path(os.environ["PROMPTS_DIR"])
-    if "PROMPTS_DIR" in os.environ
-    else Path(__file__).resolve().parents[2] / "prompts"
-)
 _JOB_ID: str = "evidence_assembly"
 _TEMPLATE_VERSION: str = "v4"
 CHUNK_CACHE_TTL: int = 1800  # 30 min (SKILL-D R-D8)
@@ -53,35 +46,6 @@ _COST_PER_1K_TOKENS: float = 0.001
 
 _BATCH_JOB_ID: str = "evidence_assembly"
 _BATCH_TEMPLATE_VERSION: str = "v6"
-
-
-# ---------------------------------------------------------------------------
-# Shared utilities (also imported by api/agents/retrieval.py)
-# ---------------------------------------------------------------------------
-
-
-def load_prompt_template(job_id: str, template_version: str) -> dict[str, Any]:
-    """Load and parse a YAML prompt template from prompts/{job_id}/{version}.yaml.
-
-    Raises FileNotFoundError / ValueError on missing or malformed templates.
-    """
-    path = _PROMPTS_ROOT / job_id / f"{template_version}.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Prompt template not found: {path}. "
-            "Ensure prompts/{job_id}/{template_version}.yaml exists."
-        )
-    with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Prompt template {path} must be a YAML mapping.")
-    for required in ("system_prompt", "user_template"):
-        if required not in data:
-            raise ValueError(
-                f"Prompt template {path} is missing required key '{required}'."
-            )
-    return data  # type: ignore[return-value]
 
 
 class CachedChunkText(BaseModel):

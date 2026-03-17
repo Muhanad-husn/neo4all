@@ -19,7 +19,6 @@ No network, no LLM, no Neo4j. All external services are mocked.
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,8 +31,7 @@ from api.agents.execution import (
 )
 from api.audit.models import AuditOutcome, AuditRecord
 from api.diff.models import DiffOperation, DiffPlan, DiffStep
-from api.observability.metrics import MetricsCollector, get_metrics
-from api.routers.models import CacheStatsResponse
+from api.observability.metrics import get_metrics
 
 
 # ---------------------------------------------------------------------------

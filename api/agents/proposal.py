@@ -32,7 +32,7 @@ import re
 import time
 from typing import Any
 
-from api.agents.evidence import load_prompt_template
+from api.common.prompts import load_prompt_template
 from api.agents.models import AgentProposalOutput, EvidenceReport
 from api.agents.orchestrator import OrchestratorDecision
 from api.agents.structural import compute_structural_recommendation

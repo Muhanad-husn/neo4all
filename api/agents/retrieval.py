@@ -20,8 +20,8 @@ from typing import Any
 from api.agents.evidence import (
     CHUNK_CACHE_TTL,
     CachedChunkText,
-    load_prompt_template,
 )
+from api.common.prompts import load_prompt_template
 from api.agents.models import EvidenceItem, EvidenceReport, RetrievalResult
 from api.agents.orchestrator import OrchestratorDecision
 from api.cache.client import CacheClient, get_cache_client

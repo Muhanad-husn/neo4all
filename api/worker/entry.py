@@ -30,11 +30,13 @@ from api.observability.logger import configure_logging, get_logger
 from api.worker.config_sync import sync_credentials_from_redis
 from api.worker.jobs import batch_extraction_job, extraction_job
 from api.worker.jobs_agents import (
-    batch_evidence_assembly_job,
-    batch_proposal_composition_job,
     evidence_assembly_job,
     proposal_composition_job,
     retrieval_augmentation_job,
+)
+from api.worker.jobs_agents_batch import (
+    batch_evidence_assembly_job,
+    batch_proposal_composition_job,
 )
 
 logger = get_logger(__name__)

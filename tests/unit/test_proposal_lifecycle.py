@@ -45,7 +45,6 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from api.proposals.models import (
-    ElementRef,
     ProposalClass,
     ProposalPacket,
     ProposalState,
@@ -55,7 +54,6 @@ from api.proposals.service import (
     InvalidTransitionError,
     ProposalNotFoundError,
     ProposalService,
-    ProposalValidationError,
 )
 
 # ---------------------------------------------------------------------------

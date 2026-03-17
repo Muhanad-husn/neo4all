@@ -27,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from api.cache.keys import CacheKey
 from api.models.document import (
-    Document,
     DocumentManifest,
     derive_content_hash,
     derive_parser_config_hash,

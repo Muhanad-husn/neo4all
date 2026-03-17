@@ -47,7 +47,6 @@ from api.config import get_settings
 from api.diff.models import DiffOperation, DiffPlan, DiffStep
 from api.graph.client import Neo4jClient, get_neo4j_client
 from api.graph.safety import (
-    ExecutionInjectionError,
     _CREATE_EDGE_T,
     _CREATE_NODE_T,
     _DELETE_EDGE,
@@ -60,8 +59,6 @@ from api.graph.safety import (
     _OBS_OUT_RELS,
     _REMOVE_EDGE_PROP,
     _REMOVE_NODE_PROP,
-    _SAFE_IDENTIFIER_RE,
-    _SAFE_PROP_RE,
     _SURVIVOR_REL_GOVERNANCE_CHECK,
     _UPDATE_EDGE,
     _UPDATE_NODE,
@@ -70,13 +67,13 @@ from api.graph.safety import (
     _vi,
     _vp,
 )
-from api.graph.reader import GraphReader, get_graph_reader
+from api.graph.reader import get_graph_reader
 from api.observability.logger import get_logger
 from api.proposals.models import ProposalState
 from api.proposals.service import ProposalService
 from api.schema.service import SchemaService, get_schema_service
 from api.services.curation.candidates import run_scoped_detection
-from api.storage.artifacts import ArtifactsService, get_artifacts_service
+from api.storage.artifacts import get_artifacts_service
 
 logger = get_logger(__name__)
 

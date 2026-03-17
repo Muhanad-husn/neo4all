@@ -444,8 +444,10 @@ def main() -> None:
     """Curation page entry point, called by Streamlit on every script rerun."""
     # Lazy import to avoid circular dependency — curation_pipeline imports
     # shared helpers (_fetch, _post, constants) from this module.
-    from ui.pages.curation_pipeline import (  # noqa: E402
+    from ui.pages.curation_agents import (  # noqa: E402
         _render_agent_model_config,
+    )
+    from ui.pages.curation_pipeline import (  # noqa: E402
         _render_candidate_detail_section,
         _render_excluded_items,
         _render_proposal_queue,

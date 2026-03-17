@@ -70,6 +70,10 @@ from api.routers.approvals_models import (
     RestoreProposalRequest,
     RestoreProposalResponse,
 )
+from api.routers.candidates_models import (
+    add_excluded_id,
+    remove_excluded_id,
+)
 
 logger = get_logger(__name__)
 
@@ -651,17 +655,6 @@ async def defer_proposal(
 
 
 # ---------------------------------------------------------------------------
-# Excluded candidates cache model
-# ---------------------------------------------------------------------------
-
-
-class _ExcludedCandidatesCache(BaseModel):
-    """Redis cache envelope for the set of excluded candidate_ids within a run."""
-
-    candidate_ids: list[str]
-
-
-# ---------------------------------------------------------------------------
 # POST /proposals/{proposal_id}/exclude
 # ---------------------------------------------------------------------------
 
@@ -718,21 +711,12 @@ async def exclude_proposal(
 
     # Add candidate_id to excluded set.
     service = ProposalService()
-    cache = get_cache_client()
     try:
         proposal = await service.get_for_run(run_id, proposal_id)
         if proposal is not None:
-            cache_key = CacheKey.excluded_candidates(run_id)
-            existing: _ExcludedCandidatesCache | None = await cache.get(
-                cache_key, model=_ExcludedCandidatesCache,
-            )
-            current_ids = set(existing.candidate_ids) if existing else set()
-            current_ids.add(proposal.candidate_id)
-            await cache.set(
-                cache_key,
-                _ExcludedCandidatesCache(candidate_ids=sorted(current_ids)),
-            )
+            await add_excluded_id(run_id, proposal.candidate_id)
             # Invalidate candidate cache so next listing reflects the exclusion.
+            cache = get_cache_client()
             await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
     except Exception:
         logger.warning(
@@ -820,18 +804,9 @@ async def restore_proposal(
     # Remove candidate_id from excluded set.
     if proposal is not None:
         try:
-            cache_key = CacheKey.excluded_candidates(run_id)
-            existing: _ExcludedCandidatesCache | None = await cache.get(
-                cache_key, model=_ExcludedCandidatesCache,
-            )
-            if existing:
-                current_ids = set(existing.candidate_ids)
-                current_ids.discard(proposal.candidate_id)
-                await cache.set(
-                    cache_key,
-                    _ExcludedCandidatesCache(candidate_ids=sorted(current_ids)),
-                )
+            await remove_excluded_id(run_id, proposal.candidate_id)
             # Invalidate candidate cache so next listing reflects the restoration.
+            cache = get_cache_client()
             await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
         except Exception:
             logger.warning(
