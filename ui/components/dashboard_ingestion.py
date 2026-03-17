@@ -128,7 +128,7 @@ def render_ingestion_tab(run_id: str) -> None:
 
             chunk_rows = [
                 {
-                    "Chunk ID": (c.get("chunk_id") or "")[:16] + "\u2026",
+                    "Chunk ID": c.get("chunk_id") or "",
                     "Characters": c.get("char_count", 0),
                     "Pages": f"{c.get('start_page', '?')}\u2013{c.get('end_page', '?')}",
                     "Quality": (
@@ -137,7 +137,19 @@ def render_ingestion_tab(run_id: str) -> None:
                 }
                 for c in chunks
             ]
-            st.dataframe(chunk_rows, use_container_width=True, hide_index=True)
+            st.dataframe(
+                chunk_rows,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Chunk ID": st.column_config.TextColumn(
+                        "Chunk ID", width="large",
+                    ),
+                    "Characters": st.column_config.NumberColumn("Characters", width="small"),
+                    "Pages": st.column_config.TextColumn("Pages", width="small"),
+                    "Quality": st.column_config.TextColumn("Quality", width="medium"),
+                },
+            )
 
     # Quality flag distribution across all documents
     all_clean = 0

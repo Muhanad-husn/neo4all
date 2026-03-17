@@ -65,7 +65,7 @@ def _render_worker_cache(run_id: str) -> None:
         hit_ratio = cache_data.get("hit_ratio")
         if isinstance(hit_ratio, (int, float)):
             fig = gauge_chart(hit_ratio, "Cache Hit Ratio")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_recent_activity(run_id: str) -> None:

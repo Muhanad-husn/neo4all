@@ -34,6 +34,7 @@ Static sub-paths (/ingest) are registered before parameterised routes
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
@@ -618,6 +619,23 @@ async def get_chunk_text(
     endpoint (SKILL-D R-D5 still governs listing endpoints).
     """
     logger.info("get_chunk_text_requested", run_id=run_id, chunk_id=chunk_id)
+
+    # Validate chunk_id format — must be 64 hex chars (SHA-256).
+    if not re.fullmatch(r"[0-9a-f]{64}", chunk_id):
+        return ChunkTextResponse(
+            run_id=run_id,
+            status="error",
+            chunk_id=chunk_id,
+            errors=[
+                ErrorDetail(
+                    code="INVALID_CHUNK_ID",
+                    message=(
+                        "chunk_id must be a 64-character lowercase hex string. "
+                        "Copy the full Chunk ID from the Ingestion tab."
+                    ),
+                )
+            ],
+        )
 
     text = await indexer.get_chunk_text(run_id, chunk_id)
     if text is None:

@@ -135,8 +135,15 @@ def _render_centrality_chart(run_id: str) -> None:
 
     fig.update_layout(
         **_base_layout(
-            title="Node Centrality — In-Degree vs Out-Degree",
+            title=dict(
+                text="Node Centrality — In-Degree vs Out-Degree",
+                y=0.97,
+                x=0.5,
+                xanchor="center",
+                yanchor="top",
+            ),
             height=480,
+            margin=dict(l=40, r=20, t=60, b=30),
             xaxis=dict(title="In-Degree (incoming edges)"),
             yaxis=dict(title="Out-Degree (outgoing edges)"),
             legend=dict(

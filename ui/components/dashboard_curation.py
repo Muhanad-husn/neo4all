@@ -69,7 +69,7 @@ def _render_candidate_archive(run_id: str) -> None:
         }
         for c in all_candidates
     ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
     # Chart: candidates by type + severity
     type_counts: dict[str, int] = {}
@@ -83,7 +83,7 @@ def _render_candidate_archive(run_id: str) -> None:
             list(type_counts.values()),
             "Candidates by Type",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def _render_proposal_history(run_id: str) -> None:
         }
         for p in proposals
     ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
     # Donut: proposal state distribution
     state_counts: dict[str, int] = {}
@@ -130,7 +130,7 @@ def _render_proposal_history(run_id: str) -> None:
             list(state_counts.values()),
             "Proposals by State",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     # Bar: proposals by class
     class_counts: dict[str, int] = {}
@@ -144,7 +144,7 @@ def _render_proposal_history(run_id: str) -> None:
             list(class_counts.values()),
             "Proposals by Class",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ def _render_agent_pipeline(run_id: str) -> None:
             list(stage_counts.values()),
             "Candidates by Stage",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     # Model info from agent config
     config = fetch("/api/curation/agents/config")
@@ -242,7 +242,7 @@ def _render_agent_telemetry(run_id: str) -> None:
         }
         for r in records
     ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
     # Total tokens by agent
     agent_tokens: dict[str, int] = {}
@@ -257,7 +257,7 @@ def _render_agent_telemetry(run_id: str) -> None:
             list(agent_tokens.values()),
             "Total Tokens by Agent",
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -291,4 +291,4 @@ def _render_exclusions(run_id: str) -> None:
         }
         for p in excluded
     ]
-    st.dataframe(rows, width="stretch", hide_index=True)
+    st.dataframe(rows, use_container_width=True, hide_index=True)

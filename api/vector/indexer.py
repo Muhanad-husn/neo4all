@@ -438,10 +438,10 @@ class VectorIndexer:
             chunk_text_not_found        WARNING — run_id, chunk_id
             chunk_text_retrieval_error  ERROR   — run_id, chunk_id, error
         """
-        point_id = _chunk_id_to_point_id(chunk_id)
         collection = f"chunks_{run_id}"
 
         try:
+            point_id = _chunk_id_to_point_id(chunk_id)
             client = self._get_qdrant_client()
             results = await client.retrieve(
                 collection_name=collection,
