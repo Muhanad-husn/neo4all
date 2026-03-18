@@ -51,9 +51,10 @@ def render_schema_tab(run_id: str) -> None:
         if nodes:
             df = pd.DataFrame([
                 {
-                    "Label": n.get("label", ""),
+                    "Type": n.get("type", ""),
+                    "Class": n.get("node_class", ""),
                     "Primary Property": n.get("primary_property", ""),
-                    "Properties": len(n.get("properties", [])),
+                    "Extra Properties": len(n.get("additional_properties", [])),
                 }
                 for n in nodes
             ])
@@ -62,9 +63,10 @@ def render_schema_tab(run_id: str) -> None:
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Label": st.column_config.TextColumn("Label", width="medium"),
+                    "Type": st.column_config.TextColumn("Type", width="medium"),
+                    "Class": st.column_config.TextColumn("Class", width="small"),
                     "Primary Property": st.column_config.TextColumn("Primary Property", width="medium"),
-                    "Properties": st.column_config.NumberColumn("Properties", width="small"),
+                    "Extra Properties": st.column_config.NumberColumn("Extra Props", width="small"),
                 },
             )
         else:
@@ -94,10 +96,10 @@ def render_schema_tab(run_id: str) -> None:
         else:
             st.caption("No edge types defined.")
 
-    # Donut chart: node types by label
+    # Donut chart: node types by property count
     if nodes:
-        labels = [n.get("label", "?") for n in nodes]
-        values = [len(n.get("properties", [])) for n in nodes]
+        labels = [n.get("type", "?") for n in nodes]
+        values = [len(n.get("additional_properties", [])) + 1 for n in nodes]  # +1 for primary_property
         if any(v > 0 for v in values):
             fig = donut_chart(labels, values, "Node Types by Property Count")
             st.plotly_chart(fig, use_container_width=True)

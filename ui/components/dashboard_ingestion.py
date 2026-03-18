@@ -88,7 +88,7 @@ def render_ingestion_tab(run_id: str) -> None:
                         value=text,
                         height=250,
                         disabled=True,
-                        key="dash_chunk_text_display",
+                        key=f"dash_chunk_text_{cid[:16]}",
                     )
                 else:
                     st.warning("Chunk not found or has no text content.")

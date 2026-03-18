@@ -178,7 +178,7 @@ def _chunks_to_df(chunks: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "Chunk ID": (chunk.get("chunk_id") or "")[:16] + "\u2026",
+                "Chunk ID": chunk.get("chunk_id") or "",
                 "Start Page": chunk.get("start_page", 0),
                 "End Page": chunk.get("end_page", 0),
                 "Chars": chunk.get("char_count", 0),
@@ -439,6 +439,42 @@ def _render_single_doc_chunks(
             ),
         },
     )
+
+    # --- Chunk text lookup (inline) ---
+    with st.expander("Look up chunk text", expanded=False):
+        lookup_key = f"chunk_lookup_{doc_id[:16]}"
+        lookup_input = st.text_input(
+            "Paste a full Chunk ID to view its text",
+            key=lookup_key,
+            placeholder="64-character hex chunk ID\u2026",
+            label_visibility="collapsed",
+        )
+        if lookup_input:
+            cid_clean = lookup_input.strip()
+            if cid_clean:
+                lookup_data = _get(
+                    f"/api/documents/{run_id}/chunk/{cid_clean}/text"
+                )
+                if lookup_data is None:
+                    st.error("Could not reach the API.")
+                elif lookup_data.get("status") == "error":
+                    for e in lookup_data.get("errors", []):
+                        st.error(
+                            f"[{e.get('code', 'error')}] {e.get('message', '')}"
+                        )
+                else:
+                    text = lookup_data.get("text", "")
+                    if text:
+                        st.success(f"{len(text)} characters")
+                        st.text_area(
+                            "Chunk text",
+                            value=text,
+                            height=200,
+                            disabled=True,
+                            key=f"chunk_text_{cid_clean[:16]}",
+                        )
+                    else:
+                        st.warning("Chunk not found or has no text.")
 
     # --- Delete button (only during Ingestion phase) ---
     from api.models.run import Phase
