@@ -258,3 +258,74 @@ class ValidateSchemaResponse(BaseResponse):
     issues: list[str] = []
     nodes: list[NodeTypePayload] = []
     edges: list[EdgeTypePayload] = []
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schema/amend
+# ---------------------------------------------------------------------------
+
+
+class AmendSchemaRequest(BaseModel):
+    """Request body for POST /api/schema/amend.
+
+    Attributes:
+        run_id:              Governed run identifier.
+        edge_type:           The new edge direction to accept.
+        source_candidate_id: The canonical_violation candidate that prompted this.
+        actor:               Who is approving the amendment.
+        rationale:           Human justification for the amendment.
+    """
+
+    run_id: str
+    edge_type: EdgeTypePayload
+    source_candidate_id: str
+    actor: str
+    rationale: str = ""
+
+    @field_validator("run_id", "source_candidate_id", "actor")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be a non-empty, non-whitespace string")
+        return v
+
+
+class SchemaAmendmentOut(BaseModel):
+    """Serialisable representation of a single schema amendment.
+
+    Attributes:
+        amendment_id:        Deterministic SHA-256 identifier.
+        run_id:              Governed run identifier.
+        edge_type:           The added edge definition.
+        source_candidate_id: The candidate that prompted this amendment.
+        actor:               Who approved the amendment.
+        timestamp_utc:       ISO-8601 timestamp.
+        rationale:           Human justification.
+    """
+
+    amendment_id: str
+    run_id: str
+    edge_type: EdgeTypePayload
+    source_candidate_id: str
+    actor: str
+    timestamp_utc: str
+    rationale: str = ""
+
+
+class AmendSchemaResponse(BaseResponse):
+    """Response for POST /api/schema/amend.
+
+    On success: status="success", amendment carries the created amendment.
+    On error:   status="error", amendment=None.
+    """
+
+    amendment: SchemaAmendmentOut | None = None
+
+
+class GetAmendmentsResponse(BaseResponse):
+    """Response for GET /api/schema/{run_id}/amendments.
+
+    Returns the full amendment history for a run.
+    """
+
+    amendments: list[SchemaAmendmentOut] = []

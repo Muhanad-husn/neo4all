@@ -1,0 +1,94 @@
+{
+  "description": "Schema defines WORKS_FOR: Person→Organization and MENTORS: Person→Person. Graph has WORKS_FOR stored as Organization→Person (inverse violation). After amending schema to include WORKS_FOR: Organization→Person, the violation should disappear.",
+  "run_id": "unit-test-run-amendment-0001",
+  "schema_version_str": "sv_fixture_amendment_001",
+  "schema": {
+    "run_id": "unit-test-run-amendment-0001",
+    "nodes": [
+      {
+        "node_class": "Entity",
+        "type": "Person",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "node_class": "Entity",
+        "type": "Organization",
+        "primary_property": "name",
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ],
+    "edges": [
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Organization",
+        "type": "WORKS_FOR",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      },
+      {
+        "start_node_type": "Person",
+        "end_node_type": "Person",
+        "type": "MENTORS",
+        "primary_property": null,
+        "qualifier": null,
+        "additional_properties": []
+      }
+    ]
+  },
+  "amendment_edge": {
+    "start_node_type": "Organization",
+    "end_node_type": "Person",
+    "type": "WORKS_FOR",
+    "primary_property": null,
+    "qualifier": null,
+    "additional_properties": []
+  },
+  "nodes": [
+    {
+      "dedupe_key": "Person::alice::sv",
+      "node_type": "Person",
+      "run_id": "unit-test-run-amendment-0001",
+      "schema_version": "sv_fixture_amendment_001",
+      "properties": {"name": "Alice"}
+    },
+    {
+      "dedupe_key": "Organization::acme::sv",
+      "node_type": "Organization",
+      "run_id": "unit-test-run-amendment-0001",
+      "schema_version": "sv_fixture_amendment_001",
+      "properties": {"name": "ACME"}
+    }
+  ],
+  "rels": [
+    {
+      "dedupe_key": "WORKS_FOR::acme::alice::sv",
+      "rel_type": "WORKS_FOR",
+      "start_dedupe_key": "Organization::acme::sv",
+      "end_dedupe_key": "Person::alice::sv",
+      "run_id": "unit-test-run-amendment-0001",
+      "schema_version": "sv_fixture_amendment_001",
+      "properties": {}
+    },
+    {
+      "dedupe_key": "WORKS_FOR::alice::acme::sv",
+      "rel_type": "WORKS_FOR",
+      "start_dedupe_key": "Person::alice::sv",
+      "end_dedupe_key": "Organization::acme::sv",
+      "run_id": "unit-test-run-amendment-0001",
+      "schema_version": "sv_fixture_amendment_001",
+      "properties": {}
+    }
+  ],
+  "expected_before_amendment": {
+    "violation_count": 1,
+    "note": "WORKS_FOR: Organization→Person is an inverse violation before amendment"
+  },
+  "expected_after_amendment": {
+    "violation_count": 0,
+    "note": "After amending WORKS_FOR: Organization→Person, no violations remain"
+  }
+}

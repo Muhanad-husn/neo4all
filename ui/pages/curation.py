@@ -361,6 +361,72 @@ def _render_candidate_group(
         ]
         st.dataframe(rows, width="stretch", hide_index=True)
 
+        # Schema amendment button for canonical violation groups.
+        if ctype == "canonical_violation" and run_id and actor:
+            amendable = [
+                c for c in candidates
+                if c.get("detection_method") in {
+                    "canonical_inverse_violation",
+                    "canonical_direction_violation",
+                }
+            ]
+            # Group amendable candidates by unique edge signature.
+            edge_sigs: dict[tuple[str, str, str], dict[str, Any]] = {}
+            for c in amendable:
+                ctx = c.get("collision_context", {})
+                sig = (
+                    ctx.get("rel_type", ""),
+                    ctx.get("actual_start_type", ""),
+                    ctx.get("actual_end_type", ""),
+                )
+                if sig[0] and sig[1] and sig[2] and sig not in edge_sigs:
+                    edge_sigs[sig] = c
+
+            for sig, sample_candidate in edge_sigs.items():
+                rel_type, start_type, end_type = sig
+                btn_key = f"btn_amend_{rel_type}_{start_type}_{end_type}"
+                label = (
+                    f"Accept {rel_type}: {start_type}\u2192{end_type} "
+                    f"as Schema Extension"
+                )
+                if st.button(label, key=btn_key, type="secondary"):
+                    with st.spinner("Adding schema amendment…"):
+                        amend_data, amend_err = _post(
+                            "/api/schema/amend",
+                            {
+                                "run_id": run_id,
+                                "edge_type": {
+                                    "start_node_type": start_type,
+                                    "end_node_type": end_type,
+                                    "type": rel_type,
+                                },
+                                "source_candidate_id": sample_candidate.get(
+                                    "candidate_id", ""
+                                ),
+                                "actor": actor,
+                                "rationale": (
+                                    f"Accepted {rel_type}: {start_type}\u2192"
+                                    f"{end_type} as valid during curation."
+                                ),
+                            },
+                        )
+                    if amend_err or amend_data is None:
+                        st.error(
+                            f"Amendment failed: {amend_err or 'No API response.'}"
+                        )
+                    elif amend_data.get("status") == "error":
+                        for e in amend_data.get("errors", []):
+                            st.error(
+                                f"[{e.get('code')}] {e.get('message')}"
+                            )
+                    else:
+                        st.success(
+                            f"Schema amended — {rel_type}: {start_type}\u2192"
+                            f"{end_type} is now valid. "
+                            "Regenerate candidates to see the effect."
+                        )
+                        st.rerun()
+
         # Bulk orphan delete button for structural anomaly groups.
         if ctype == "structural_anomaly" and run_id and actor:
             orphans = [

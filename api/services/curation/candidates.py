@@ -31,7 +31,7 @@ from api.graph.reader_models import (
 )
 from api.models.candidate import Candidate, CandidateLane, CandidateType, Severity
 from api.observability.logger import get_logger
-from api.schema.models import SchemaVersion
+from api.schema.models import EdgeTypeDef, SchemaVersion
 from api.services.curation.similarity import (
     _build_adjacency,
     _content_tokens,
@@ -595,13 +595,14 @@ class CanonicalViolationDetector:
         rels: RelListResult,
         nodes: NodeListResult,
         schema: SchemaVersion,
+        amendment_edges: tuple[EdgeTypeDef, ...] = (),
     ) -> list[Candidate]:
         """Return Candidates for every schema-violating relationship."""
         node_type_map: dict[str, str] = {n.dedupe_key: n.node_type for n in nodes.nodes}
 
         valid_forward: set[tuple[str, str, str]] = {
             (edge.type, edge.start_node_type, edge.end_node_type)
-            for edge in schema.edges
+            for edge in (*schema.edges, *amendment_edges)
         }
 
         candidates: list[Candidate] = []
@@ -883,6 +884,7 @@ async def run_scoped_detection(
     focus_keys: set[str],
     reader: GraphReader,
     schema: SchemaVersion,
+    amendment_edges: tuple[EdgeTypeDef, ...] = (),
 ) -> list[Candidate]:
     """Run candidate detectors scoped to a set of focus node keys.
 
@@ -933,6 +935,7 @@ async def run_scoped_detection(
             rels=scoped_rels,
             nodes=nodes,
             schema=schema,
+            amendment_edges=amendment_edges,
         )
     )
 

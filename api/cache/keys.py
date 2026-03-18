@@ -42,6 +42,15 @@ class CacheKey:
         return f"schema:{run_id}"
 
     @staticmethod
+    def schema_amendments(run_id: str) -> str:
+        """Key for the SchemaAmendmentRegistry for a run (no TTL — immutable after creation).
+
+        Pattern: schema_amendments:{run_id}
+        Written by SchemaService.amend_edge(); read by detectors and UI.
+        """
+        return f"schema_amendments:{run_id}"
+
+    @staticmethod
     def manifest(run_id: str, doc_id: str) -> str:
         """Key for a document manifest within a run.
 

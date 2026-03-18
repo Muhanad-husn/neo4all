@@ -844,6 +844,31 @@ def _render_locked_view(state: StateManager) -> None:
         else:
             st.caption("No edge types recorded.")
 
+    # ── Amendments (supplementary edge types added during curation) ────────
+    amendments_data = _get(f"/api/schema/{run_id}/amendments")
+    if amendments_data is not None and amendments_data.get("status") == "success":
+        amendment_list: list[dict[str, Any]] = amendments_data.get("amendments", [])
+        if amendment_list:
+            st.divider()
+            st.subheader(f"Schema Amendments ({len(amendment_list)})")
+            st.caption(
+                "Edge types added during curation to accept canonical violations "
+                "as valid.  These supplement the locked schema without changing "
+                "the version hash."
+            )
+            rows = []
+            for a in amendment_list:
+                edge = a.get("edge_type", {})
+                rows.append({
+                    "Rel Type": edge.get("type", ""),
+                    "From": edge.get("start_node_type", ""),
+                    "To": edge.get("end_node_type", ""),
+                    "Actor": a.get("actor", ""),
+                    "Rationale": a.get("rationale", ""),
+                    "Timestamp": a.get("timestamp_utc", "")[:19],
+                })
+            st.dataframe(rows, width="stretch", hide_index=True)
+
     st.divider()
 
     # Guard: only show the proceed button when the phase is still SCHEMA.

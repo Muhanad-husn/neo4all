@@ -35,23 +35,31 @@ from fastapi import APIRouter, Depends, Response
 from api.models.responses import ErrorDetail
 from api.observability.logger import get_logger
 from api.routers.schema_models import (
+    AmendSchemaRequest,
+    AmendSchemaResponse,
     ApproveSchemaRequest,
     ApproveSchemaResponse,
     EdgeTypePayload,
+    GetAmendmentsResponse,
     GetSchemaResponse,
     NodeTypePayload,
     ProposeSchemaRequest,
     ProposeSchemaResponse,
+    SchemaAmendmentOut,
     SchemaVersionOut,
     ValidateSchemaRequest,
     ValidateSchemaResponse,
 )
-from api.schema.models import SchemaVersion
+from api.schema.amendments import SchemaAmendment
+from api.schema.models import EdgeTypeDef, SchemaVersion
 from api.schema.service import (
+    EdgeAlreadyInSchemaError,
     LLMProposalError,
     SchemaLockedError,
+    SchemaNotLockedError,
     SchemaProposal,
     SchemaService,
+    UndefinedNodeTypeError,
     get_schema_service,
 )
 
@@ -369,6 +377,161 @@ async def validate_schema(
         valid=True,
         nodes=list(request.schema_data.nodes),
         edges=list(request.schema_data.edges),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/schema/amend
+# ---------------------------------------------------------------------------
+
+
+def _amendment_to_out(a: SchemaAmendment) -> SchemaAmendmentOut:
+    """Convert an internal SchemaAmendment to its serialisable response form."""
+    e = a.edge_type_def
+    return SchemaAmendmentOut(
+        amendment_id=a.amendment_id,
+        run_id=a.run_id,
+        edge_type=EdgeTypePayload(
+            start_node_type=e.start_node_type,
+            end_node_type=e.end_node_type,
+            type=e.type,
+            primary_property=e.primary_property,
+            qualifier=e.qualifier,
+            additional_properties=list(e.additional_properties),
+        ),
+        source_candidate_id=a.source_candidate_id,
+        actor=a.actor,
+        timestamp_utc=a.timestamp_utc,
+        rationale=a.rationale,
+    )
+
+
+@router.post(
+    "/amend",
+    response_model=AmendSchemaResponse,
+    summary="Add a new edge type to the schema as an additive amendment",
+    responses={
+        404: {"model": AmendSchemaResponse, "description": "Schema not locked"},
+        409: {"model": AmendSchemaResponse, "description": "Edge already in base schema"},
+        422: {"model": AmendSchemaResponse, "description": "Edge references undefined node types"},
+    },
+)
+async def amend_schema(
+    request: AmendSchemaRequest,
+    response: Response,
+    service: SchemaService = Depends(get_schema_service),
+) -> AmendSchemaResponse:
+    """Accept a canonical violation as valid by adding the missing edge direction.
+
+    This adds the new EdgeTypeDef to a supplementary amendment layer without
+    modifying the locked SchemaVersion or its version_hash.  All similar
+    canonical violations disappear on the next candidate detection run.
+
+    **Errors**
+    - ``404 Not Found`` — schema is not yet locked for this run_id.
+    - ``409 Conflict`` — the edge already exists in the base schema.
+    - ``422 Unprocessable`` — an edge endpoint references an undefined node type.
+    """
+    logger.info(
+        "schema_amend_requested",
+        run_id=request.run_id,
+        edge_type=request.edge_type.type,
+        start_node_type=request.edge_type.start_node_type,
+        end_node_type=request.edge_type.end_node_type,
+    )
+
+    new_edge = EdgeTypeDef(
+        start_node_type=request.edge_type.start_node_type,
+        end_node_type=request.edge_type.end_node_type,
+        type=request.edge_type.type,
+        primary_property=request.edge_type.primary_property,
+        qualifier=request.edge_type.qualifier,
+        additional_properties=tuple(request.edge_type.additional_properties),
+    )
+
+    try:
+        amendment = await service.amend_edge(
+            run_id=request.run_id,
+            new_edge=new_edge,
+            source_candidate_id=request.source_candidate_id,
+            actor=request.actor,
+            rationale=request.rationale,
+        )
+    except SchemaNotLockedError as exc:
+        logger.warning("schema_amend_not_locked", run_id=request.run_id)
+        response.status_code = 404
+        return AmendSchemaResponse(
+            run_id=request.run_id,
+            status="error",
+            errors=[
+                ErrorDetail(code="schema_not_locked", message=str(exc))
+            ],
+        )
+    except EdgeAlreadyInSchemaError as exc:
+        logger.info("schema_amend_already_in_base", run_id=request.run_id)
+        response.status_code = 409
+        return AmendSchemaResponse(
+            run_id=request.run_id,
+            status="error",
+            errors=[
+                ErrorDetail(code="edge_already_in_schema", message=str(exc))
+            ],
+        )
+    except UndefinedNodeTypeError as exc:
+        logger.warning("schema_amend_undefined_node", run_id=request.run_id)
+        response.status_code = 422
+        return AmendSchemaResponse(
+            run_id=request.run_id,
+            status="error",
+            errors=[
+                ErrorDetail(code="undefined_node_type", message=str(exc))
+            ],
+        )
+
+    logger.info(
+        "schema_amend_success",
+        run_id=request.run_id,
+        amendment_id=amendment.amendment_id,
+    )
+    return AmendSchemaResponse(
+        run_id=request.run_id,
+        status="success",
+        amendment=_amendment_to_out(amendment),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/schema/{run_id}/amendments
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{run_id}/amendments",
+    response_model=GetAmendmentsResponse,
+    summary="Return the amendment history for a run",
+)
+async def get_amendments(
+    run_id: str,
+    service: SchemaService = Depends(get_schema_service),
+) -> GetAmendmentsResponse:
+    """Retrieve all schema amendments for a run.
+
+    Returns an empty list if no amendments have been made.
+    """
+    logger.info("schema_amendments_requested", run_id=run_id)
+
+    registry = await service.get_amendments(run_id)
+    if registry is None or not registry.amendments:
+        return GetAmendmentsResponse(
+            run_id=run_id,
+            status="success",
+            amendments=[],
+        )
+
+    return GetAmendmentsResponse(
+        run_id=run_id,
+        status="success",
+        amendments=[_amendment_to_out(a) for a in registry.amendments],
     )
 
 

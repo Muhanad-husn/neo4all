@@ -55,7 +55,7 @@ from api.routers.candidates_models import (
     _CandidateListCache,
     load_excluded_ids,
 )
-from api.schema.models import SchemaVersion
+from api.schema.models import EdgeTypeDef, SchemaVersion
 from api.schema.service import get_schema_service
 from api.services.curation.candidates import (
     CanonicalViolationDetector,
@@ -500,6 +500,14 @@ async def generate_candidates(
         )
 
     if stage in (2, None):
+        # Fetch schema amendments so amended edges are not flagged as violations.
+        schema_service = get_schema_service()
+        amendment_registry = await schema_service.get_amendments(run_id)
+        amendment_edges: tuple[EdgeTypeDef, ...] = (
+            tuple(a.edge_type_def for a in amendment_registry.amendments)
+            if amendment_registry
+            else ()
+        )
         all_candidates.extend(
             CanonicalViolationDetector().detect(
                 run_id=run_id,
@@ -507,6 +515,7 @@ async def generate_candidates(
                 rels=rels,
                 nodes=nodes,
                 schema=schema,
+                amendment_edges=amendment_edges,
             )
         )
 
@@ -808,6 +817,14 @@ async def generate_candidates_scoped(
             ],
         )
 
+    # Fetch schema amendments for scoped detection.
+    amendment_registry = await schema_service.get_amendments(run_id)
+    scoped_amendment_edges: tuple[EdgeTypeDef, ...] = (
+        tuple(a.edge_type_def for a in amendment_registry.amendments)
+        if amendment_registry
+        else ()
+    )
+
     try:
         candidates = await run_scoped_detection(
             run_id=run_id,
@@ -815,6 +832,7 @@ async def generate_candidates_scoped(
             focus_keys=focus_keys,
             reader=reader,
             schema=schema,
+            amendment_edges=scoped_amendment_edges,
         )
     except Exception as exc:
         logger.error(

@@ -38,12 +38,15 @@ response fails validation, propose() raises LLMProposalError (fail-closed).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from pydantic import BaseModel, ValidationError
 
 from api.cache.client import get_cache_client
 from api.cache.keys import CacheKey
 from api.common.prompts import load_prompt_template
 from api.observability.logger import get_logger
+from api.schema.amendments import SchemaAmendment, SchemaAmendmentRegistry
 from api.schema.models import EdgeTypeDef, NodeTypeDef, SchemaVersion
 from api.services.llm import JobConfig, LLMClient
 
@@ -105,6 +108,44 @@ class SchemaLockedError(Exception):
         )
         self.run_id = run_id
         self.version_hash = version_hash
+
+
+class SchemaNotLockedError(Exception):
+    """Raised when an amendment is attempted before the schema is locked.
+
+    Amendments require an existing locked schema to validate node type references.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(
+            f"Schema for run '{run_id}' is not locked. "
+            "Amendments require a locked schema."
+        )
+        self.run_id = run_id
+
+
+class EdgeAlreadyInSchemaError(Exception):
+    """Raised when the proposed amendment edge already exists in the base schema."""
+
+    def __init__(self, run_id: str, edge_key: tuple[str, str, str]) -> None:
+        super().__init__(
+            f"Edge ({edge_key[0]}: {edge_key[1]}→{edge_key[2]}) already exists "
+            f"in the base schema for run '{run_id}'."
+        )
+        self.run_id = run_id
+        self.edge_key = edge_key
+
+
+class UndefinedNodeTypeError(Exception):
+    """Raised when an amendment edge references a node type not in the base schema."""
+
+    def __init__(self, run_id: str, node_type: str) -> None:
+        super().__init__(
+            f"Node type '{node_type}' is not defined in the base schema "
+            f"for run '{run_id}'."
+        )
+        self.run_id = run_id
+        self.node_type = node_type
 
 
 class LLMProposalError(Exception):
@@ -532,6 +573,152 @@ class SchemaService:
             issue_count=len(issues),
         )
         return issues
+
+    # ------------------------------------------------------------------
+    # amend_edge — additive schema amendment (curation-time)
+    # ------------------------------------------------------------------
+
+    async def amend_edge(
+        self,
+        run_id: str,
+        new_edge: EdgeTypeDef,
+        source_candidate_id: str,
+        actor: str,
+        rationale: str = "",
+    ) -> SchemaAmendment:
+        """Add a new EdgeTypeDef to the schema's supplementary amendment layer.
+
+        The base SchemaVersion and its version_hash remain frozen.  The
+        amendment is stored in a separate SchemaAmendmentRegistry in Redis.
+        The CanonicalViolationDetector reads amendments via get_effective_edges()
+        so that amended directions are no longer flagged.
+
+        Idempotent: if the exact edge (type + start + end) is already amended,
+        returns the existing amendment.
+
+        Args:
+            run_id:              Governed run identifier.
+            new_edge:            The EdgeTypeDef to add.
+            source_candidate_id: The canonical_violation candidate that prompted this.
+            actor:               Who approved the amendment.
+            rationale:           Human justification for the amendment.
+
+        Returns:
+            The created (or existing) SchemaAmendment.
+
+        Raises:
+            SchemaNotLockedError: Schema is not yet locked for this run.
+            EdgeAlreadyInSchemaError: The edge is already in the base schema.
+            UndefinedNodeTypeError: A referenced node type doesn't exist in the schema.
+        """
+        schema = await self.get_current(run_id)
+        if schema is None:
+            raise SchemaNotLockedError(run_id)
+
+        # Validate node types exist in the base schema.
+        node_types = {n.type for n in schema.nodes}
+        if new_edge.start_node_type not in node_types:
+            raise UndefinedNodeTypeError(run_id, new_edge.start_node_type)
+        if new_edge.end_node_type not in node_types:
+            raise UndefinedNodeTypeError(run_id, new_edge.end_node_type)
+
+        # Check if edge is already in base schema.
+        edge_key = (new_edge.type, new_edge.start_node_type, new_edge.end_node_type)
+        for e in schema.edges:
+            if (e.type, e.start_node_type, e.end_node_type) == edge_key:
+                raise EdgeAlreadyInSchemaError(run_id, edge_key)
+
+        # Load existing registry.
+        registry = await self.get_amendments(run_id)
+
+        # Idempotent: return existing amendment if same edge already amended.
+        if registry is not None:
+            for existing in registry.amendments:
+                e = existing.edge_type_def
+                if (e.type, e.start_node_type, e.end_node_type) == edge_key:
+                    logger.info(
+                        "schema_amendment_idempotent",
+                        run_id=run_id,
+                        amendment_id=existing.amendment_id,
+                    )
+                    return existing
+
+        amendment = SchemaAmendment(
+            run_id=run_id,
+            edge_type_def=new_edge,
+            source_candidate_id=source_candidate_id,
+            actor=actor,
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            rationale=rationale,
+        )
+
+        # Append to registry.
+        existing_amendments = registry.amendments if registry else ()
+        new_registry = SchemaAmendmentRegistry(
+            run_id=run_id,
+            amendments=(*existing_amendments, amendment),
+        )
+
+        cache = get_cache_client()
+        await cache.set(
+            CacheKey.schema_amendments(run_id), new_registry, ttl=None
+        )
+
+        # Invalidate candidate cache so next detection picks up the expanded schema.
+        await cache.invalidate_prefix(CacheKey.candidates_prefix(run_id))
+
+        logger.info(
+            "schema_amendment_approved",
+            run_id=run_id,
+            amendment_id=amendment.amendment_id,
+            edge_type=new_edge.type,
+            start_node_type=new_edge.start_node_type,
+            end_node_type=new_edge.end_node_type,
+            actor=actor,
+        )
+        return amendment
+
+    # ------------------------------------------------------------------
+    # get_amendments
+    # ------------------------------------------------------------------
+
+    async def get_amendments(self, run_id: str) -> SchemaAmendmentRegistry | None:
+        """Return the SchemaAmendmentRegistry for a run, or None if no amendments exist.
+
+        Cache-first read.  A cache miss is authoritative — no amendments have been
+        made for this run.
+        """
+        cache = get_cache_client()
+        key = CacheKey.schema_amendments(run_id)
+        registry = await cache.get(key, model=SchemaAmendmentRegistry)
+        if registry is not None:
+            logger.debug(
+                "schema_amendments_cache_hit",
+                run_id=run_id,
+                count=len(registry.amendments),
+            )
+        return registry
+
+    # ------------------------------------------------------------------
+    # get_effective_edges
+    # ------------------------------------------------------------------
+
+    async def get_effective_edges(self, run_id: str) -> tuple[EdgeTypeDef, ...]:
+        """Return all valid edge definitions: base schema edges + amendment edges.
+
+        This is what detectors should use to build their valid_forward set.
+        Returns an empty tuple if no schema is locked.
+        """
+        schema = await self.get_current(run_id)
+        if schema is None:
+            return ()
+
+        registry = await self.get_amendments(run_id)
+        if registry is None or not registry.amendments:
+            return schema.edges
+
+        amendment_edges = tuple(a.edge_type_def for a in registry.amendments)
+        return (*schema.edges, *amendment_edges)
 
     # ------------------------------------------------------------------
     # Private helpers
