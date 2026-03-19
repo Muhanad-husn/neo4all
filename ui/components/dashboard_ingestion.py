@@ -55,7 +55,7 @@ def render_ingestion_tab(run_id: str) -> None:
             list(parser_counts.values()),
             "Parser Tier Distribution",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.divider()
 
@@ -107,7 +107,7 @@ def render_ingestion_tab(run_id: str) -> None:
         }
         for d in documents
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     # Per-document chunk expander
     for d in documents:
@@ -139,7 +139,7 @@ def render_ingestion_tab(run_id: str) -> None:
             ]
             st.dataframe(
                 chunk_rows,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Chunk ID": st.column_config.TextColumn(
@@ -171,4 +171,4 @@ def render_ingestion_tab(run_id: str) -> None:
             [all_clean, all_flagged],
             "Chunk Quality Distribution",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")

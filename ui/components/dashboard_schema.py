@@ -60,7 +60,7 @@ def render_schema_tab(run_id: str) -> None:
             ])
             st.dataframe(
                 df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Type": st.column_config.TextColumn("Type", width="medium"),
@@ -85,7 +85,7 @@ def render_schema_tab(run_id: str) -> None:
             ])
             st.dataframe(
                 df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Type": st.column_config.TextColumn("Type", width="medium"),
@@ -102,4 +102,4 @@ def render_schema_tab(run_id: str) -> None:
         values = [len(n.get("additional_properties", [])) + 1 for n in nodes]  # +1 for primary_property
         if any(v > 0 for v in values):
             fig = donut_chart(labels, values, "Node Types by Property Count")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")

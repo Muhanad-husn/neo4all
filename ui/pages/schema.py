@@ -845,6 +845,7 @@ def _render_locked_view(state: StateManager) -> None:
             st.caption("No edge types recorded.")
 
     # ── Amendments (supplementary edge types added during curation) ────────
+    run_id = state.run_id
     amendments_data = _get(f"/api/schema/{run_id}/amendments")
     if amendments_data is not None and amendments_data.get("status") == "success":
         amendment_list: list[dict[str, Any]] = amendments_data.get("amendments", [])

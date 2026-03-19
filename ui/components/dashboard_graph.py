@@ -47,7 +47,7 @@ def render_graph_tab(run_id: str) -> None:
             labels = [t.get("type", "?") for t in sorted_types]
             values = [t.get("count", 0) for t in sorted_types]
             fig = bar_chart(labels, values, "Node Counts by Type", horizontal=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No node data.")
 
@@ -59,7 +59,7 @@ def render_graph_tab(run_id: str) -> None:
             labels = [t.get("type", "?") for t in sorted_types]
             values = [t.get("count", 0) for t in sorted_types]
             fig = bar_chart(labels, values, "Edge Counts by Type", horizontal=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No edge data.")
 
@@ -155,7 +155,7 @@ def _render_centrality_chart(run_id: str) -> None:
             ),
         )
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Top-10 high centrality nodes table
     top_n = items[:10]
@@ -171,4 +171,4 @@ def _render_centrality_chart(run_id: str) -> None:
             }
             for it in top_n
         ]
-        st.dataframe(top_rows, use_container_width=True, hide_index=True)
+        st.dataframe(top_rows, width="stretch", hide_index=True)
