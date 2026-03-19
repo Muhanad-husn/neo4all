@@ -1,7 +1,3 @@
-Good — an investigation-grade schema that preserves both the interpersonal network and the business operations layer, with an eye toward cross-border activity and suspicious patterns. Let me work through Step 3.
-
----
-
 ## A. Compression Decisions
 
 **Things found → what happens to each:**
@@ -337,5 +333,3 @@ Review the schema above:
 Once you're satisfied, you can:
 1. Copy the JSON and paste it into the Upload Schema tab in Phase 1
 2. Copy the domain description and use the AI Generate tab instead
-
-I can also iterate — tell me what to change.
