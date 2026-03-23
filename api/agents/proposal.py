@@ -346,7 +346,7 @@ class ProposalComposerAgent:
         job = JobConfig(
             job_id=_JOB_ID,
             model=decision.model_p,
-            temperature=0.2,
+            temperature=0.3,
             max_tokens=decision.budget.max_output_tokens_p,
             response_format={"type": "json_object"},
         )
@@ -546,7 +546,7 @@ class ProposalComposerAgent:
         job = JobConfig(
             job_id=_JOB_ID,
             model=llm_candidates[0][1].model_p,
-            temperature=0.2,
+            temperature=0.3,
             max_tokens=batch_max_output,
             response_format={"type": "json_object"},
         )

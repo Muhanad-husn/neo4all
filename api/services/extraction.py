@@ -191,7 +191,7 @@ class ExtractionService:
         self._job_config = job_config or JobConfig(
             job_id=self._JOB_ID,
             model="openrouter/hunter-alpha",
-            temperature=0.1,  # low variance — structured extraction
+            temperature=0.2,  # structured extraction
             response_format={"type": "json_object"},
         )
 

@@ -184,7 +184,7 @@ class SchemaService:
         self._job_config = job_config or JobConfig(
             job_id=self._JOB_ID,
             model="openrouter/hunter-alpha",
-            temperature=0.2,
+            temperature=0.3,
             response_format={"type": "json_object"},
         )
 
