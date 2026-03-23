@@ -147,20 +147,23 @@ async def evidence_assembly_job(
     candidate_json: str,
     decision_json: str,
     correlation_id: str = "",
+    enable_retrieval: bool | None = None,
 ) -> None:
     """Load candidate, call Agent-A, store EvidenceReport, chain next job.
 
     Args:
-        ctx:            ARQ worker context dict.
-        run_id:         Governed run identifier.
-        candidate_json: JSON-serialised Candidate (model_dump_json output).
-        decision_json:  JSON-serialised OrchestratorDecision.
-        correlation_id: Propagated from the originating HTTP request (SKILL-D R-D2).
+        ctx:              ARQ worker context dict.
+        run_id:           Governed run identifier.
+        candidate_json:   JSON-serialised Candidate (model_dump_json output).
+        decision_json:    JSON-serialised OrchestratorDecision.
+        correlation_id:   Propagated from the originating HTTP request (SKILL-D R-D2).
+        enable_retrieval: Per-run Agent-B override.  ``None`` falls back to
+                          the ``ENABLE_AGENT_B`` env var.
 
     Chain logic:
-        - evidence sufficient                            -> enqueue proposal_composition_job
-        - evidence insufficient + ENABLE_AGENT_B=True   -> enqueue retrieval_augmentation_job
-        - evidence insufficient + ENABLE_AGENT_B=False  -> enqueue proposal_composition_job
+        - evidence sufficient                       -> enqueue proposal_composition_job
+        - evidence insufficient + retrieval enabled -> enqueue retrieval_augmentation_job
+        - evidence insufficient + retrieval off     -> enqueue proposal_composition_job
     """
     from api.agents.evidence import EvidenceAssemblyAgent
     from api.agents.orchestrator import OrchestratorDecision
@@ -243,7 +246,10 @@ async def evidence_assembly_job(
         redis = ctx["redis"]
         evidence_report_json = report.model_dump_json()
 
-        agent_b_enabled = settings.ENABLE_AGENT_B
+        agent_b_enabled = (
+            enable_retrieval if enable_retrieval is not None
+            else settings.ENABLE_AGENT_B
+        )
         route_to_agent_b = agent_b_enabled and not report.sufficient
 
         if route_to_agent_b:

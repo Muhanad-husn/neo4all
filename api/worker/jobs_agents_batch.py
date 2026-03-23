@@ -45,11 +45,12 @@ async def batch_evidence_assembly_job(
     candidates_json: str,
     decisions_json: str,
     correlation_id: str = "",
+    enable_retrieval: bool | None = None,
 ) -> None:
     """Process multiple candidates through Agent-A in a single LLM call.
 
     After batch evidence assembly, routes candidates:
-      - Agent-B needed (insufficient + ENABLE_AGENT_B) -> individual retrieval jobs
+      - Agent-B needed (insufficient + enabled) -> individual retrieval jobs
       - Otherwise -> batch_proposal_composition_job
 
     Args:
@@ -58,6 +59,8 @@ async def batch_evidence_assembly_job(
         candidates_json:  JSON-serialised list of Candidate dicts.
         decisions_json:   JSON-serialised list of OrchestratorDecision dicts.
         correlation_id:   Propagated from the originating HTTP request.
+        enable_retrieval: Per-run Agent-B override.  ``None`` falls back to
+                          the ``ENABLE_AGENT_B`` env var.
     """
     import json as _json
 
@@ -125,7 +128,10 @@ async def batch_evidence_assembly_job(
 
         settings = get_settings()
         redis = ctx["redis"]
-        agent_b_enabled = settings.ENABLE_AGENT_B
+        agent_b_enabled = (
+            enable_retrieval if enable_retrieval is not None
+            else settings.ENABLE_AGENT_B
+        )
 
         proposal_candidates: list[dict] = []
         proposal_decisions: list[dict] = []

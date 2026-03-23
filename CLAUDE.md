@@ -145,7 +145,7 @@ A Proposal Packet (from Agent-P) contains:
 **Batch processing** (default): The pipeline groups candidates into batches (default 8, configurable via `AgentConfig.batch_size`). Agent-A and Agent-P each process an entire batch in a single LLM call, sharing system prompt context and schema rules. This reduces API round-trips and enables cross-candidate awareness.
 
 **Current flow**: Orchestrator → **Batch Agent-A** → Structural Rec → [Agent-B] → **Batch Agent-P** → Diff Builder → Approval Gate → Agent-C.
-Agent-B is conditionally routed: when `ENABLE_AGENT_B=True` and Agent-A returns `sufficient=False`, those candidates are split out to individual `retrieval_augmentation_job`s (Agent-B is loop-guarded). Otherwise candidates go directly to batch Agent-P. Default is `False` (skipped) for safe rollout.
+Agent-B is conditionally routed: when retrieval is enabled and Agent-A returns `sufficient=False`, those candidates are split out to individual `retrieval_augmentation_job`s (Agent-B is loop-guarded). Otherwise candidates go directly to batch Agent-P. Users toggle retrieval via a checkbox in the curation UI; the `ENABLE_AGENT_B` env var serves as the server-wide default (precedence: UI checkbox > env var > `False`).
 
 Single-candidate jobs (`evidence_assembly_job`, `proposal_composition_job`) are retained for Agent-B chaining and backward compatibility.
 
@@ -255,7 +255,7 @@ EMBEDDING_MODEL            # sentence-transformers model name (default all-MiniL
 EXTRACTION_BATCH_SIZE      # int 1-50 — chunks per LLM call in batch extraction (default 10)
 
 # Agent pipeline (SPEC-07)
-ENABLE_AGENT_B             # true/false — enable Agent-B retrieval augmentation (default false)
+ENABLE_AGENT_B             # true/false — server default for Agent-B retrieval augmentation (default false; UI checkbox overrides per-run)
 # AGENT_CONFIG.batch_size  # int 1-20 — candidates per LLM call in batch mode (default 8)
 
 # Dry-run mode (SPEC-08)

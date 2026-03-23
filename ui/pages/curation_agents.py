@@ -122,6 +122,20 @@ def _render_agent_model_config(run_id: str) -> None:
                 f"Max retrieval rounds: {max_rounds}"
             )
 
+    # Agent-B retrieval toggle — defaults to server config.
+    enable_retrieval_default = (
+        config_data.get("enable_agent_b", False) if config_data else False
+    )
+    enable_retrieval = st.checkbox(
+        "Enable retrieval augmentation",
+        value=enable_retrieval_default,
+        key="enable_retrieval_toggle",
+        help=(
+            "When checked, candidates with insufficient evidence are routed "
+            "through Agent-B for additional retrieval before proposal composition."
+        ),
+    )
+
     st.markdown("---")
 
     # Check if pipeline is actively running to disable the trigger button.
@@ -194,6 +208,7 @@ def _render_agent_model_config(run_id: str) -> None:
             "model_b": model_b.strip() or None,
             "model_p": model_p.strip() or None,
             "confirm_archive": confirm_archive,
+            "enable_retrieval": enable_retrieval,
         }
         if _all_candidate_ids:
             payload["candidate_ids"] = _all_candidate_ids

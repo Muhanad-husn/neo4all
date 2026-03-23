@@ -152,9 +152,11 @@ class RunAgentPipelineRequest(BaseModel):
         run_id:        Governed run to process.
         candidate_ids: Specific candidate IDs to process.  When empty or None,
                        all cached candidates for the run are processed.
-        model_a:       Optional OpenRouter model override for Agent-A.
-        model_b:       Optional OpenRouter model override for Agent-B.
-        model_p:       Optional OpenRouter model override for Agent-P.
+        model_a:           Optional OpenRouter model override for Agent-A.
+        model_b:           Optional OpenRouter model override for Agent-B.
+        model_p:           Optional OpenRouter model override for Agent-P.
+        enable_retrieval:  Per-run override for ENABLE_AGENT_B.  When ``None``
+                           the server default (env var) is used.
     """
 
     run_id: str
@@ -163,6 +165,7 @@ class RunAgentPipelineRequest(BaseModel):
     model_b: str | None = None
     model_p: str | None = None
     confirm_archive: bool = False
+    enable_retrieval: bool | None = None
 
 
 class RunAgentPipelineResponse(BaseResponse):
@@ -202,6 +205,7 @@ class AgentConfigResponse(BaseResponse):
         agent_p:                  Agent-P model configuration.
         cost_limit_per_candidate: USD cost cap per candidate.
         max_retrieval_rounds:     Agent-B loop guard.
+        enable_agent_b:           Server default for Agent-B feature gate.
     """
 
     agent_a: AgentModelConfigOut = AgentModelConfigOut(
@@ -215,6 +219,7 @@ class AgentConfigResponse(BaseResponse):
     )
     cost_limit_per_candidate: float = 0.0
     max_retrieval_rounds: int = 0
+    enable_agent_b: bool = False
 
 
 class PipelineJobOut(BaseModel):
@@ -363,6 +368,7 @@ async def get_agent_config() -> AgentConfigResponse:
         ),
         cost_limit_per_candidate=cfg.cost_limit_per_candidate,
         max_retrieval_rounds=cfg.max_retrieval_rounds,
+        enable_agent_b=settings.ENABLE_AGENT_B,
     )
 
 
@@ -727,6 +733,13 @@ async def run_agent_pipeline(
     settings = get_settings()
     base_cfg = settings.AGENT_CONFIG
 
+    # Resolve per-run Agent-B toggle: UI override > env var default.
+    enable_retrieval = (
+        request.enable_retrieval
+        if request.enable_retrieval is not None
+        else settings.ENABLE_AGENT_B
+    )
+
     agent_a_cfg = AgentModelConfig(
         model=request.model_a or base_cfg.agent_a.model,
         max_input_tokens=base_cfg.agent_a.max_input_tokens,
@@ -822,6 +835,7 @@ async def run_agent_pipeline(
                 candidates_json=batch_cands_payload,
                 decisions_json=batch_decs_payload,
                 correlation_id=correlation_id,
+                enable_retrieval=enable_retrieval,
             )
             enqueued += 1
         except Exception as exc:

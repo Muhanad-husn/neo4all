@@ -347,7 +347,7 @@ For batch processing, the multi-agent chain handles it:
 - **Orchestrator** (non-LLM) assigns risk class and token budget
 - **Agent-A** assembles and classifies evidence (structural signals from detectors are treated as first-class evidence)
 - **Structural Recommendation** (non-LLM) pre-digests collision_context metrics into a concrete action recommendation (merge, canonicalize, normalize, delete, defer) with deterministic confidence — this is the primary input for Agent-P
-- **Agent-B** retrieval augmentation (currently dormant — activates when users ingest new documents from the curation panel; see [Roadmap](#roadmap))
+- **Agent-B** retrieval augmentation (user-toggleable via checkbox in the curation UI; most effective once curation-panel evidence-only ingestion is available — see [Roadmap](#roadmap))
 - **Agent-P** composes a governed proposal using the structural recommendation as its anchor — with regex safety guards that reject any Cypher or executable code
 
 AI proposals flow through the exact same approval pipeline as manual ones. No shortcuts. Full telemetry (tokens, cost, execution time) is tracked per agent per candidate.
@@ -508,7 +508,7 @@ The next milestone extends this with *evidence-only* ingestion directly from the
 - Edge type filter in graph explorer is a Python-side slice (no dedicated graph reader method)
 - Qdrant collections (`chunks_{run_id}`) are not cleaned up on run deletion
 - `GET /api/monitoring/run/{run_id}` returns `found=false` until a server-side run registry is added
-- Agent-B (retrieval augmentation) is dormant until curation-panel document ingestion is implemented (see [Roadmap](#roadmap))
+- Agent-B (retrieval augmentation) can be toggled per-run via the "Enable retrieval augmentation" checkbox in the curation UI (server default: `ENABLE_AGENT_B` env var). It is most useful once curation-panel evidence-only ingestion is implemented (see [Roadmap](#roadmap))
 
 ---
 
