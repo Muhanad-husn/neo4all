@@ -253,22 +253,16 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
     """
     st.divider()
 
-    # Guard: only show the proceed button when the phase is still INGESTION.
-    # Prevents errors if the user navigates here via Streamlit multipage
-    # sidebar after already advancing past Phase 2.
-    if state.phase != Phase.INGESTION:
+    # Guard: only show the proceed button when the watermark is still INGESTION.
+    # If the user navigated back here after already advancing, just show info.
+    if state.phase.value > Phase.INGESTION.value:
         st.info(
             "You have already proceeded past Phase 2.",
             icon="✅",
         )
         return
 
-    is_reentry = state.reentry_source is not None
-    btn_label = (
-        "Continue to Extraction (process new chunks) →"
-        if is_reentry
-        else "Proceed to Phase 3: AI-Assisted Extraction →"
-    )
+    btn_label = "Proceed to Phase 3: AI-Assisted Extraction →"
 
     if not has_docs:
         st.button(btn_label, type="primary", disabled=True)
@@ -280,6 +274,7 @@ def _render_proceed_section(state: StateManager, *, has_docs: bool) -> None:
         s = StateManager.get()
         if s.phase == Phase.INGESTION:
             s.advance_phase(Phase.EXTRACTION)
+        s.set_active_view(None)
 
     st.button(btn_label, type="primary", on_click=_do_advance)
 
@@ -337,20 +332,12 @@ def main() -> None:
 
     st.title("Phase 2 — Document Ingestion & Chunking")
 
-    if state.reentry_source is not None:
-        st.info(
-            "You are adding more documents to this run. "
-            "Upload new files below, then proceed to extraction. "
-            "Only new chunks will be processed — existing work is preserved.",
-            icon="↩",
-        )
-    else:
-        st.write(
-            "Upload your source documents. "
-            "Each file is parsed using a three-tier chain "
-            "(Docling → Unstructured → raw text), chunked semantically, "
-            "and indexed for AI-assisted extraction in Phase 3."
-        )
+    st.write(
+        "Upload your source documents. "
+        "Each file is parsed using a three-tier chain "
+        "(Docling → Unstructured → raw text), chunked semantically, "
+        "and indexed for AI-assisted extraction in Phase 3."
+    )
 
     run_id = state.run_id
     if not run_id:

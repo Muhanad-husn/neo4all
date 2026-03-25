@@ -176,21 +176,22 @@ st.session_state["current_phase"] = "extraction"
 | 3 | AI-Assisted Extraction |
 | 4 | Curation |
 
-### Phase Re-entry
-Users can navigate backward from Curation (or Extraction) to Ingestion to add
-more documents within the same `run_id`. This is handled via `reenter_phase()`
-and `clear_reentry()` on `StateManager`.
+### Free Navigation
+Users can navigate to any phase at any time via sidebar buttons. The system
+tracks two concepts:
 
-- **Allowed paths**: `CURATION → INGESTION`, `EXTRACTION → INGESTION`, `CURATION → EXTRACTION`.
-- **`reentry_source`** property tracks where the user came from (`Phase | None`).
-- **Reconciliation is suppressed** during re-entry so the app does not auto-advance
-  back to Curation.
+- **`phase` (watermark)**: The highest phase naturally reached via `advance_phase()`.
+  Gets a "Current" badge in the sidebar. Only moves forward.
+- **`active_view`**: Which page the user is viewing. Moves freely. Ephemeral —
+  not persisted to Redis.
+
+Phases depend on previous ones (e.g., extraction requires ingestion), but the
+UI trusts the user rather than blocking. Pages show soft info messages when
+prerequisites are not yet met.
+
+- **Graph Explorer** is always available (even with zero graph elements).
 - **Extraction is idempotent** — already-complete chunks are skipped; only new
   chunks from newly ingested documents are processed.
-- **`clear_reentry()`** is called when advancing from Extraction back to Curation,
-  restoring normal phase flow.
-- The re-entry flag is persisted in the `SessionRecord` (Redis) and survives
-  browser refresh.
 
 ---
 

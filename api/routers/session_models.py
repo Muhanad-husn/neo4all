@@ -34,7 +34,6 @@ class SessionRecord(BaseModel):
     schema_version: str | None = None
     neo4j_uri: str
     neo4j_user: str
-    reentry_source: int | None = None
 
 
 class SaveSessionRequest(BaseModel):

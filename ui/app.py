@@ -20,9 +20,9 @@ Phase routing (simple if/elif — no st.navigation()):
   Phase.EXTRACTION → ui/pages/extraction.py
   Phase.CURATION   → ui/pages/curation.py
 
-Utility views (sidebar selector, available after Phase 0):
+Utility views (sidebar buttons, available after Phase 0):
   Dashboard        → ui/pages/dashboard.py
-  Graph Explorer   → ui/pages/graph_explorer.py  (Phase 4+ only)
+  Graph Explorer   → ui/pages/graph_explorer.py  (always available)
 """
 
 import hashlib
@@ -60,10 +60,6 @@ _NEO4J_URI_KEYS = {"NEO4J_URI", "NEO4J_DEV_URI"}
 _NEO4J_USER_KEYS = {"NEO4J_USERNAME", "NEO4J_DEV_USER"}
 _NEO4J_PASSWORD_KEYS = {"NEO4J_PASSWORD", "NEO4J_DEV_PASSWORD"}
 _OPENROUTER_KEY_KEYS = {"OPENROUTER_API_KEY"}
-
-# Session-state key for the sidebar view selector.
-# Prefixed _nav_ to distinguish from _sm_ (StateManager) keys.
-_K_VIEW_OVERRIDE = "_nav_view_override"
 
 # Session-state key to avoid repeated restore attempts on every Streamlit rerun.
 _K_RESTORE_ATTEMPTED = "_nav_restore_attempted"
@@ -307,7 +303,6 @@ def _try_restore_session(state: StateManager) -> bool:
             neo4j_user=record["neo4j_user"],
             neo4j_password=neo4j_password,
             openrouter_api_key=openrouter_api_key,
-            reentry_source=record.get("reentry_source"),
         )
 
         # NOTE: We intentionally do NOT call _notify_api_reload() here.
@@ -337,12 +332,6 @@ def _reconcile_phase(state: StateManager) -> None:
 
     Fails silently on any error — falls back to the saved phase.
     """
-    # Suppress reconciliation during phase re-entry — the user intentionally
-    # navigated backward (e.g. CURATION → INGESTION to add more documents).
-    # Without this guard, reconciliation would auto-advance back to CURATION.
-    if state.reentry_source is not None:
-        return
-
     try:
         import httpx
 
@@ -412,11 +401,9 @@ def _save_session(state: StateManager) -> None:
         import httpx
 
         # Build a snapshot hash to detect changes.
-        reentry_val = state.reentry_source.value if state.reentry_source is not None else ""
         snapshot = (
             f"{state.run_id}|{state.phase.value}|"
-            f"{state.schema_version or ''}|{state.neo4j_uri}|{state.neo4j_user}|"
-            f"{reentry_val}"
+            f"{state.schema_version or ''}|{state.neo4j_uri}|{state.neo4j_user}"
         )
         snapshot_hash = hashlib.sha256(snapshot.encode()).hexdigest()[:16]
 
@@ -434,11 +421,6 @@ def _save_session(state: StateManager) -> None:
                 "schema_version": state.schema_version,
                 "neo4j_uri": state.neo4j_uri,
                 "neo4j_user": state.neo4j_user,
-                "reentry_source": (
-                    state.reentry_source.value
-                    if state.reentry_source is not None
-                    else None
-                ),
             },
         }
 
@@ -458,17 +440,15 @@ def _save_session(state: StateManager) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _render_sidebar(state: StateManager) -> str | None:
-    """Render the persistent run-state sidebar and return the selected view.
+def _render_sidebar(state: StateManager) -> None:
+    """Render the persistent run-state sidebar with free phase navigation.
 
-    Shows phase progression indicators, a compact run summary, and a view
-    selector for utility pages. Visible on every page rerun.
-
-    Returns:
-        The selected utility view name, or None for the default phase view.
+    Shows clickable phase buttons with a "Current" badge on the watermark
+    phase, utility view buttons (Dashboard, Graph Explorer), and a compact
+    run summary. Visible on every page rerun.
     """
-    view_override: str | None = None
-    current_phase = state.phase
+    watermark = state.phase
+    active = state.active_view
 
     with st.sidebar:
         # 1. Logo
@@ -505,64 +485,65 @@ def _render_sidebar(state: StateManager) -> str | None:
             # 6. Divider
             st.divider()
 
-        # 7. View selector
-        if state.run_id:
-            view_options = ["Current Phase", "Dashboard"]
-
-            # During re-entry, offer navigation back to the source phase
-            # and preserve Graph Explorer if the user came from Curation.
-            reentry_src = state.reentry_source
-            effective_max_phase = current_phase
-            if reentry_src is not None:
-                effective_max_phase = max(
-                    current_phase, reentry_src, key=lambda p: p.value
-                )
-                _reentry_labels = {
-                    Phase.CURATION: "Curation",
-                    Phase.EXTRACTION: "Extraction",
-                }
-                label = _reentry_labels.get(reentry_src)
-                if label:
-                    view_options.append(label)
-
-            if effective_max_phase.value >= Phase.CURATION.value:
-                view_options.append("Graph Explorer")
-
-            selected_view = st.radio(
-                "View",
-                options=view_options,
-                index=0,
-                key="_nav_view_radio",
-                label_visibility="collapsed",
-            )
-            if selected_view != "Current Phase":
-                view_override = selected_view
-
-            # 8. Divider
-            st.divider()
-
-        # 9. Phase progression indicators.
+        # 7. Phase navigation buttons (free navigation).
         st.subheader("Phases")
-        phase_labels = {
-            Phase.INIT: "Session Init",
+        _phase_labels = {
             Phase.SCHEMA: "Schema",
             Phase.INGESTION: "Ingestion",
             Phase.EXTRACTION: "Extraction",
             Phase.CURATION: "Curation",
         }
-        for p in Phase:
-            if p.value < current_phase.value:
-                marker = ":green[✓]"
-            elif p == current_phase:
-                marker = ":blue[→]"
+        for p, label in _phase_labels.items():
+            # Determine status marker.
+            if p.value < watermark.value:
+                marker = "✓"
+            elif p == watermark:
+                marker = "→"
             else:
-                marker = ":gray[○]"
-            st.markdown(f"{marker} **{p.value}** {phase_labels[p]}")
+                marker = "○"
 
-        # 10. Divider
+            # "Current" badge on the watermark phase.
+            badge = "  ·  Current" if p == watermark else ""
+
+            btn_label = f"{marker}  {p.value}. {label}{badge}"
+
+            # Highlight the active view.
+            view_key = f"phase:{p.value}"
+            is_active = active == view_key or (active is None and p == watermark)
+
+            if st.button(
+                btn_label,
+                key=f"_nav_phase_{p.value}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                state.set_active_view(view_key)
+                st.rerun()
+
         st.divider()
 
-        # 11. Run State section
+        # 8. Utility view buttons.
+        st.subheader("Views")
+        if st.button(
+            "Dashboard",
+            key="_nav_dashboard",
+            use_container_width=True,
+            type="primary" if active == "dashboard" else "secondary",
+        ):
+            state.set_active_view("dashboard")
+            st.rerun()
+        if st.button(
+            "Graph Explorer",
+            key="_nav_graph_explorer",
+            use_container_width=True,
+            type="primary" if active == "graph_explorer" else "secondary",
+        ):
+            state.set_active_view("graph_explorer")
+            st.rerun()
+
+        st.divider()
+
+        # 9. Run State section
         st.subheader("Run State")
         run_id = state.run_id
         if run_id:
@@ -590,8 +571,6 @@ def _render_sidebar(state: StateManager) -> str | None:
                 st.write(_fmt_duration(elapsed))
         else:
             st.info("No active run.\nComplete Phase 0 to begin.")
-
-    return view_override
 
 
 # ---------------------------------------------------------------------------
@@ -732,47 +711,28 @@ def _fmt_duration(d: timedelta) -> str:
 
 
 def _route_phase(state: StateManager) -> None:
-    """Route to the page for the current phase.
+    """Route to the page for the current watermark phase (default view)."""
+    _route_phase_by_value(state.phase.value, state)
 
-    Simple if/elif dispatch — deterministic, no widget state to manage.
-    Each phase module's main() handles its own content and phase guards.
-    """
-    phase = state.phase
 
-    if phase == Phase.INIT:
+def _route_phase_by_value(phase_val: int, state: StateManager) -> None:
+    """Route to a specific phase page by integer value."""
+    if phase_val == Phase.INIT.value:
         _render_phase_init(state)
-    elif phase == Phase.SCHEMA:
+    elif phase_val == Phase.SCHEMA.value:
         from ui.pages import schema as schema_page
         schema_page.main()
-    elif phase == Phase.INGESTION:
+    elif phase_val == Phase.INGESTION.value:
         from ui.pages import ingestion as ingestion_page
         ingestion_page.main()
-    elif phase == Phase.EXTRACTION:
+    elif phase_val == Phase.EXTRACTION.value:
         from ui.pages import extraction as extraction_page
         extraction_page.main()
-    elif phase == Phase.CURATION:
+    elif phase_val == Phase.CURATION.value:
         from ui.pages import curation as curation_page
         curation_page.main()
     else:
-        st.error(f"Unknown phase: {phase!r}. This is a bug.")
-
-
-def _route_utility_view(view: str) -> None:
-    """Route to a utility page selected from the sidebar."""
-    if view == "Dashboard":
-        from ui.pages import dashboard as dashboard_page
-        dashboard_page.main()
-    elif view == "Graph Explorer":
-        from ui.pages import graph_explorer as graph_explorer_page
-        graph_explorer_page.main()
-    elif view == "Curation":
-        from ui.pages import curation as curation_page
-        curation_page.main()
-    elif view == "Extraction":
-        from ui.pages import extraction as extraction_page
-        extraction_page.main()
-    else:
-        st.error(f"Unknown view: {view!r}")
+        st.error(f"Unknown phase value: {phase_val}. This is a bug.")
 
 
 @st.cache_resource
@@ -817,14 +777,24 @@ def main() -> None:
     if st.session_state.get(_K_SAVE_DEGRADED):
         st.toast("Session persistence degraded — could not save to Redis.", icon="⚠️")
 
-    # Render sidebar (returns utility view name or None for phase view).
-    view_override = _render_sidebar(state)
+    # Render sidebar (sets active_view via StateManager).
+    _render_sidebar(state)
 
     # Route to the selected view.
-    if view_override:
-        _route_utility_view(view_override)
-    else:
+    active = state.active_view
+    if active is None:
         _route_phase(state)
+    elif active == "dashboard":
+        from ui.pages import dashboard as dashboard_page
+        dashboard_page.main()
+    elif active == "graph_explorer":
+        from ui.pages import graph_explorer as graph_explorer_page
+        graph_explorer_page.main()
+    elif active.startswith("phase:"):
+        phase_val = int(active.split(":")[1])
+        _route_phase_by_value(phase_val, state)
+    else:
+        st.error(f"Unknown view: {active!r}")
 
 
 if __name__ == "__main__":

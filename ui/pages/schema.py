@@ -887,6 +887,7 @@ def _render_locked_view(state: StateManager) -> None:
         s = StateManager.get()
         if s.phase == Phase.SCHEMA:
             s.advance_phase(Phase.INGESTION)
+        s.set_active_view(None)
 
     st.button(
         "Proceed to Phase 2: Document Ingestion →",

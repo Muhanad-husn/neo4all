@@ -410,14 +410,13 @@ def _render_decision_section(
         return
 
     failed: int = status.get("failed", 0) if status else 0
-    is_reentry = state.reentry_source is not None
 
     def _do_advance() -> None:
         """on_click callback — runs BEFORE the next render cycle."""
         s = StateManager.get()
         if s.phase == Phase.EXTRACTION:
-            s.clear_reentry()
             s.advance_phase(Phase.CURATION)
+        s.set_active_view(None)
 
     if failed > 0:
         st.warning(
@@ -437,14 +436,14 @@ def _render_decision_section(
             st.markdown("**Proceed with partial results**")
             st.caption("Continue to Curation with successfully extracted entities.")
             st.button(
-                "Return to Curation →" if is_reentry else "Proceed to Curation →",
+                "Proceed to Curation →",
                 type="primary",
                 on_click=_do_advance,
                 key="decision_proceed",
             )
     else:
         st.button(
-            "Return to Curation →" if is_reentry else "Proceed to Curation →",
+            "Proceed to Curation →",
             type="primary",
             on_click=_do_advance,
             key="decision_proceed",
@@ -459,12 +458,12 @@ def main() -> None:
     # All session state access through StateManager (CLAUDE.md §8).
     state = StateManager.get()
 
-    # --- Phase guard: extraction requires Phase 3 ---
-    if state.phase.value < Phase.EXTRACTION.value and state.reentry_source != Phase.EXTRACTION:
+    # --- Phase guard: extraction requires ingestion to have completed ---
+    if state.phase.value < Phase.EXTRACTION.value:
         st.title("Phase 3: AI-Assisted Extraction")
-        st.warning(
-            "Phase 2 (Document Ingestion) must be completed before running "
-            "extraction. Ingest documents and click Proceed on the Ingestion page."
+        st.info(
+            "Complete ingestion first to run extraction. "
+            "Ingest documents and click Proceed on the Ingestion page."
         )
         return
 
@@ -487,23 +486,10 @@ def main() -> None:
     # --- Page header ---
     st.title("Phase 3: AI-Assisted Extraction")
 
-    if state.reentry_source is not None:
-        if state.reentry_source == Phase.CURATION:
-            st.info(
-                "Returned from Curation to review and re-run failed extraction chunks.",
-                icon="↩",
-            )
-        else:
-            st.info(
-                "Processing new documents added during re-entry. "
-                "Only new chunks will be extracted — previously completed chunks are skipped.",
-                icon="↩",
-            )
-    else:
-        st.caption(
-            "Chunks are sent to the LLM with the locked domain schema. "
-            "Extracted entities are validated and written to Neo4j via MERGE."
-        )
+    st.caption(
+        "Chunks are sent to the LLM with the locked domain schema. "
+        "Extracted entities are validated and written to Neo4j via MERGE."
+    )
 
     # --- Fetch current extraction status for trigger section ---
     status = _fetch(f"/api/extraction/status/{run_id}")

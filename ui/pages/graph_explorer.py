@@ -33,7 +33,6 @@ from typing import Any
 import httpx
 import streamlit as st
 
-from api.models.run import Phase
 from ui.state import StateManager
 
 # ---------------------------------------------------------------------------
@@ -365,14 +364,6 @@ def main() -> None:
     # Calling it again raises StreamlitAPIException in Streamlit 1.40+.
 
     state = StateManager.get()
-
-    if state.phase.value < Phase.CURATION.value:
-        st.title("Graph Explorer")
-        st.warning(
-            "Graph Explorer is available from Phase 4 (Curation) onwards. "
-            "Complete extraction and proceed to the Curation page first."
-        )
-        return
 
     run_id = state.run_id
     if not run_id:
