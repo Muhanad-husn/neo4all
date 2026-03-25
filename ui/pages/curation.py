@@ -524,7 +524,7 @@ def main() -> None:
 
     state = StateManager.get()
 
-    if state.phase.value < Phase.CURATION.value:
+    if state.phase.value < Phase.CURATION.value and state.reentry_source != Phase.CURATION:
         st.title("Phase 4: Curation")
         st.warning(
             "Phase 3 (AI-Assisted Extraction) must be completed before running "
@@ -552,16 +552,17 @@ def main() -> None:
         st.divider()
         st.caption(f"API: `{_API_BASE_URL}`")
         st.divider()
-        st.button(
-            "Add More Documents",
-            on_click=lambda: StateManager.get().reenter_phase(Phase.INGESTION),
-            help="Return to ingestion to add more documents. Existing work is preserved.",
-        )
-        st.button(
-            "Back to Extraction",
-            on_click=lambda: StateManager.get().reenter_phase(Phase.EXTRACTION),
-            help="Return to extraction to review and re-run failed chunks.",
-        )
+        if state.phase == Phase.CURATION:
+            st.button(
+                "Add More Documents",
+                on_click=lambda: StateManager.get().reenter_phase(Phase.INGESTION),
+                help="Return to ingestion to add more documents. Existing work is preserved.",
+            )
+            st.button(
+                "Back to Extraction",
+                on_click=lambda: StateManager.get().reenter_phase(Phase.EXTRACTION),
+                help="Return to extraction to review and re-run failed chunks.",
+            )
 
     # Scroll to top on page load.
     st.markdown(

@@ -508,7 +508,24 @@ def _render_sidebar(state: StateManager) -> str | None:
         # 7. View selector
         if state.run_id:
             view_options = ["Current Phase", "Dashboard"]
-            if current_phase.value >= Phase.CURATION.value:
+
+            # During re-entry, offer navigation back to the source phase
+            # and preserve Graph Explorer if the user came from Curation.
+            reentry_src = state.reentry_source
+            effective_max_phase = current_phase
+            if reentry_src is not None:
+                effective_max_phase = max(
+                    current_phase, reentry_src, key=lambda p: p.value
+                )
+                _reentry_labels = {
+                    Phase.CURATION: "Curation",
+                    Phase.EXTRACTION: "Extraction",
+                }
+                label = _reentry_labels.get(reentry_src)
+                if label:
+                    view_options.append(label)
+
+            if effective_max_phase.value >= Phase.CURATION.value:
                 view_options.append("Graph Explorer")
 
             selected_view = st.radio(
@@ -748,6 +765,12 @@ def _route_utility_view(view: str) -> None:
     elif view == "Graph Explorer":
         from ui.pages import graph_explorer as graph_explorer_page
         graph_explorer_page.main()
+    elif view == "Curation":
+        from ui.pages import curation as curation_page
+        curation_page.main()
+    elif view == "Extraction":
+        from ui.pages import extraction as extraction_page
+        extraction_page.main()
     else:
         st.error(f"Unknown view: {view!r}")
 

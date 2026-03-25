@@ -460,7 +460,7 @@ def main() -> None:
     state = StateManager.get()
 
     # --- Phase guard: extraction requires Phase 3 ---
-    if state.phase.value < Phase.EXTRACTION.value:
+    if state.phase.value < Phase.EXTRACTION.value and state.reentry_source != Phase.EXTRACTION:
         st.title("Phase 3: AI-Assisted Extraction")
         st.warning(
             "Phase 2 (Document Ingestion) must be completed before running "
