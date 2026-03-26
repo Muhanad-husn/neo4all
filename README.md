@@ -566,7 +566,7 @@ Check out the [specs](docs/specs/) and [skills](docs/skills/) docs to understand
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE.md)
+[GNU Affero General Public License v3.0](LICENSE.md)
 
 ---
 
