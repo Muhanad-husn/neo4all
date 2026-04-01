@@ -10,6 +10,10 @@ Coverage:
   - All-unique rels → empty result
   - Empty RelListResult → empty result
   - Three identical rel dedupe_keys → one candidate with count 3
+  - Bidirectional duplicates: A→B and B→A flagged as one candidate
+  - Bidirectional: self-loops are not flagged
+  - Bidirectional: different rel_types are not grouped
+  - Bidirectional: edges already exact-dup are excluded from bidir pass
   - Fail-closed: empty run_id raises ValidationError
   - Fail-closed: empty schema_version raises ValidationError
 """
@@ -210,3 +214,110 @@ def test_fail_closed_empty_schema_version() -> None:
     """Empty schema_version raises ValidationError via Candidate model."""
     with pytest.raises(ValidationError):
         _DETECTOR.detect(_RUN_ID, "", _dup_rel_pair())
+
+
+# ---------------------------------------------------------------------------
+# Tests — bidirectional duplicates (Pass 2)
+# ---------------------------------------------------------------------------
+
+_BIDIR_FIXTURES = pathlib.Path(__file__).parent.parent.parent / "fixtures" / "candidate_detection"
+_BIDIR_RUN_ID = "unit-test-run-curation-bidir"
+
+
+def _load_bidir() -> dict:
+    return json.loads(
+        (_BIDIR_FIXTURES / "bidirectional_rel_dup.json").read_text(encoding="utf-8")
+    )
+
+
+def _bidir_rels() -> RelListResult:
+    return _build_rels(_load_bidir()["rels"])
+
+
+def test_bidir_detects_opposite_direction_pair() -> None:
+    """A→B and B→A with the same rel_type produce one bidirectional candidate."""
+    candidates = _DETECTOR.detect(_BIDIR_RUN_ID, _SV, _bidir_rels())
+    bidir = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD_BIDIRECTIONAL]
+    assert len(bidir) == 1
+
+
+def test_bidir_candidate_refs_contain_both_dedupe_keys() -> None:
+    """The bidirectional candidate references both edge dedupe_keys."""
+    candidates = _DETECTOR.detect(_BIDIR_RUN_ID, _SV, _bidir_rels())
+    bidir = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD_BIDIRECTIONAL][0]
+    fx = _load_bidir()
+    expected_refs = set(fx["expected_candidates"][0]["involved_element_refs"])
+    assert set(bidir.involved_element_refs) == expected_refs
+
+
+def test_bidir_candidate_type_and_lane() -> None:
+    """Bidirectional duplicate uses exact_rel_duplicate type in the relationship lane."""
+    candidates = _DETECTOR.detect(_BIDIR_RUN_ID, _SV, _bidir_rels())
+    bidir = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD_BIDIRECTIONAL][0]
+    assert bidir.candidate_type == CandidateType.exact_rel_duplicate
+    assert bidir.candidate_lane == CandidateLane.relationship
+
+
+def test_bidir_collision_context_rel_type() -> None:
+    """collision_context records the shared rel_type."""
+    candidates = _DETECTOR.detect(_BIDIR_RUN_ID, _SV, _bidir_rels())
+    bidir = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD_BIDIRECTIONAL][0]
+    assert bidir.collision_context["rel_type"] == "PERSONAL_RELATIONSHIP"
+    assert bidir.collision_context["duplicate_count"] == 2
+
+
+def test_bidir_self_loop_not_flagged() -> None:
+    """A self-loop (start == end) is not flagged as a bidirectional duplicate."""
+    rels = RelListResult(
+        rels=(
+            GraphRelRecord(dedupe_key="SELF::a::a::sv", rel_type="SELF",
+                           start_dedupe_key="a", end_dedupe_key="a",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+        )
+    )
+    candidates = _DETECTOR.detect(_RUN_ID, _SV, rels)
+    assert len(candidates) == 0
+
+
+def test_bidir_different_rel_types_not_grouped() -> None:
+    """A→B (TYPE_X) and B→A (TYPE_Y) are not bidirectional duplicates."""
+    rels = RelListResult(
+        rels=(
+            GraphRelRecord(dedupe_key="TYPE_X::a::b::sv", rel_type="TYPE_X",
+                           start_dedupe_key="a", end_dedupe_key="b",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+            GraphRelRecord(dedupe_key="TYPE_Y::b::a::sv", rel_type="TYPE_Y",
+                           start_dedupe_key="b", end_dedupe_key="a",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+        )
+    )
+    candidates = _DETECTOR.detect(_RUN_ID, _SV, rels)
+    assert len(candidates) == 0
+
+
+def test_bidir_excludes_exact_dup_from_pass2() -> None:
+    """Edges already caught as exact duplicates (same dedupe_key) are excluded from
+    the bidirectional pass to avoid double-flagging."""
+    rels = RelListResult(
+        rels=(
+            # Exact duplicate pair (same dedupe_key)
+            GraphRelRecord(dedupe_key="TYPE::a::b::sv", rel_type="TYPE",
+                           start_dedupe_key="a", end_dedupe_key="b",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+            GraphRelRecord(dedupe_key="TYPE::a::b::sv", rel_type="TYPE",
+                           start_dedupe_key="a", end_dedupe_key="b",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+            # Reverse edge (different dedupe_key)
+            GraphRelRecord(dedupe_key="TYPE::b::a::sv", rel_type="TYPE",
+                           start_dedupe_key="b", end_dedupe_key="a",
+                           run_id=_RUN_ID, schema_version=_SV, properties={}),
+        )
+    )
+    candidates = _DETECTOR.detect(_RUN_ID, _SV, rels)
+    exact = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD]
+    bidir = [c for c in candidates if c.detection_method == ExactRelDuplicateDetector.DETECTION_METHOD_BIDIRECTIONAL]
+    # Pass 1 catches the exact dup pair
+    assert len(exact) == 1
+    # Pass 2 should NOT flag the reverse edge alone (needs 2+ in the bidir group)
+    # The exact-dup edges are excluded, leaving only the single reverse edge → no bidir candidate
+    assert len(bidir) == 0

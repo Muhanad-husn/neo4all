@@ -7,7 +7,8 @@ Neo4j access) and returns list[Candidate] with deterministic candidate_ids.
 Detectors
 ---------
 ExactNodeDuplicateDetector   Same NodeType + dedupe_key appears more than once.
-ExactRelDuplicateDetector    Same rel dedupe_key (type + start + end) appears more than once.
+ExactRelDuplicateDetector    Same rel dedupe_key (type + start + end) appears more than once,
+                             OR same-type edges connect the same node pair in opposite directions.
 ProbableDuplicateDetector    Same-type node pairs with Jaro-Winkler >= JW_THRESHOLD.
 CanonicalViolationDetector   Direction or inverse violations against schema EdgeTypeDefs.
 StructuralAnomalyDetector    Orphan nodes, degree outliers, missing provenance, qualifier gaps.
@@ -148,15 +149,26 @@ class ExactNodeDuplicateDetector:
 
 
 class ExactRelDuplicateDetector:
-    """Flag relationships whose dedupe_key appears more than once in the graph.
+    """Flag relationships whose dedupe_key appears more than once in the graph,
+    OR that connect the same node pair in opposite directions with the same
+    rel_type (bidirectional duplicates).
 
-    A relationship's dedupe_key encodes (RelType, start_key, end_key,
-    schema_version) — CLAUDE.md §5 — so the same dedupe_key always means the
-    same logical edge.  Count > 1 means a constraint was not enforced at write
-    time.  One Candidate is emitted per duplicate dedupe_key.
+    Pass 1 — **Exact dedupe_key duplicates**: A relationship's dedupe_key
+    encodes (RelType, start_key, end_key, schema_version) — CLAUDE.md §5 — so
+    the same dedupe_key always means the same logical edge.  Count > 1 means a
+    constraint was not enforced at write time.
+
+    Pass 2 — **Bidirectional duplicates**: For edges where start and end nodes
+    differ, a direction-normalized key ``(rel_type, min(start, end),
+    max(start, end), schema_version)`` groups A→B and B→A together.  When both
+    directions exist the pair is flagged — semantically these represent the
+    same relationship stored twice with opposite direction.  Edges already
+    captured by Pass 1 (identical dedupe_key) are excluded from Pass 2 to
+    avoid double-flagging.
     """
 
     DETECTION_METHOD = "exact_rel_dedupe_key"
+    DETECTION_METHOD_BIDIRECTIONAL = "bidirectional_rel_duplicate"
 
     def detect(
         self,
@@ -164,15 +176,19 @@ class ExactRelDuplicateDetector:
         schema_version: str,
         rels: RelListResult,
     ) -> list[Candidate]:
-        """Return one Candidate per rel dedupe_key that appears more than once."""
+        """Return Candidates for exact dedupe_key duplicates and bidirectional duplicates."""
+        candidates: list[Candidate] = []
+
+        # -- Pass 1: exact dedupe_key duplicates --------------------------------
         groups: dict[str, list[GraphRelRecord]] = defaultdict(list)
         for rel in rels.rels:
             groups[rel.dedupe_key].append(rel)
 
-        candidates: list[Candidate] = []
+        exact_dup_keys: set[str] = set()
         for dedupe_key, members in groups.items():
             if len(members) < 2:
                 continue
+            exact_dup_keys.add(dedupe_key)
             rep = members[0]
             candidates.append(
                 Candidate(
@@ -189,6 +205,48 @@ class ExactRelDuplicateDetector:
                         "end_dedupe_key": rep.end_dedupe_key,
                         "dedupe_key": dedupe_key,
                         "duplicate_count": len(members),
+                    },
+                )
+            )
+
+        # -- Pass 2: bidirectional duplicates -----------------------------------
+        # Build a direction-normalized key: sort the two endpoint dedupe_keys so
+        # that A→B and B→A hash to the same bucket.  Self-loops (start == end)
+        # are skipped — they cannot have a reverse counterpart.
+        bidir_groups: dict[tuple[str, str, str, str], list[GraphRelRecord]] = (
+            defaultdict(list)
+        )
+        for rel in rels.rels:
+            if rel.dedupe_key in exact_dup_keys:
+                continue  # already flagged by Pass 1
+            if rel.start_dedupe_key == rel.end_dedupe_key:
+                continue  # self-loop — no reverse possible
+            lo, hi = sorted((rel.start_dedupe_key, rel.end_dedupe_key))
+            norm_key = (rel.rel_type, lo, hi, rel.schema_version)
+            bidir_groups[norm_key].append(rel)
+
+        for _norm_key, members in bidir_groups.items():
+            if len(members) < 2:
+                continue
+            # All members share the same node pair + rel_type but differ in
+            # direction.  Emit one candidate referencing both dedupe_keys.
+            refs = tuple(sorted({m.dedupe_key for m in members}))
+            rep = members[0]
+            candidates.append(
+                Candidate(
+                    run_id=run_id,
+                    schema_version=schema_version,
+                    candidate_type=CandidateType.exact_rel_duplicate,
+                    candidate_lane=CandidateLane.relationship,
+                    involved_element_refs=refs,
+                    severity=Severity.high,
+                    detection_method=self.DETECTION_METHOD_BIDIRECTIONAL,
+                    collision_context={
+                        "rel_type": rep.rel_type,
+                        "endpoint_a": members[0].start_dedupe_key,
+                        "endpoint_b": members[0].end_dedupe_key,
+                        "duplicate_count": len(members),
+                        "dedupe_keys": list(refs),
                     },
                 )
             )

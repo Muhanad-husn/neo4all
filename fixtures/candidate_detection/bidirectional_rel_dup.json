@@ -1,0 +1,48 @@
+{
+  "description": "Two relationships connect the same node pair in opposite directions with the same rel_type — one bidirectional duplicate candidate. Third relationship is unique.",
+  "run_id": "unit-test-run-curation-bidir",
+  "schema_version_str": "sv_fixture_abc123def456",
+  "rels": [
+    {
+      "dedupe_key": "PERSONAL_RELATIONSHIP::Person|Sophia|sv::Person|David|sv::sv",
+      "rel_type": "PERSONAL_RELATIONSHIP",
+      "start_dedupe_key": "Person|Sophia|sv",
+      "end_dedupe_key": "Person|David|sv",
+      "run_id": "unit-test-run-curation-bidir",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    },
+    {
+      "dedupe_key": "PERSONAL_RELATIONSHIP::Person|David|sv::Person|Sophia|sv::sv",
+      "rel_type": "PERSONAL_RELATIONSHIP",
+      "start_dedupe_key": "Person|David|sv",
+      "end_dedupe_key": "Person|Sophia|sv",
+      "run_id": "unit-test-run-curation-bidir",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    },
+    {
+      "dedupe_key": "WORKS_FOR::Person|Alice|sv::Organization|Acme|sv::sv",
+      "rel_type": "WORKS_FOR",
+      "start_dedupe_key": "Person|Alice|sv",
+      "end_dedupe_key": "Organization|Acme|sv",
+      "run_id": "unit-test-run-curation-bidir",
+      "schema_version": "sv_fixture_abc123def456",
+      "properties": {}
+    }
+  ],
+  "expected_candidates": [
+    {
+      "candidate_type": "exact_rel_duplicate",
+      "involved_element_refs": [
+        "PERSONAL_RELATIONSHIP::Person|David|sv::Person|Sophia|sv::sv",
+        "PERSONAL_RELATIONSHIP::Person|Sophia|sv::Person|David|sv::sv"
+      ],
+      "detection_method": "bidirectional_rel_duplicate",
+      "collision_context": {
+        "rel_type": "PERSONAL_RELATIONSHIP",
+        "duplicate_count": 2
+      }
+    }
+  ]
+}
