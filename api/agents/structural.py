@@ -48,6 +48,18 @@ def compute_structural_recommendation(
     # ----- exact_rel_duplicate --------------------------------------------
     if ctype == "exact_rel_duplicate":
         count = ctx.get("duplicate_count", 2)
+        if method == "bidirectional_rel_duplicate":
+            rel_type = ctx.get("rel_type", "unknown")
+            return StructuralRecommendation(
+                suggested_action="delete",
+                confidence=0.90,
+                reasoning=(
+                    f"Bidirectional relationship duplicate: {count} "
+                    f"'{rel_type}' relationships connect the same node pair "
+                    f"in opposite directions. Keep one direction and delete "
+                    f"the other."
+                ),
+            )
         return StructuralRecommendation(
             suggested_action="merge",
             confidence=0.95,

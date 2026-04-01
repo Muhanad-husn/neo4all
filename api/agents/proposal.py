@@ -743,19 +743,35 @@ class ProposalComposerAgent:
         # the collision_context identifies the relationship dedupe_key explicitly.
         # All other refs in involved_element_refs are endpoint nodes.
         #
+        # For bidirectional_rel_duplicate candidates, ALL involved_element_refs
+        # are relationship dedupe_keys (the two opposite-direction edges).
+        #
         # For group merge candidates (duplicate_chain_group), the refs are
         # already ordered: survivor first (set during candidate generation).
         # The diff builder uses targets[0] as the merge survivor.
         rel_dk: str | None = None
+        all_refs_are_rels = False
         if candidate.candidate_lane == CandidateLane.relationship:
-            rel_dk = candidate.collision_context.get("rel_dedupe_key") or (
-                candidate.collision_context.get("dedupe_key")
-            )
+            if candidate.detection_method == "bidirectional_rel_duplicate":
+                # All involved_element_refs are relationship dedupe_keys.
+                all_refs_are_rels = True
+            else:
+                rel_dk = candidate.collision_context.get("rel_dedupe_key") or (
+                    candidate.collision_context.get("dedupe_key")
+                )
 
         targets_list: list[ElementRef] = []
         ctx = candidate.collision_context
         for ref in candidate.involved_element_refs:
-            if rel_dk and ref == rel_dk:
+            if all_refs_are_rels:
+                targets_list.append(
+                    ElementRef(
+                        element_type="relationship",
+                        dedupe_key=ref,
+                        label=ref,
+                    )
+                )
+            elif rel_dk and ref == rel_dk:
                 element_type = "relationship"
                 # For normalize re-type: carry metadata so the diff builder
                 # can generate delete_edge + create_edge instead of update_edge.
