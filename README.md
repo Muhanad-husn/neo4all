@@ -15,6 +15,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How It Works</a> ·
+  <a href="USER_MANUAL.md">User Manual</a> ·
   <a href="#api">API Reference</a> ·
   <a href="https://github.com/Muhanad-husn/neo4all/issues">Issues</a>
 </p>
@@ -479,6 +480,18 @@ Only rebuild images when `pyproject.toml` or Dockerfiles change:
 ```bash
 docker compose up -d --build api ui
 ```
+
+---
+
+## Documentation
+
+| Document | Description |
+| -------- | ----------- |
+| **[User Manual](USER_MANUAL.md)** | Complete walkthrough of the app — every phase, every button, every config option explained in plain English |
+| [CLAUDE.md](CLAUDE.md) | Architecture constitution and governance rules |
+| [Specs](docs/specs/) | Increment specifications (SPEC-01 through SPEC-08) |
+| [Skills](docs/skills/) | Cross-cutting skill definitions (API contracts, governance, packaging, observability) |
+| [ADRs](docs/adr/) | Architecture Decision Records |
 
 ---
 
